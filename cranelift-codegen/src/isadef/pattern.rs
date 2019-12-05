@@ -1,9 +1,9 @@
 //! This module exposes a pattern-matching system used to match on, and rewrite, instructions in
 //! order to legalize a function and gradually lower it to machine instructions.
 
-use crate::cursor::{Cursor, FuncCursor};
-use crate::fx::{FxHashMap, FxHashSet};
-use crate::ir::{Inst, Opcode};
+use crate::binemit::CodeSink;
+use crate::cursor::FuncCursor;
+use crate::ir::Opcode;
 use crate::isa::{RegClass, RegUnit};
 use alloc::vec::Vec;
 
@@ -15,8 +15,6 @@ pub struct Pattern {
     pub op: Opcode,
     /// The arguments. Each argument may further constrain the pattern, and may capture bindings.
     pub args: Vec<PatternArg>,
-    /// The number of bindings this pattern captures.
-    pub num_bindings: PatternBindingIndex,
 }
 
 /// A pattern argument corresponds to one operand, and may or may not match. The match status can
@@ -39,8 +37,6 @@ pub struct Pattern {
 pub struct PatternArg {
     /// The kind of pattern arg.
     pub kind: PatternArgKind,
-    /// The binding for this arg: may capture or further constrain value.
-    pub binding: PatternBinding,
 }
 
 /// The kind of pattern arg: this defines what conditions the pattern imposes on the operand.
@@ -51,71 +47,86 @@ pub enum PatternArgKind {
     Reg(RegUnit),
 }
 
-/// An index into the bindings captured by the pattern.
-pub type PatternBindingIndex = usize;
+/// A function that gives the size of an encodable instruction. Returned as part of a pattern
+/// match.
+pub type SizeFunc = fn(&FuncCursor) -> usize;
 
-/// A binding occurs inside a pattern's argument, and either captures or further constrains the
-/// specific value of the argument.
-pub enum PatternBinding {
-    /// Do not capture this register.
-    None,
-    /// Capture a value as a binding.
-    Capture(PatternBindingIndex),
+/// A function that emits an encodable instruction to a code sink. Returned as part of a pattern
+/// match.
+pub type EmitFunc = fn(&FuncCursor, &mut dyn CodeSink);
+
+/// A function that replaces a non-encodable instruction with other instructions. Returned as part
+/// of a pattern match.
+pub type ReplaceFunc = fn(&FuncCursor);
+
+/// An action is the work that is executed when a pattern matches. An action can either specify a
+/// machine instruction into which this IR instruction can be encoded, or it can specify a
+/// legalization step that replaces this instruction with another.
+pub enum Action {
+    /// The result of the pattern match is that we have an encoding to a concrete machine
+    /// instruction. The SizeFunc gives the encoded size of the machine code, and the EmitFunc
+    /// actually emits it.
+    Encoding(SizeFunc, EmitFunc),
+    /// The result of the pattern match is that we need to replace the instruction with others,
+    /// getting closer to machine-encodable instructions. The ReplaceFunc is given a cursor and
+    /// has the job of actually doing the replacement.
+    Legalize(ReplaceFunc),
 }
 
-/// An individual value captured by a pattern.
-pub struct PatternBindingValue {
-    /// The register in which this value lives, if any.
-    pub register: RegUnit,
+/// A PatternAction connects one or more patterns with an action to take if any of those patterns
+/// match.
+pub struct PatternAction {
+    /// If any of these patterns match, invoke the action.
+    pub patterns: Vec<Pattern>,
+    /// The action to invoke.
+    pub action: Action,
 }
 
-/// The result of a pattern match.
-pub struct PatternMatch {
-    /// The bound values captured by the pattern.
-    pub bindings: FxHashMap<PatternBindingIndex, PatternBindingValue>,
+// Macros to create arrays of PatternAction clauses.
+
+/// Define a `PatternAction` using a very simple pattern->action DSL. Examples:
+///
+/// let pats = isa_patterns! {
+///   (Add, GPR, GPR, GPR) => emit(curs, sink) { /* ... */ } size(curs) { 4 },
+///   (Add, GPR, R0, GPR) => replace(curs) { curs.remove_inst(); }
+/// };
+///
+/// The first arg after the opcode is the insn dest and the rest are the operands.
+///
+/// The actions for now are thunks of Rust code given the raw FuncCursor, able to perform arbitrary
+/// instruction updates, insertions or removals (replace case) or arbitrary code emission (emit
+/// case). We should also eventually have alternates that compactly encode the most common
+/// behaviors: e.g., emitting a fixed-length RISC insn with a bit encoding inserting registers and
+/// immediates; and replacing an insn with others using the same (Op, args) syntax as the patterns.
+///
+/// Eventually we want to support captures and matches against those captures as well,
+/// so we can do things like:
+///
+///   (Add, ra@GPR, ra, ra) => replace_inst (Lsh, ra, 2)
+///
+#[macro_export]
+macro_rules! isa_patterns {
+    (($head:tt => $action:tt),*) =>
+        ([$(PatternAction {
+            patterns: isa_pattern_head!($head),
+            action: isa_pattern_action!($action),
+        }),*]);
 }
 
-/// An error discovered when compiling a pattern to an execution plan.
-pub enum PatternError {
-    /// A binding index was never defined by a capture.
-    UncapturedBinding(PatternBindingIndex),
-    /// A binding index was out of bounds.
-    OutOfBoundsBinding(PatternBindingIndex),
+/// Helper macro to create a vec of `Pattern` instances from the head of an ISA-pattern rule.
+#[macro_export]
+macro_rules! isa_pattern_head {
+    ($($op:tt, $(args:tt),*)|*) =>
+     (vec![$(Pattern { op: Opcodes::$op, args: isa_pattern_head_args!($(args),*) }),*]);
 }
 
-impl Pattern {
-    /// Check the pattern for errors.
-    pub fn check(&self) -> Result<(), Vec<PatternError>> {
-        let mut errors = vec![];
-        let mut captures = FxHashSet();
-        for arg in &self.args {
-            if let &PatternBinding::Capture(idx) = &arg.binding {
-                if idx >= self.num_bindings {
-                    errors.push(PatternError::OutOfBoundsBinding(idx));
-                } else {
-                    captures.insert(idx);
-                }
-            }
-        }
-        for idx in 0..self.num_bindings {
-            if !captures.contains(&idx) {
-                errors.push(PatternError::UncapturedBinding(idx));
-            }
-        }
-
-        if errors.len() > 0 {
-            Err(errors)
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Evaluate the pattern at a particular instruction, given by the cursor `curs`. Return the
-    /// match's bindings if the pattern matches, or `None` otherwise.
-    pub fn eval(&self, curs: &FuncCursor) -> Option<PatternMatch> {
-        assert!(curs.current_inst().is_some());
-        let inst = curs.current_inst().unwrap();
-        let op = curs.func.dfg[inst].opcode();
-        None
-    }
+/// Helper macro to create an `Action` value from the body of an ISA-pattern rule.
+#[macro_export]
+macro_rules! isa_pattern_action {
+    (emit($emitcurs:ident, $sink:ident) $emitbody:block size($sizecurs:ident) $sizebody:block) => {
+        Action::Encoding(|$emitcurs, $sink| $emitbody, |$sizecurs| $sizebody)
+    };
+    (replace($curs:ident) $body:block) => {
+        Action::Legalize(|$curs| $body)
+    };
 }
