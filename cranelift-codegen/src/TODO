@@ -1,0 +1,22 @@
+Basic strategy:
+
+- Generate a TargetIsa implementation (a la isa/x86/mod.rs : struct Isa)
+- Don't necessarily re-use the table-driven approach...
+- But, do use Recipe / RecipeConstraints stuff, because regalloc and size encoding need it
+
+- From pattern list, generate encoding data structures
+- Do this at startup at first
+- Allow for codegen to embed them statically as well
+
+
+TODO:
+- Write a few patterns for ADD instructions
+  - match particular register classes and sizes
+
+- Handle simple mapping of insns to encodings: isa.legal_encodings(), isa.encode()
+- Ensure that enc_info returns the proper info (size, constraints) for these encodings
+- Put together a binemit impl like x86's, based on thunks/helpers with patterns
+- Fill out basic ALU insns
+
+- Come up with a reasonable legalizer pattern impl: match *one* insn and
+  replace with N ("template legalizer")

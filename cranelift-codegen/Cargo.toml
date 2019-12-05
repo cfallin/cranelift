@@ -30,7 +30,6 @@ byteorder = { version = "1.3.2", default-features = false }
 
 [build-dependencies]
 cranelift-codegen-meta = { path = "meta", version = "0.51.0" }
-cranelift-codegen-patgen = { path = "patgen", version = "0.51.0" }
 
 [features]
 default = ["std", "basic-blocks"]

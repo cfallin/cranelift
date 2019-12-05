@@ -1,11 +1,10 @@
 //! This module exposes a pattern-matching system used to match on, and rewrite, instructions in
 //! order to legalize a function and gradually lower it to machine instructions.
 
-use crate::cursor::FuncCursor;
-use crate::fx::FxHashMap;
+use crate::cursor::{Cursor, FuncCursor};
+use crate::fx::{FxHashMap, FxHashSet};
 use crate::ir::{Inst, Opcode};
 use crate::isa::{RegClass, RegUnit};
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 /// A pattern matches an instruction by opcode and arguments (optionally recursively matching the
@@ -33,6 +32,10 @@ pub struct Pattern {
 /// Note that all pattern arguments that perform captures are evaluated for matches before
 /// arguments that match against prior captures; or, in other words, dependencies from capturing to
 /// matching pattern args are respected.
+///
+/// TODO: for tree-patterns, consider how to handle registers when they may be redefined between
+/// original and current instruction. (i.e., we are not matching on SSA anymore, so we have to be
+/// mindful of bindings as (register, time), not just register.)
 pub struct PatternArg {
     /// The kind of pattern arg.
     pub kind: PatternArgKind,
@@ -46,8 +49,6 @@ pub enum PatternArgKind {
     RegClass(RegClass),
     /// A specific register.
     Reg(RegUnit),
-    /// A nested pattern.
-    Insn(Box<Pattern>),
 }
 
 /// An index into the bindings captured by the pattern.
@@ -56,19 +57,16 @@ pub type PatternBindingIndex = usize;
 /// A binding occurs inside a pattern's argument, and either captures or further constrains the
 /// specific value of the argument.
 pub enum PatternBinding {
+    /// Do not capture this register.
+    None,
     /// Capture a value as a binding.
     Capture(PatternBindingIndex),
-    /// Match a previously-captured value.
-    Match(PatternBindingIndex),
 }
 
-/// An individual value captured by a pattern: one or both of a defining instruction and a
-/// register.
+/// An individual value captured by a pattern.
 pub struct PatternBindingValue {
-    /// The instruction that defines this value, if any.
-    pub def_insn: Option<Inst>,
     /// The register in which this value lives, if any.
-    pub register: Option<RegUnit>,
+    pub register: RegUnit,
 }
 
 /// The result of a pattern match.
@@ -77,10 +75,47 @@ pub struct PatternMatch {
     pub bindings: FxHashMap<PatternBindingIndex, PatternBindingValue>,
 }
 
+/// An error discovered when compiling a pattern to an execution plan.
+pub enum PatternError {
+    /// A binding index was never defined by a capture.
+    UncapturedBinding(PatternBindingIndex),
+    /// A binding index was out of bounds.
+    OutOfBoundsBinding(PatternBindingIndex),
+}
+
 impl Pattern {
-    /// Evaluate this pattern with the given cursor (which must point at an instruction), returning
-    /// the match if successful.
+    /// Check the pattern for errors.
+    pub fn check(&self) -> Result<(), Vec<PatternError>> {
+        let mut errors = vec![];
+        let mut captures = FxHashSet();
+        for arg in &self.args {
+            if let &PatternBinding::Capture(idx) = &arg.binding {
+                if idx >= self.num_bindings {
+                    errors.push(PatternError::OutOfBoundsBinding(idx));
+                } else {
+                    captures.insert(idx);
+                }
+            }
+        }
+        for idx in 0..self.num_bindings {
+            if !captures.contains(&idx) {
+                errors.push(PatternError::UncapturedBinding(idx));
+            }
+        }
+
+        if errors.len() > 0 {
+            Err(errors)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Evaluate the pattern at a particular instruction, given by the cursor `curs`. Return the
+    /// match's bindings if the pattern matches, or `None` otherwise.
     pub fn eval(&self, curs: &FuncCursor) -> Option<PatternMatch> {
+        assert!(curs.current_inst().is_some());
+        let inst = curs.current_inst().unwrap();
+        let op = curs.func.dfg[inst].opcode();
         None
     }
 }
