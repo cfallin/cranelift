@@ -87,8 +87,8 @@ pub struct PatternAction {
 /// Define a `PatternAction` using a very simple pattern->action DSL. Examples:
 ///
 /// let pats = isa_patterns! {
-///   (Add, GPR, GPR, GPR) => emit(curs, sink) { /* ... */ } size(curs) { 4 },
-///   (Add, GPR, R0, GPR) => replace(curs) { curs.remove_inst(); }
+///   (Add, rc:GPR, rc:GPR, rc:GPR) => emit(curs, sink) { /* ... */ } size(curs) { 4 },
+///   (Add, rc:GPR, r:R0, rc:GPR) => replace(curs) { curs.remove_inst(); }
 /// };
 ///
 /// The first arg after the opcode is the insn dest and the rest are the operands.
@@ -102,12 +102,12 @@ pub struct PatternAction {
 /// Eventually we want to support captures and matches against those captures as well,
 /// so we can do things like:
 ///
-///   (Add, ra@GPR, ra, ra) => replace_inst (Lsh, ra, 2)
+///   (Add, ra@rc:GPR, ra, ra) => replace_inst (Lsh, ra, 2)
 ///
 #[macro_export]
 macro_rules! isa_patterns {
-    (($head:tt => $action:tt),*) =>
-        ([$(PatternAction {
+    (($head:tt => $action:tt);*) =>
+        (&[$(PatternAction {
             patterns: isa_pattern_head!($head),
             action: isa_pattern_action!($action),
         }),*]);
@@ -117,7 +117,8 @@ macro_rules! isa_patterns {
 #[macro_export]
 macro_rules! isa_pattern_head {
     ($($op:tt, $(args:tt),*)|*) =>
-     (vec![$(Pattern { op: Opcodes::$op, args: isa_pattern_head_args!($(args),*) }),*]);
+     (vec![$(Pattern { op: Opcodes::$op, args: vec![
+         $(isa_pattern_head_arg!($args)),*] }),*]);
 }
 
 /// Helper macro to create an `Action` value from the body of an ISA-pattern rule.
@@ -129,4 +130,17 @@ macro_rules! isa_pattern_action {
     (replace($curs:ident) $body:block) => {
         Action::Legalize(|$curs| $body)
     };
+}
+
+macro_rules! isa_pattern_head_arg {
+    (r:$reg:ident) => {
+        PatternArgKind::Reg($reg)
+    };
+    (rc:$regclass:ident) => {
+        PatternArgKind::RegClass($regclass)
+    };
+}
+
+#[macro_export]
+macro_rules! isa_regclass {
 }
