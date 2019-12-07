@@ -59,6 +59,9 @@ pub type EmitFunc = fn(&FuncCursor, &mut dyn CodeSink);
 /// of a pattern match.
 pub type ReplaceFunc = fn(&FuncCursor);
 
+/// Constraints on registers as attached to an encoding result.
+pub struct RegConstraints {}
+
 /// An action is the work that is executed when a pattern matches. An action can either specify a
 /// machine instruction into which this IR instruction can be encoded, or it can specify a
 /// legalization step that replaces this instruction with another.
@@ -66,7 +69,7 @@ pub enum Action {
     /// The result of the pattern match is that we have an encoding to a concrete machine
     /// instruction. The SizeFunc gives the encoded size of the machine code, and the EmitFunc
     /// actually emits it.
-    Encoding(SizeFunc, EmitFunc),
+    Encoding(SizeFunc, EmitFunc, RegConstraints),
     /// The result of the pattern match is that we need to replace the instruction with others,
     /// getting closer to machine-encodable instructions. The ReplaceFunc is given a cursor and
     /// has the job of actually doing the replacement.
@@ -104,10 +107,12 @@ pub struct PatternAction {
 ///
 ///   (Add, ra@rc:GPR, ra, ra) => replace_inst (Lsh, ra, 2)
 ///
+/// Fn(&[PatternAction]) -> EncodingLookupTable
+///
 #[macro_export]
 macro_rules! isa_patterns {
-    (($head:tt => $action:tt);*) =>
-        (&[$(PatternAction {
+    ($global:ident, { ($head:tt => $action:tt);* }) =>
+        (let $global: &'static [PatternAction] = &[$(PatternAction {
             patterns: isa_pattern_head!($head),
             action: isa_pattern_action!($action),
         }),*]);
@@ -141,6 +146,100 @@ macro_rules! isa_pattern_head_arg {
     };
 }
 
+/// Macro to define register banks and classes for an ISA.
 #[macro_export]
-macro_rules! isa_regclass {
+macro_rules! isa_regs {
+    ($reginfo:ident,
+     banks { $($bankclause: ident $bankargs:tt ;)* }
+     classes { $($classclause:ident $classargs:tt ;)* }
+    ) => (
+        $(crate::isa_regs_class!{$reginfo, $classclause $classargs})*
+
+        pub static $reginfo: crate::isa::RegInfo = crate::isa::RegInfo {
+            banks: &[$(crate::isa_regs_bank!{$bankclause $bankargs}),*],
+            classes: &[$(&$classclause),*],
+        };
+    )
+}
+
+/// Helper macro.
+#[macro_export]
+macro_rules! isa_regs_bank {
+    ($bankname:ident(
+            from($from:expr),
+            to($to:expr),
+            units($units:expr),
+            track_pressure($tp:expr),
+            name_prefix($pre:ident))) => {
+        crate::isa::registers::RegBank {
+            name: stringify!($bankname),
+            first_unit: $from,
+            units: $to + 1 - $from,
+            names: &[],
+            prefix: stringify!($pre),
+            first_toprc: 0, // TODO
+            num_toprcs: 0, // TODO
+            pressure_tracking: $tp,
+        }
+    };
+    ($bankname:ident(
+            from($from:expr),
+            to($to:expr),
+            units($units:expr),
+            track_pressure($tp:expr),
+            names([$($name:ident),*]))) => {
+        crate::isa::registers::RegBank {
+            name: stringify!($bankname),
+            first_unit: $from,
+            units: $to + 1 - $from,
+            names: &[$(stringify!($name)),*],
+            prefix: stringify!($bankname),
+            first_toprc: 0, // TODO
+            num_toprcs: 0, // TODO
+            pressure_tracking: $tp,
+        }
+    };
+}
+
+/// Helper macro.
+#[macro_export]
+macro_rules! isa_regs_class {
+    ($reginfo:ident, $name:ident(index($index:expr), bank($bank:expr), first($first:expr), mask $mask:tt)) => {
+        pub static $name: crate::isa::registers::RegClassData =
+            crate::isa::registers::RegClassData {
+                name: stringify!($name),
+                index: $index,
+                width: 1,
+                bank: $bank,
+                toprc: $index,
+                first: $first,
+                subclasses: 0,
+                mask: crate::isa_regs_mask!($mask),
+                info: &$reginfo,
+                pinned_reg: None,
+            };
+    };
+}
+
+/// Helper macro.
+#[macro_export]
+macro_rules! isa_regs_mask {
+    (($arg1:tt, $arg2:tt, $arg3:tt)) => {
+        [
+            crate::isa_regs_mask_one!(0, $arg1),
+            crate::isa_regs_mask_one!(32, $arg2),
+            crate::isa_regs_mask_one!(64, $arg3),
+        ]
+    };
+}
+
+/// Helper macro.
+#[macro_export]
+macro_rules! isa_regs_mask_one {
+    ($base:expr, []) => {
+        0
+    };
+    ($base:expr, [$from:expr, $to:expr]) => {
+        ((((1u64 << ($to - $base + 1)) - 1) - ((1u64 << ($from - $base)) - 1)) & 0xffff_ffff) as u32
+    };
 }
