@@ -59,9 +59,6 @@ pub type EmitFunc = fn(&FuncCursor, &mut dyn CodeSink);
 /// of a pattern match.
 pub type ReplaceFunc = fn(&FuncCursor);
 
-/// Constraints on registers as attached to an encoding result.
-pub struct RegConstraints {}
-
 /// An action is the work that is executed when a pattern matches. An action can either specify a
 /// machine instruction into which this IR instruction can be encoded, or it can specify a
 /// legalization step that replaces this instruction with another.
@@ -69,7 +66,7 @@ pub enum Action {
     /// The result of the pattern match is that we have an encoding to a concrete machine
     /// instruction. The SizeFunc gives the encoded size of the machine code, and the EmitFunc
     /// actually emits it.
-    Encoding(SizeFunc, EmitFunc, RegConstraints),
+    Encoding(SizeFunc, EmitFunc),
     /// The result of the pattern match is that we need to replace the instruction with others,
     /// getting closer to machine-encodable instructions. The ReplaceFunc is given a cursor and
     /// has the job of actually doing the replacement.
@@ -111,38 +108,44 @@ pub struct PatternAction {
 ///
 #[macro_export]
 macro_rules! isa_patterns {
-    ($global:ident, { ($head:tt => $action:tt);* }) =>
-        (let $global: &'static [PatternAction] = &[$(PatternAction {
-            patterns: isa_pattern_head!($head),
-            action: isa_pattern_action!($action),
-        }),*]);
+    ($global:ident, { $($head:tt => action { $($action:tt)* };)* }) =>
+        (pub static $global: &'static [crate::isadef::PatternAction] = &[$(crate::isadef::PatternAction {
+            patterns: crate::isa_pattern_head!($head),
+            action: crate::isa_pattern_action!($($action)*),
+        }),*];);
 }
 
 /// Helper macro to create a vec of `Pattern` instances from the head of an ISA-pattern rule.
 #[macro_export]
 macro_rules! isa_pattern_head {
-    ($($op:tt, $(args:tt),*)|*) =>
-     (vec![$(Pattern { op: Opcodes::$op, args: vec![
-         $(isa_pattern_head_arg!($args)),*] }),*]);
+    ($(($op:tt, $(($($args:tt)*)),*))|*) =>
+     (vec![$(crate::isadef::Pattern { op: crate::ir::Opcode::$op, args: vec![
+         $(crate::isa_pattern_head_arg!($($args)*)),*] }),*]);
 }
 
 /// Helper macro to create an `Action` value from the body of an ISA-pattern rule.
 #[macro_export]
 macro_rules! isa_pattern_action {
     (emit($emitcurs:ident, $sink:ident) $emitbody:block size($sizecurs:ident) $sizebody:block) => {
-        Action::Encoding(|$emitcurs, $sink| $emitbody, |$sizecurs| $sizebody)
+        crate::isadef::Action::Encoding(|$sizecurs| $sizebody, |$emitcurs, $sink| $emitbody)
     };
     (replace($curs:ident) $body:block) => {
-        Action::Legalize(|$curs| $body)
+        crate::isadef::Action::Legalize(|$curs| $body)
     };
 }
 
+/// Helper macro.
+#[macro_export]
 macro_rules! isa_pattern_head_arg {
-    (r:$reg:ident) => {
-        PatternArgKind::Reg($reg)
+    (r : $reg:ident) => {
+        crate::isadef::PatternArg {
+            kind: crate::isadef::PatternArgKind::Reg(&$reg),
+        }
     };
-    (rc:$regclass:ident) => {
-        PatternArgKind::RegClass($regclass)
+    (rc : $regclass:ident) => {
+        crate::isadef::PatternArg {
+            kind: crate::isadef::PatternArgKind::RegClass(&$regclass),
+        }
     };
 }
 

@@ -1,7 +1,5 @@
 TODO:
 
-- register class macros and builder
-
 - encoding backend macro: generate fixed-size insn with bit pattern
 
 - Write a few patterns for ADD instructions

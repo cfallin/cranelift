@@ -1,24 +1,47 @@
 //! This module defines patterns for instruction legalization and code generation.
 
-use crate::{isa_patterns, isa_regs};
+/* TODO:
+ * - AGen
+ * - sign/zero-extend, bit-shift
+ */
 
-isa_regs!(REGINFO,
-          banks {
-              GPR(  from(0),  to(31), units(32), track_pressure(true), name_prefix(X));
-              FPR(  from(32), to(63), units(32), track_pressure(true), name_prefix(V));
-              FLAGS(from(64), to(64), units(1), track_pressure(false), names([NZCV]));
-          }
-          classes {
-              // `index` refers to banks above.
-              // This descriptor DSL only allows top-level classes, not subclasses.
-              // The `mask` arg is a set of three 32-bit bitmasks giving reg ranges.
-              GPR(  index(0), bank(0), first(0),  mask([0, 31], [], []));
-              FPR(  index(1), bank(1), first(32), mask([], [32, 63], []));
-              FLAGS(index(2), bank(2), first(64), mask([], [], [64, 64]));
-          });
+use crate::ir::Opcode;
+use crate::isadef::*;
 
-/*
-isa_patterns!(PATTERNS, {
-    (Add, rc:GPR, rc:GPR, rc:GPR) => emit(curs, sink) {} size(curs) { 4 };
-});
-*/
+fn build_backend() -> IsaDef {
+    let mut b = IsaDef::new();
+
+    let rb_GPR = b
+        .reg_bank("GPR")
+        .regs(32)
+        .track_pressure(true)
+        .name_prefix("X")
+        .build();
+    let rb_FPR = b
+        .reg_bank("FPR")
+        .regs(32)
+        .track_pressure(true)
+        .name_prefix("V")
+        .build();
+    let rb_FLAGS = b.reg_bank("FLAGS").regs(1).names(&["NZCV"]).build();
+    let GPR = b.reg_class("GPR").bank(rb_GPR).build();
+    let FPR = b.reg_class("FPR").bank(rb_FPR).build();
+    let FLAGS = b.reg_class("FLAGS").bank(rb_FLAGS).build();
+
+    // Legalize example: convert operand of any ld/st that is not an AGen into an AGen.
+    // Legalize example: convert AGen with add/sub/shift args into improved AGen.
+
+    b.emit_pat(
+        Opcode::Iadd,
+        &[b.out_rc(GPR), b.in_rc(GPR), b.in_rc(GPR)],
+        |ctx, args| {
+            ctx.bits(11, 0b1000_1011_001);
+            ctx.reg(&args[2]); // Rm
+            ctx.bits(6, 0b000_000);
+            ctx.reg(&args[1]); // Rn
+            ctx.reg(&args[0]); // Rd
+        },
+    );
+
+    b
+}
