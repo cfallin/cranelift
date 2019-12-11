@@ -31,6 +31,9 @@ fn build_backend() -> IsaDef {
     // Legalize example: convert operand of any ld/st that is not an AGen into an AGen.
     // Legalize example: convert AGen with add/sub/shift args into improved AGen.
 
+    // TODO: predicates on match. Allowed to examine captured subinsts too, and given cursor to
+    // func.
+
     b.emit_pat(
         Opcode::Iadd,
         &[b.out_rc(0, GPR), b.in_rc(1, GPR), b.in_rc(2, GPR)],
