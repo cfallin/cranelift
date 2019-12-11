@@ -1,8 +1,9 @@
 //! This module exposes a set of tools, such as a pattern-matcher and a simple builder API for
 //! those patterns, that allow an ISA definition to define legalization and code-generation rules.
 
-use crate::ir::Opcode;
+use crate::ir::{Opcode, Type};
 use alloc::vec::Vec;
+use alloc::boxed::Box;
 
 mod pattern;
 pub use pattern::*;
@@ -11,7 +12,8 @@ pub use pattern::*;
 pub struct IsaDef {
     reg_banks: Vec<IsaRegBank>,
     reg_classes: Vec<IsaRegClass>,
-    patterns: Vec<Pattern>,
+    legalize_rules: Vec<IsaRuleLegalize>,
+    emit_rules: Vec<IsaRuleEmit>,
 }
 
 /// A register bank definition.
@@ -48,11 +50,18 @@ pub struct IsaRegClassBuilder<'a> {
 /// A reference to a register class.
 pub type IsaRegClassIndex = usize;
 
+/// A pattern.
+pub struct IsaPattern {
+    op: ir::Opcode,
+    tys: Option<Vec<Type>>,
+    args: Vec<IsaPatternArg>,
+}
+
 /// An argument to a pattern.
 pub struct IsaPatternArg {
     dir: IsaPatternArgDir,
     kind: IsaPatternArgKind,
-    // TODO: binding.
+    binding: IsaPatternArgBinding,
 }
 
 enum IsaPatternArgDir {
@@ -63,6 +72,14 @@ enum IsaPatternArgDir {
 enum IsaPatternArgKind {
     Reg(IsaRegBankIndex, usize),
     RegClass(IsaRegClassIndex),
+    AnyReg,  // mostly useful with IsaPatternArgBinding::Match
+    Insn(Box<IsaPattern>),  // nested insn. Cannot be captured.
+}
+
+enum IsaPatternArgBinding {
+    None,
+    Capture(usize),  // only valid on register pattern args.
+    Match(usize),    // only valid on register pattern args.
 }
 
 /// A binding from a successful pattern match.
