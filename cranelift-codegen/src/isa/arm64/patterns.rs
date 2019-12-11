@@ -33,7 +33,7 @@ fn build_backend() -> IsaDef {
 
     b.emit_pat(
         Opcode::Iadd,
-        &[b.out_rc(GPR), b.in_rc(GPR), b.in_rc(GPR)],
+        &[b.out_rc(0, GPR), b.in_rc(1, GPR), b.in_rc(2, GPR)],
         |ctx, args| {
             ctx.bits(11, 0b1000_1011_001);
             ctx.reg(&args[2]); // Rm

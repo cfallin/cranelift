@@ -2,8 +2,8 @@
 //! those patterns, that allow an ISA definition to define legalization and code-generation rules.
 
 use crate::ir::{Opcode, Type};
-use alloc::vec::Vec;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 mod pattern;
 pub use pattern::*;
@@ -52,7 +52,7 @@ pub type IsaRegClassIndex = usize;
 
 /// A pattern.
 pub struct IsaPattern {
-    op: ir::Opcode,
+    op: Opcode,
     tys: Option<Vec<Type>>,
     args: Vec<IsaPatternArg>,
 }
@@ -72,14 +72,14 @@ enum IsaPatternArgDir {
 enum IsaPatternArgKind {
     Reg(IsaRegBankIndex, usize),
     RegClass(IsaRegClassIndex),
-    AnyReg,  // mostly useful with IsaPatternArgBinding::Match
-    Insn(Box<IsaPattern>),  // nested insn. Cannot be captured.
+    AnyReg,                // mostly useful with IsaPatternArgBinding::Match
+    Insn(Box<IsaPattern>), // nested insn. Cannot be captured.
 }
 
 enum IsaPatternArgBinding {
     None,
-    Capture(usize),  // only valid on register pattern args.
-    Match(usize),    // only valid on register pattern args.
+    Capture(usize), // only valid on register pattern args.
+    Match(usize),   // only valid on register pattern args.
 }
 
 /// A binding from a successful pattern match.
@@ -87,6 +87,10 @@ pub enum IsaPatternMatchBinding {
     /// A bound register.
     Reg(IsaRegBankIndex, usize),
 }
+
+struct IsaRuleLegalize {}
+
+struct IsaRuleEmit {}
 
 /// The context within an emit action.
 pub struct IsaPatternEmitCtx<'a> {
@@ -106,7 +110,8 @@ impl IsaDef {
         IsaDef {
             reg_banks: vec![],
             reg_classes: vec![],
-            patterns: vec![],
+            legalize_rules: vec![],
+            emit_rules: vec![],
         }
     }
 
@@ -145,18 +150,20 @@ impl IsaDef {
     }
 
     /// Get a pattern arg for an output register belonging to a class.
-    pub fn out_rc(&self, rc: IsaRegClassIndex) -> IsaPatternArg {
+    pub fn out_rc(&self, rc: IsaRegClassIndex, binding: usize) -> IsaPatternArg {
         IsaPatternArg {
             dir: IsaPatternArgDir::Out,
             kind: IsaPatternArgKind::RegClass(rc),
+            binding: IsaPatternArgBinding::Capture(binding),
         }
     }
 
     /// Get a pattern arg for an input register belonging to a class.
-    pub fn in_rc(&self, rc: IsaRegClassIndex) -> IsaPatternArg {
+    pub fn in_rc(&self, rc: IsaRegClassIndex, binding: usize) -> IsaPatternArg {
         IsaPatternArg {
             dir: IsaPatternArgDir::In,
             kind: IsaPatternArgKind::RegClass(rc),
+            binding: IsaPatternArgBinding::Capture(binding),
         }
     }
 }
