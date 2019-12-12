@@ -5,7 +5,6 @@ use std::rc::Rc;
 pub(crate) struct Formats {
     pub(crate) binary: Rc<InstructionFormat>,
     pub(crate) binary_imm: Rc<InstructionFormat>,
-    pub(crate) binary_2imm: Rc<InstructionFormat>,
     pub(crate) branch: Rc<InstructionFormat>,
     pub(crate) branch_float: Rc<InstructionFormat>,
     pub(crate) branch_icmp: Rc<InstructionFormat>,
@@ -78,13 +77,6 @@ impl Formats {
             binary: Builder::new("Binary").value().value().build(),
 
             binary_imm: Builder::new("BinaryImm").value().imm(&imm.imm64).build(),
-
-            binary_2imm: Builder::new("Binary2Imm")
-                .value()
-                .value()
-                .imm_with_name("imm1", &imm.imm64)
-                .imm_with_name("imm2", &imm.imm64)
-                .build(),
 
             // The select instructions are controlled by the second VALUE operand.
             // The first VALUE operand is the controlling flag which has a derived type.

@@ -3661,31 +3661,5 @@ pub(crate) fn define(
         .is_ghost(true),
     );
 
-    let a = &Operand::new("a", iAddr);
-    let b = &Operand::new("b", iAddr);
-    let addr = &Operand::new("addr", iAddr);
-    let Base = &Operand::new("Base", &imm.imm64);
-    let Scale = &Operand::new("Scale", &imm.imm64);
-
-    ig.push(
-        Inst::new(
-            "agen",
-            r#"
-            Generate an address. Computes addr = Base + a + Scale*b.
-
-            This should be a superset of most addressing modes (excluding pre/post-inc/dec
-            variants) in most architectures: e.g., it captures the x86 `base+r1+r2*scale` and the
-            arm64 `base+r1` or `base+r1*scale`.
-
-            Legalization will first convert all memory argument addresses to use agen ops, then
-            merge operations into the agen as much as possible. Instruction selection can then
-            match on the agen.
-            "#,
-            &formats.binary_2imm,
-        )
-        .operands_in(vec![a, b, Base, Scale])
-        .operands_out(vec![addr]),
-    );
-
     ig.build()
 }
