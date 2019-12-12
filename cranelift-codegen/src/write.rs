@@ -496,9 +496,6 @@ pub fn write_operands(
         UnaryGlobalValue { global_value, .. } => write!(w, " {}", global_value),
         Binary { args, .. } => write!(w, " {}, {}", args[0], args[1]),
         BinaryImm { arg, imm, .. } => write!(w, " {}, {}", arg, imm),
-        Binary2Imm {
-            args, imm1, imm2, ..
-        } => write!(w, "{}, {}, {}, {}", args[0], args[1], imm1, imm2),
         Ternary { args, .. } => write!(w, " {}, {}, {}", args[0], args[1], args[2]),
         MultiAry { ref args, .. } => {
             if args.is_empty() {

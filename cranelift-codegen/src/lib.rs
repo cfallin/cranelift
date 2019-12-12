@@ -76,7 +76,7 @@ pub mod settings;
 pub mod timing;
 pub mod verifier;
 pub mod write;
-pub mod isadef;
+pub mod machinst;
 
 pub use crate::entity::packed_option;
 

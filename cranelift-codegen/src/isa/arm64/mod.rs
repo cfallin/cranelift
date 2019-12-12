@@ -5,7 +5,7 @@ mod binemit;
 mod enc_tables;
 mod registers;
 pub mod settings;
-mod patterns;
+mod inst;
 
 use super::super::settings as shared_settings;
 #[cfg(feature = "testing_hooks")]
