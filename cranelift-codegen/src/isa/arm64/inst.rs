@@ -197,8 +197,8 @@ impl MachInst for Arm64Inst {
         &mut self.regs[idx]
     }
     fn size(&self) -> usize {
-        // TODO
-        0
+        // The joys of RISC: every ARM instruction is 4 bytes long.
+        4
     }
     fn emit(&self, sink: &mut dyn CodeSink) {
         // TODO
@@ -222,5 +222,18 @@ impl Arm64Inst {
             idx as Arm64InstRegIdx
         });
         self.args.push(arg);
+    }
+
+    pub fn new_with_args(op: Arm64Op, args: &[Arm64Arg<MachReg>]) -> Arm64Inst {
+        let mut inst = Arm64Inst::new(op);
+        for arg in args {
+            inst.add_arg(arg.clone());
+        }
+        inst
+    }
+    pub fn new_with_args_cc(op: Arm64Op, cc: Arm64Cond, args: &[Arm64Arg<MachReg>]) -> Arm64Inst {
+        let mut inst = Arm64Inst::new_with_args(op, args);
+        inst.cond = Some(cc);
+        inst
     }
 }
