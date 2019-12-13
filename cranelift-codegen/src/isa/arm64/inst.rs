@@ -5,6 +5,10 @@ use crate::machinst::*;
 use smallvec::SmallVec;
 use std::fmt::Debug;
 
+// TODO: generalize the below into machine-independent part and machine-dependent part. Only the
+// argument modes and argument contexts should be machine-dependent. Put the general framework in
+// crate::machinst.
+
 type Arm64InstArgs = SmallVec<[Arm64Arg<Arm64InstRegIdx>; 3]>;
 type Arm64InstRegs = SmallVec<[MachReg; 3]>;
 type Arm64InstRegIdx = u8;
