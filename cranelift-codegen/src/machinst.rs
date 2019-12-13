@@ -2,8 +2,9 @@
 
 use crate::binemit::CodeSink;
 use crate::ir::{Opcode, Type};
-use crate::isa::registers::RegClassMask;
+use crate::isa::registers::{RegClass, RegClassMask};
 use crate::isa::RegUnit;
+use crate::HashMap;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -11,11 +12,35 @@ use alloc::vec::Vec;
 /// (post-regalloc).
 #[derive(Clone, Debug)]
 pub enum MachReg {
-    /// A virtual register, with some constraints that specify how it should be mapped to a real
-    /// register during register allocation.
-    Virtual(usize, MachRegConstraint),
+    /// A virtual register.
+    Virtual(usize),
     /// A real register assigned by register allocation.
     Allocated(RegUnit),
+}
+
+impl MachReg {
+    /// If this is a virtual register, return the virtual register number.
+    pub fn as_virtual(&self) -> Option<usize> {
+        match self {
+            &MachReg::Virtual(index) => Some(index),
+            _ => None,
+        }
+    }
+    /// If this is an allocated register, return the concrete machine register number.
+    pub fn as_allocated(&self) -> Option<RegUnit> {
+        match self {
+            &MachReg::Allocated(reg) => Some(reg),
+            _ => None,
+        }
+    }
+    /// Is this a virtual register?
+    pub fn is_virtual(&self) -> bool {
+        self.as_virtual().is_some()
+    }
+    /// Is this an allocated register?
+    pub fn is_allocated(&self) -> bool {
+        self.as_allocated().is_some()
+    }
 }
 
 /// A constraint on a virtual register in a machine instruction.
@@ -25,6 +50,63 @@ pub enum MachRegConstraint {
     RegClass(RegClassMask),
     /// A particular, fixed register.
     FixedReg(RegUnit),
+}
+
+impl MachRegConstraint {
+    /// Create a machine-register constraint that chooses a register from a single register class
+    /// (or its subclasses).
+    pub fn from_class(rc: RegClass) -> MachRegConstraint {
+        MachRegConstraint::RegClass(rc.subclasses)
+    }
+    /// Create a machine-register constraint that chooses a fixed register.
+    pub fn from_fixed(ru: RegUnit) -> MachRegConstraint {
+        MachRegConstraint::FixedReg(ru)
+    }
+}
+
+/// A simple counter that allocates virtual-register numbers.
+pub struct MachRegCounter {
+    next: usize,
+}
+
+impl MachRegCounter {
+    /// Create a new virtual-register number allocator.
+    pub fn new() -> MachRegCounter {
+        MachRegCounter { next: 1 }
+    }
+
+    /// Allocate a fresh virtual register number.
+    pub fn alloc(&mut self) -> MachReg {
+        let idx = self.next;
+        self.next += 1;
+        MachReg::Virtual(idx)
+    }
+}
+
+/// A set of constraints on virtual registers, typically held at the Function level to be used by
+/// regalloc.
+pub struct MachRegConstraints {
+    constraints: Vec<(MachReg, MachRegConstraint)>,
+}
+
+impl MachRegConstraints {
+    /// Create a new set of register constraints.
+    pub fn new() -> MachRegConstraints {
+        MachRegConstraints {
+            constraints: Vec::new(),
+        }
+    }
+
+    /// Add a constraint to a register.
+    pub fn add(&mut self, reg: &MachReg, constraint: MachRegConstraint) {
+        assert!(reg.is_virtual());
+        self.constraints.push((reg.clone(), constraint));
+    }
+
+    /// Return a list of all constraints with their associated registers.
+    pub fn constraints(&self) -> &[(MachReg, MachRegConstraint)] {
+        &self.constraints[..]
+    }
 }
 
 /// A machine instruction's virtual interface, allowing the architecture-independent backend
@@ -47,5 +129,3 @@ pub trait MachInst {
     // TODO: relocation for addresses/branch targets?
     // TODO: has_side_effects to inhibit DCE?
 }
-
-// TODO: pass over function (backward, tracking single vs multi-use / roots) to generate machinsts.

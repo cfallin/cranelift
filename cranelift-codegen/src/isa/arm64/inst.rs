@@ -201,7 +201,7 @@ impl MachInst for Arm64Inst {
         4
     }
     fn emit(&self, sink: &mut dyn CodeSink) {
-        // TODO
+        // TODO.
     }
 }
 
@@ -231,6 +231,7 @@ impl Arm64Inst {
         }
         inst
     }
+
     pub fn new_with_args_cc(op: Arm64Op, cc: Arm64Cond, args: &[Arm64Arg<MachReg>]) -> Arm64Inst {
         let mut inst = Arm64Inst::new_with_args(op, args);
         inst.cond = Some(cc);

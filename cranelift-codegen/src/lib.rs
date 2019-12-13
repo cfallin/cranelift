@@ -91,6 +91,7 @@ mod iterators;
 mod legalizer;
 mod licm;
 mod nan_canonicalization;
+mod num_uses;
 mod partition_slice;
 mod postopt;
 mod predicates;
