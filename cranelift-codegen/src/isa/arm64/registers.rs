@@ -5,14 +5,6 @@ use crate::isa::registers::{RegBank, RegClass, RegClassData, RegInfo, RegUnit};
 
 include!(concat!(env!("OUT_DIR"), "/registers-arm64.rs"));
 
-pub fn regclass_for_type(ty: Type) -> RegClass {
-    if ty.is_int() || ty.is_bool() {
-        GPR
-    } else {
-        FPR
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::INFO;

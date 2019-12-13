@@ -11,6 +11,9 @@ use core::fmt::Debug;
 use core::iter::Sum;
 use smallvec::SmallVec;
 
+pub mod lower;
+pub mod pattern;
+
 /// A machine register in a machine instruction. Can be virtual (pre-regalloc) or allocated
 /// (post-regalloc).
 #[derive(Clone, Debug)]
@@ -124,6 +127,8 @@ pub trait MachInstOp: Clone + Debug {
 pub trait MachInstArg: Clone + Debug {
     /// How many register slots this argument has.
     fn num_regs(&self) -> usize;
+    /// What register class should be used for a value of the given type?
+    fn regclass_for_type(ty: Type) -> RegClass;
 }
 
 /// The argument slots of a machine instruction, parameterized on the architecture-specific

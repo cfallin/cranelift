@@ -1,28 +1,28 @@
-//! This module implements lowering (instruction selection) from Cranelift IR to Arm64 instructions
-//! with virtual registers. This is *almost* the final machine code, except for register
-//! allocation.
+//! This module implements lowering (instruction selection) from Cranelift IR to machine
+//! instructions with virtual registers, with lookup tables as built by the backend. This is
+//! *almost* the final machine code, except for register allocation.
+
+use crate::cursor::FuncCursor;
+use crate::entity::SecondaryMap;
+use crate::ir::{Ebb, Function, Inst, Opcode, Value};
+use crate::machinst::*;
+use crate::machinst::{MachInst, MachInstArg, MachInstOp};
+use crate::num_uses::NumUses;
 
 use alloc::vec::Vec;
 
-use crate::cursor::FuncCursor;
-use crate::ir::{Ebb, Function, Inst, Opcode};
-use crate::isa::arm64::inst::*;
-use crate::isa::arm64::registers::regclass_for_type;
-use crate::isa::machinst::*;
-use crate::num_uses::NumUses;
-
-/// A block of Arm64 instructions with virtual registers.
-struct Arm64Block {
-    insts: Vec<Arm64Inst>,
+/// A block of machine instructions with virtual registers.
+struct MachInstBlock<Op: MachInstOp, Arg: MachInstArg> {
+    insts: Vec<MachInst<Op, Arg>>,
 }
 
-struct Arm64LowerCtx<'a> {
+struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
     func: &'a Function,
     ebb: Ebb,
     reg_ctr: &'a mut MachRegCounter,
     constraints: &'a mut MachRegConstraints,
     num_uses: &'a NumUses,
-    rev_insts: Vec<Arm64Inst>,
+    rev_insts: Vec<MachInst<Op, Arg>>,
     vregs: SecondaryMap<Value, MachReg>,
 }
 
@@ -40,29 +40,29 @@ struct Arm64LowerCtx<'a> {
 //   - Recursively:
 //     - Look up
 //
-impl<'a> Arm64LowerCtx<'a> {
+impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
     fn new(
         func: &'a Function,
         ebb: Ebb,
         num_uses: &'a NumUses,
         reg_ctr: &'a mut MachRegCounter,
-        constraints: &'a MachRegConstraints,
-    ) -> Arm64LowerCtx<'a> {
-        Arm64LowerCtx {
+        constraints: &'a mut MachRegConstraints,
+    ) -> MachInstLowerCtx<'a, Op, Arg> {
+        MachInstLowerCtx {
             func,
             ebb,
             reg_ctr,
             constraints,
             num_uses,
             rev_insts: vec![],
-            vregs: SecondaryMap::new(),
+            vregs: SecondaryMap::with_default(MachReg::Virtual(0)),
         }
     }
 
     fn alloc_vreg_for_value(&mut self, v: Value) -> MachReg {
         let r = self.reg_ctr.alloc();
         let ty = self.func.dfg.value_type(v);
-        let rc = regclass_for_type(ty);
+        let rc = Arg::regclass_for_type(ty);
         self.constraints.add(&r, MachRegConstraint::from_class(rc));
         self.vregs[v] = r.clone();
         r
@@ -70,19 +70,18 @@ impl<'a> Arm64LowerCtx<'a> {
 
     fn alloc_vregs(&mut self) {
         for param in self.func.dfg.ebb_params(self.ebb) {
-            self.alloc_vreg_for_value(param);
+            self.alloc_vreg_for_value(*param);
         }
-        let mut curs = FuncCursor::new(self.func).at_top(ebb);
-        while let Some(inst) = curs.next_inst() {
+        for inst in self.func.layout.ebb_insts(self.ebb) {
             let data = &self.func.dfg[inst];
             for result in self.func.dfg.inst_results(inst) {
-                self.alloc_vreg_for_value(result);
+                self.alloc_vreg_for_value(*result);
             }
         }
     }
 
-    fn to_insts(self) -> Vec<Arm64Inst> {
-        let v = self.rev_insts;
+    fn to_insts(self) -> Vec<MachInst<Op, Arg>> {
+        let mut v = self.rev_insts;
         v.reverse();
         v
     }
@@ -92,22 +91,20 @@ impl<'a> Arm64LowerCtx<'a> {
     }
 }
 
-impl Arm64Block {
+impl<Op: MachInstOp, Arg: MachInstArg> MachInstBlock<Op, Arg> {
     pub fn lower(
         func: &Function,
-        num_uses: &NumUses,
         ebb: Ebb,
+        num_uses: &NumUses,
         reg_ctr: &mut MachRegCounter,
         constraints: &mut MachRegConstraints,
-    ) -> Arm64Block {
-        let mut curs = FuncCursor::new(func).at_bottom(ebb);
-        let mut insts = vec![];
-        let mut ctx = Arm64LowerCtx::new(func, num_uses, reg_ctr, constraints);
+    ) -> MachInstBlock<Op, Arg> {
+        let mut ctx = MachInstLowerCtx::new(func, ebb, num_uses, reg_ctr, constraints);
         ctx.alloc_vregs();
-        while let Some(ins) = curs.prev_inst() {
+        for ins in func.layout.ebb_insts(ebb).rev() {
             ctx.lower_inst(ins);
         }
-        Arm64Block {
+        MachInstBlock {
             insts: ctx.to_insts(),
         }
     }

@@ -1,5 +1,8 @@
 //! This module defines `Arm64Inst` and friends, which implement `MachInst`.
 
+use crate::ir::Type;
+use crate::isa::arm64::registers::*;
+use crate::isa::registers::RegClass;
 use crate::mach_ops;
 use crate::machinst::*;
 
@@ -53,6 +56,14 @@ impl MachInstArg for Arm64Arg {
             &Arm64Arg::Imm(..) => 0,
             &Arm64Arg::Reg | &Arm64Arg::ShiftedReg(..) | &Arm64Arg::ExtendedReg(..) => 1,
             &Arm64Arg::Mem(ref m) => m.num_regs(),
+        }
+    }
+
+    fn regclass_for_type(ty: Type) -> RegClass {
+        if ty.is_int() || ty.is_bool() {
+            GPR
+        } else {
+            FPR
         }
     }
 }
