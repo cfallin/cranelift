@@ -1,14 +1,10 @@
 TODO:
 
-- encoding backend macro: generate fixed-size insn with bit pattern
+- Lookup tables for insn lowering
 
-- Write a few patterns for ADD instructions
-  - match particular register classes and sizes
+- Test lowering with some simple inputs: wire it up to dump blocks
 
-- Handle simple mapping of insns to encodings: isa.legal_encodings(), isa.encode()
-- Ensure that enc_info returns the proper info (size, constraints) for these encodings
-- Put together a binemit impl like x86's, based on thunks/helpers with patterns
-- Fill out basic ALU insns
+- Hook up regalloc to lowered blocks; replace regs with real regs (and insert
+  moves/spills/fills where necessary)
 
-- Come up with a reasonable legalizer pattern impl: match *one* insn and
-  replace with N ("template legalizer")
+- Encoding backend
