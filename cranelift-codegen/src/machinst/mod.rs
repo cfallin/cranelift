@@ -149,7 +149,18 @@ pub trait MachInstArgGetKind {
 pub type MachInstArgs<Arg: MachInstArg> = SmallVec<[Arg; 3]>;
 
 /// The register slots of a machine instruction.
-pub type MachInstRegs = SmallVec<[MachReg; 3]>;
+pub type MachInstRegs = SmallVec<[(MachReg, MachRegDefUse); 3]>;
+
+/// Is a machine register reference a def, an use, or both?
+#[derive(Clone, Debug)]
+pub enum MachRegDefUse {
+    /// A definition only.
+    Def,
+    /// An use only.
+    Use,
+    /// Both an use and a definition.
+    DefUse,
+}
 
 /// A machine instruction.
 pub struct MachInst<Op: MachInstOp, Arg: MachInstArg> {
@@ -173,20 +184,35 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInst<Op, Arg> {
     }
 
     /// Add an argument to a machine instruction.
-    pub fn add_arg(&mut self, arg: Arg, regs: &[MachReg]) {
-        assert!(regs.len() == arg.num_regs());
-        self.regs.extend(regs.iter().cloned());
+    pub fn with_arg(mut self, arg: Arg) -> Self {
+        assert!(arg.num_regs() == 0);
         self.args.push(arg);
+        self
     }
 
-    /// Create a new machine instruction with the given arguments and registers.
-    pub fn new_with_args(op: Op, args: &[Arg], regs: &[MachReg]) -> MachInst<Op, Arg> {
-        let expected: usize = args.iter().map(|a| a.num_regs()).sum();
-        assert!(expected == regs.len());
-        let mut inst = MachInst::new(op);
-        inst.args.extend(args.iter().cloned());
-        inst.regs.extend(regs.iter().cloned());
-        inst
+    /// Add an argument that takes a single register, as a def.
+    pub fn with_arg_reg_def(mut self, arg: Arg, reg: MachReg) -> Self {
+        assert!(arg.num_regs() == 1);
+        self.args.push(arg);
+        self.regs.push((reg, MachRegDefUse::Def));
+        self
+    }
+
+    /// Add an argument that takes a single register, as an use.
+    pub fn with_arg_reg_use(mut self, arg: Arg, reg: MachReg) -> Self {
+        assert!(arg.num_regs() == 1);
+        self.args.push(arg);
+        self.regs.push((reg, MachRegDefUse::Use));
+        self
+    }
+
+    /// Add an argument that takes two registers, both as uses.
+    pub fn with_arg_2reg(mut self, arg: Arg, reg1: MachReg, reg2: MachReg) -> Self {
+        assert!(arg.num_regs() == 2);
+        self.args.push(arg);
+        self.regs.push((reg1, MachRegDefUse::Use));
+        self.regs.push((reg2, MachRegDefUse::Use));
+        self
     }
 
     /// Returns the name of this machine instruction.
@@ -201,12 +227,28 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInst<Op, Arg> {
 
     /// Returns a borrow to the given register argument.
     fn reg(&self, idx: usize) -> &MachReg {
-        &self.regs[idx]
+        &self.regs[idx].0
     }
 
     /// Returns a borrow to the given register argument, allowing mutation.
     fn reg_mut(&mut self, idx: usize) -> &mut MachReg {
-        &mut self.regs[idx]
+        &mut self.regs[idx].0
+    }
+
+    /// Is the register a def?
+    fn reg_is_def(&self, idx: usize) -> bool {
+        match &self.regs[idx].1 {
+            &MachRegDefUse::Def | &MachRegDefUse::DefUse => true,
+            _ => false,
+        }
+    }
+
+    /// Is the register an use?
+    fn reg_is_use(&self, idx: usize) -> bool {
+        match &self.regs[idx].1 {
+            &MachRegDefUse::Use | &MachRegDefUse::DefUse => true,
+            _ => false,
+        }
     }
 
     // TODO: encoder (size, emit); branch relaxation; relocations.

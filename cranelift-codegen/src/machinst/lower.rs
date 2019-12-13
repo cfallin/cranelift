@@ -98,7 +98,7 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
     }
 
     /// Look up the register for a given value.
-    pub fn lookup_reg(&self, v: Value) -> MachReg {
+    pub fn reg(&self, v: Value) -> MachReg {
         self.vregs[v].clone()
     }
 }
