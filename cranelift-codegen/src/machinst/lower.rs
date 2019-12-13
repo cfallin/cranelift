@@ -8,17 +8,18 @@ use crate::ir::{Ebb, Function, Inst, Opcode, Value};
 use crate::machinst::*;
 use crate::machinst::{MachInst, MachInstArg, MachInstOp};
 use crate::num_uses::NumUses;
+use std::mem;
 
 use alloc::vec::Vec;
 
 /// A block of machine instructions with virtual registers.
-struct MachInstBlock<Op: MachInstOp, Arg: MachInstArg> {
+pub struct MachInstBlock<Op: MachInstOp, Arg: MachInstArg> {
     insts: Vec<MachInst<Op, Arg>>,
 }
 
-struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
+/// A carrier struct for context related to lowering a function into machine instructions.
+pub struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
     func: &'a Function,
-    ebb: Ebb,
     reg_ctr: &'a mut MachRegCounter,
     constraints: &'a mut MachRegConstraints,
     num_uses: &'a NumUses,
@@ -37,20 +38,18 @@ struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
 //      can fit in a single register of some class.)
 //
 // - Iterate through the instructions backward, examining each instruction in turn.
-//   - Recursively:
-//     - Look up
 //
+// TODO: register constraints and move-insertion points for regalloc.
+
 impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
     fn new(
         func: &'a Function,
-        ebb: Ebb,
         num_uses: &'a NumUses,
         reg_ctr: &'a mut MachRegCounter,
         constraints: &'a mut MachRegConstraints,
     ) -> MachInstLowerCtx<'a, Op, Arg> {
         MachInstLowerCtx {
             func,
-            ebb,
             reg_ctr,
             constraints,
             num_uses,
@@ -68,44 +67,62 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
         r
     }
 
-    fn alloc_vregs(&mut self) {
-        for param in self.func.dfg.ebb_params(self.ebb) {
-            self.alloc_vreg_for_value(*param);
-        }
-        for inst in self.func.layout.ebb_insts(self.ebb) {
-            let data = &self.func.dfg[inst];
-            for result in self.func.dfg.inst_results(inst) {
-                self.alloc_vreg_for_value(*result);
+    fn alloc_vregs_for_func(&mut self) {
+        for ebb in self.func.layout.ebbs() {
+            for param in self.func.dfg.ebb_params(ebb) {
+                self.alloc_vreg_for_value(*param);
+            }
+            for inst in self.func.layout.ebb_insts(ebb) {
+                let data = &self.func.dfg[inst];
+                for result in self.func.dfg.inst_results(inst) {
+                    self.alloc_vreg_for_value(*result);
+                }
             }
         }
     }
 
-    fn to_insts(self) -> Vec<MachInst<Op, Arg>> {
-        let mut v = self.rev_insts;
+    fn take_insts(&mut self) -> Vec<MachInst<Op, Arg>> {
+        let mut v = mem::replace(&mut self.rev_insts, vec![]);
         v.reverse();
         v
     }
 
     fn lower_inst(&mut self, ins: Inst) {
-        // TODO.
+        // TODO. Use tables.
+    }
+
+    /// Emit a machine instruction. The machine instructions will eventually be ordered in reverse
+    /// of the calls to this function.
+    pub fn emit(&mut self, inst: MachInst<Op, Arg>) {
+        self.rev_insts.push(inst);
+    }
+
+    /// Look up the register for a given value.
+    pub fn lookup_reg(&self, v: Value) -> MachReg {
+        self.vregs[v].clone()
     }
 }
 
 impl<Op: MachInstOp, Arg: MachInstArg> MachInstBlock<Op, Arg> {
+    /// Lower a function to a list of blocks of machine instructions.
     pub fn lower(
         func: &Function,
-        ebb: Ebb,
         num_uses: &NumUses,
         reg_ctr: &mut MachRegCounter,
         constraints: &mut MachRegConstraints,
-    ) -> MachInstBlock<Op, Arg> {
-        let mut ctx = MachInstLowerCtx::new(func, ebb, num_uses, reg_ctr, constraints);
-        ctx.alloc_vregs();
-        for ins in func.layout.ebb_insts(ebb).rev() {
-            ctx.lower_inst(ins);
+    ) -> Vec<MachInstBlock<Op, Arg>> {
+        let mut ctx = MachInstLowerCtx::new(func, num_uses, reg_ctr, constraints);
+        ctx.alloc_vregs_for_func();
+        let mut ret = vec![];
+        for ebb in func.layout.ebbs() {
+            for ins in func.layout.ebb_insts(ebb).rev() {
+                ctx.lower_inst(ins);
+            }
+            let block = MachInstBlock {
+                insts: ctx.take_insts(),
+            };
+            ret.push(block);
         }
-        MachInstBlock {
-            insts: ctx.to_insts(),
-        }
+        ret
     }
 }

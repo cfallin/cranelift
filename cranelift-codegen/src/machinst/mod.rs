@@ -10,6 +10,7 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::iter::Sum;
 use smallvec::SmallVec;
+use std::hash::Hash;
 
 pub mod lower;
 pub mod pattern;
@@ -121,14 +122,26 @@ pub trait MachInstOp: Clone + Debug {
     fn name(&self) -> &'static str;
 }
 
+/// An enum type that defines the kinds of a machine-specific argument.
+pub trait MachInstArgKind: Clone + Debug + Hash + PartialEq + Eq {}
+
 /// The trait implemented by an architecture-specific argument data blob. The purpose of this trait
 /// is to allow the arch-specific part to inform the arch-independent part how many register slots
 /// the argument has.
-pub trait MachInstArg: Clone + Debug {
+pub trait MachInstArg: Clone + Debug + MachInstArgGetKind {
     /// How many register slots this argument has.
     fn num_regs(&self) -> usize;
     /// What register class should be used for a value of the given type?
     fn regclass_for_type(ty: Type) -> RegClass;
+}
+
+/// A helper trait providing the link between a MachInstArg and its Kind. Automatically implemented
+/// by the `mach_args!` macro.
+pub trait MachInstArgGetKind {
+    /// The kind enum for this arg type.
+    type Kind: MachInstArgKind;
+    /// What kind of argument is this?
+    fn kind(&self) -> Self::Kind;
 }
 
 /// The argument slots of a machine instruction, parameterized on the architecture-specific
@@ -204,7 +217,7 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInst<Op, Arg> {
 macro_rules! mach_ops {
     ($name:ident, { $($op:ident),* }) => {
         #[derive(Clone, Debug, PartialEq, Eq)]
-        enum $name {
+        pub enum $name {
             $($op),*
         }
 
@@ -216,4 +229,38 @@ macro_rules! mach_ops {
             }
         }
     };
+}
+
+/// A macro to allow a machine backend to define its argument type.
+#[macro_export]
+macro_rules! mach_args {
+    ($name:ident, $kind:ident, { $($op:ident($($oparg:tt)*)),* }) => {
+        /// Kinds of machine-specific argument.
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        pub enum $kind {
+            $($op),*
+        }
+
+        /// Machine-specific instruction argument type.
+        #[derive(Clone, Debug)]
+        pub enum $name {
+            $(
+                $op($($oparg)*)
+            ),*
+        }
+
+        impl crate::machinst::MachInstArgKind for $kind {}
+
+        impl crate::machinst::MachInstArgGetKind for $name {
+            type Kind = $kind;
+
+            fn kind(&self) -> Self::Kind {
+                match self {
+                    $(
+                        &$name::$op(..) => $kind::$op
+                    ),*
+                }
+            }
+        }
+    }
 }

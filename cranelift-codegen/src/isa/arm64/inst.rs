@@ -3,8 +3,8 @@
 use crate::ir::Type;
 use crate::isa::arm64::registers::*;
 use crate::isa::registers::RegClass;
-use crate::mach_ops;
 use crate::machinst::*;
+use crate::{mach_args, mach_ops};
 
 mach_ops!(Arm64Op, {
     Add,
@@ -41,20 +41,19 @@ mach_ops!(Arm64Op, {
     Csel
 });
 
-#[derive(Clone, Debug)]
-enum Arm64Arg {
+mach_args!(Arm64Arg, Arm64ArgKind, {
     Imm(Arm64ShiftedImm),
-    Reg,
+    Reg(),
     ShiftedReg(Arm64ShiftOp, usize),
     ExtendedReg(Arm64ExtendOp, usize),
-    Mem(Arm64MemArg),
-}
+    Mem(Arm64MemArg)
+});
 
 impl MachInstArg for Arm64Arg {
     fn num_regs(&self) -> usize {
         match self {
             &Arm64Arg::Imm(..) => 0,
-            &Arm64Arg::Reg | &Arm64Arg::ShiftedReg(..) | &Arm64Arg::ExtendedReg(..) => 1,
+            &Arm64Arg::Reg(..) | &Arm64Arg::ShiftedReg(..) | &Arm64Arg::ExtendedReg(..) => 1,
             &Arm64Arg::Mem(ref m) => m.num_regs(),
         }
     }
@@ -68,22 +67,25 @@ impl MachInstArg for Arm64Arg {
     }
 }
 
+/// A shifted immediate value.
 #[derive(Clone, Debug)]
-struct Arm64ShiftedImm {
+pub struct Arm64ShiftedImm {
     bits: usize,
     shift: usize,
 }
 
+/// A shift operator for a register or immediate.
 #[derive(Clone, Debug)]
-enum Arm64ShiftOp {
+pub enum Arm64ShiftOp {
     ASR,
     LSR,
     LSL,
     ROR,
 }
 
+/// An extend operator for a register.
 #[derive(Clone, Debug)]
-enum Arm64ExtendOp {
+pub enum Arm64ExtendOp {
     SXTB,
     SXTH,
     SXTW,
@@ -94,8 +96,9 @@ enum Arm64ExtendOp {
     UXTX,
 }
 
+/// A memory argument to load/store, encapsulating the possible addressing modes.
 #[derive(Clone, Debug)]
-enum Arm64MemArg {
+pub enum Arm64MemArg {
     Base,
     BaseImm(usize),
     BaseOffsetShifted(usize),
