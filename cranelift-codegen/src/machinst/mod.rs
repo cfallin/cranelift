@@ -7,6 +7,9 @@ use crate::isa::RegUnit;
 use crate::HashMap;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::iter::Sum;
+use smallvec::SmallVec;
 
 /// A machine register in a machine instruction. Can be virtual (pre-regalloc) or allocated
 /// (post-regalloc).
@@ -109,23 +112,103 @@ impl MachRegConstraints {
     }
 }
 
-/// A machine instruction's virtual interface, allowing the architecture-independent backend
-/// (regalloc, code emission) to perform register allocation, reason about dependences, and emit
-/// code.
-pub trait MachInst {
-    /// Returns the name of this machine instruction.
+/// The trait implemented by an architecture-specific opcode type.
+pub trait MachInstOp: Clone + Debug {
+    /// The name of the opcode.
     fn name(&self) -> &'static str;
-    /// Returns the number of register arguments this machine instruction has.
+}
+
+/// The trait implemented by an architecture-specific argument data blob. The purpose of this trait
+/// is to allow the arch-specific part to inform the arch-independent part how many register slots
+/// the argument has.
+pub trait MachInstArg: Clone + Debug {
+    /// How many register slots this argument has.
     fn num_regs(&self) -> usize;
+}
+
+/// The argument slots of a machine instruction, parameterized on the architecture-specific
+/// argument data.
+pub type MachInstArgs<Arg: MachInstArg> = SmallVec<[Arg; 3]>;
+
+/// The register slots of a machine instruction.
+pub type MachInstRegs = SmallVec<[MachReg; 3]>;
+
+/// A machine instruction.
+pub struct MachInst<Op: MachInstOp, Arg: MachInstArg> {
+    /// The opcode.
+    pub op: Op,
+    /// The argument data: this is target-specific. It does not include the registers; these are
+    /// kept separately so that the machine-independent regalloc can access them.
+    pub args: MachInstArgs<Arg>,
+    /// The registers accessed and/or modified by this instruction.
+    pub regs: MachInstRegs,
+}
+
+impl<Op: MachInstOp, Arg: MachInstArg> MachInst<Op, Arg> {
+    /// Create a new machine instruction.
+    pub fn new(op: Op) -> MachInst<Op, Arg> {
+        MachInst {
+            op,
+            args: SmallVec::new(),
+            regs: SmallVec::new(),
+        }
+    }
+
+    /// Add an argument to a machine instruction.
+    pub fn add_arg(&mut self, arg: Arg, regs: &[MachReg]) {
+        assert!(regs.len() == arg.num_regs());
+        self.regs.extend(regs.iter().cloned());
+        self.args.push(arg);
+    }
+
+    /// Create a new machine instruction with the given arguments and registers.
+    pub fn new_with_args(op: Op, args: &[Arg], regs: &[MachReg]) -> MachInst<Op, Arg> {
+        let expected: usize = args.iter().map(|a| a.num_regs()).sum();
+        assert!(expected == regs.len());
+        let mut inst = MachInst::new(op);
+        inst.args.extend(args.iter().cloned());
+        inst.regs.extend(regs.iter().cloned());
+        inst
+    }
+
+    /// Returns the name of this machine instruction.
+    pub fn name(&self) -> &'static str {
+        self.op.name()
+    }
+
+    /// Returns the number of register arguments this machine instruction has.
+    fn num_regs(&self) -> usize {
+        self.regs.len()
+    }
+
     /// Returns a borrow to the given register argument.
-    fn reg(&self, idx: usize) -> &MachReg;
+    fn reg(&self, idx: usize) -> &MachReg {
+        &self.regs[idx]
+    }
+
     /// Returns a borrow to the given register argument, allowing mutation.
-    fn reg_mut(&mut self, idx: usize) -> &mut MachReg;
-    /// Returns the encoded size of this instruction in the machine code.
-    fn size(&self) -> usize;
-    /// Emits machine code for this instruction.
-    fn emit(&self, sink: &mut CodeSink);
-    // TODO: branch relaxation?
-    // TODO: relocation for addresses/branch targets?
-    // TODO: has_side_effects to inhibit DCE?
+    fn reg_mut(&mut self, idx: usize) -> &mut MachReg {
+        &mut self.regs[idx]
+    }
+
+    // TODO: encoder (size, emit); branch relaxation; relocations.
+}
+
+/// A macro to allow a machine backend to define an opcode type.
+#[macro_export]
+macro_rules! mach_ops {
+    ($name:ident, { $($op:ident),* }) => {
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        enum $name {
+            $($op),*
+        }
+
+        impl crate::machinst::MachInstOp for $name {
+            fn name(&self) -> &'static str {
+                match self {
+                    $($name::$op => stringify!($op)),*
+                }
+            }
+        }
+    };
 }
