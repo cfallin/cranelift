@@ -101,6 +101,16 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
     pub fn reg(&self, v: Value) -> MachReg {
         self.vregs[v].clone()
     }
+
+    /// Constrain a virtual register to a register class.
+    pub fn constrain_rc(&mut self, r: &MachReg, rc: RegClass) {
+        self.constraints.add(r, MachRegConstraint::from_class(rc));
+    }
+
+    /// Constrain a virtual register to a fixed physical register.
+    pub fn constrain_fixed(&mut self, r: &MachReg, ru: RegUnit) {
+        self.constraints.add(r, MachRegConstraint::from_fixed(ru));
+    }
 }
 
 impl<Op: MachInstOp, Arg: MachInstArg> MachInstBlock<Op, Arg> {

@@ -206,6 +206,14 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInst<Op, Arg> {
         self
     }
 
+    /// Add an argument that takes a single register, as an use/def.
+    pub fn with_arg_reg_use_def(mut self, arg: Arg, reg: MachReg) -> Self {
+        assert!(arg.num_regs() == 1);
+        self.args.push(arg);
+        self.regs.push((reg, MachRegDefUse::DefUse));
+        self
+    }
+
     /// Add an argument that takes two registers, both as uses.
     pub fn with_arg_2reg(mut self, arg: Arg, reg1: MachReg, reg2: MachReg) -> Self {
         assert!(arg.num_regs() == 2);

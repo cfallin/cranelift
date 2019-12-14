@@ -6,7 +6,7 @@ use crate::isa::registers::RegClass;
 use crate::machinst::*;
 use crate::{mach_args, mach_ops};
 
-mach_ops!(Arm64Op, {
+mach_ops!(Op, {
     Add,
     AddS,
     Sub,
@@ -41,20 +41,20 @@ mach_ops!(Arm64Op, {
     Csel
 });
 
-mach_args!(Arm64Arg, Arm64ArgKind, {
-    Imm(Arm64ShiftedImm),
+mach_args!(Arg, ArgKind, {
+    Imm(ShiftedImm),
     Reg(),
-    ShiftedReg(Arm64ShiftOp, usize),
-    ExtendedReg(Arm64ExtendOp, usize),
-    Mem(Arm64MemArg)
+    ShiftedReg(ShiftOp, usize),
+    ExtendedReg(ExtendOp, usize),
+    Mem(MemArg)
 });
 
-impl MachInstArg for Arm64Arg {
+impl MachInstArg for Arg {
     fn num_regs(&self) -> usize {
         match self {
-            &Arm64Arg::Imm(..) => 0,
-            &Arm64Arg::Reg(..) | &Arm64Arg::ShiftedReg(..) | &Arm64Arg::ExtendedReg(..) => 1,
-            &Arm64Arg::Mem(ref m) => m.num_regs(),
+            &Arg::Imm(..) => 0,
+            &Arg::Reg(..) | &Arg::ShiftedReg(..) | &Arg::ExtendedReg(..) => 1,
+            &Arg::Mem(ref m) => m.num_regs(),
         }
     }
 
@@ -69,14 +69,14 @@ impl MachInstArg for Arm64Arg {
 
 /// A shifted immediate value.
 #[derive(Clone, Debug)]
-pub struct Arm64ShiftedImm {
+pub struct ShiftedImm {
     bits: usize,
     shift: usize,
 }
 
 /// A shift operator for a register or immediate.
 #[derive(Clone, Debug)]
-pub enum Arm64ShiftOp {
+pub enum ShiftOp {
     ASR,
     LSR,
     LSL,
@@ -85,7 +85,7 @@ pub enum Arm64ShiftOp {
 
 /// An extend operator for a register.
 #[derive(Clone, Debug)]
-pub enum Arm64ExtendOp {
+pub enum ExtendOp {
     SXTB,
     SXTH,
     SXTW,
@@ -98,7 +98,7 @@ pub enum Arm64ExtendOp {
 
 /// A memory argument to load/store, encapsulating the possible addressing modes.
 #[derive(Clone, Debug)]
-pub enum Arm64MemArg {
+pub enum MemArg {
     Base,
     BaseImm(usize),
     BaseOffsetShifted(usize),
@@ -107,21 +107,21 @@ pub enum Arm64MemArg {
     PCRel(usize), // TODO: what is the right type for a label reference?
 }
 
-impl Arm64MemArg {
+impl MemArg {
     fn num_regs(&self) -> usize {
         match self {
-            &Arm64MemArg::Base => 1,
-            &Arm64MemArg::BaseImm(..) => 1,
-            &Arm64MemArg::BaseOffsetShifted(..) => 2,
-            &Arm64MemArg::BaseImmPreIndexed(..) => 1,
-            &Arm64MemArg::BaseImmPostIndexed(..) => 1,
-            &Arm64MemArg::PCRel(..) => 0,
+            &MemArg::Base => 1,
+            &MemArg::BaseImm(..) => 1,
+            &MemArg::BaseOffsetShifted(..) => 2,
+            &MemArg::BaseImmPreIndexed(..) => 1,
+            &MemArg::BaseImmPostIndexed(..) => 1,
+            &MemArg::PCRel(..) => 0,
         }
     }
 }
 
 #[derive(Clone, Debug)]
-enum Arm64Cond {
+enum Cond {
     Eq,
     Ne,
     Hs,
@@ -138,4 +138,89 @@ enum Arm64Cond {
     Le,
     Al,
     Nv,
+}
+
+// -------------------- instruction constructors -------------------
+
+fn make_reg_reg_reg(op: Op, rd: MachReg, rn: MachReg, rm: MachReg) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg_reg_use(Arg::Reg(), rn)
+        .with_arg_reg_use(Arg::Reg(), rm)
+}
+
+fn make_reg_reg_rshift(
+    op: Op,
+    rd: MachReg,
+    rn: MachReg,
+    rm: MachReg,
+    shift: ShiftOp,
+    amt: usize,
+) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg_reg_use(Arg::Reg(), rn)
+        .with_arg_reg_use(Arg::ShiftedReg(shift, amt), rm)
+}
+
+fn make_reg_reg_rextend(
+    op: Op,
+    rd: MachReg,
+    rn: MachReg,
+    rm: MachReg,
+    ext: ExtendOp,
+    shift_amt: usize,
+) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg_reg_use(Arg::Reg(), rn)
+        .with_arg_reg_use(Arg::ExtendedReg(ext, shift_amt), rm)
+}
+
+fn make_reg_mem(op: Op, rd: MachReg, mem: MemArg, rn: MachReg) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg_reg_use(Arg::Mem(mem), rn)
+}
+
+fn make_reg_memupd(op: Op, rd: MachReg, mem: MemArg, rn: MachReg) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg_reg_use_def(Arg::Mem(mem), rn)
+}
+
+fn make_reg_mem2reg(
+    op: Op,
+    rd: MachReg,
+    mem: MemArg,
+    rn: MachReg,
+    rm: MachReg,
+) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg_2reg(Arg::Mem(mem), rn, rm)
+}
+
+fn make_mem_reg(op: Op, mem: MemArg, rn: MachReg, rd: MachReg) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_use(Arg::Mem(mem), rn)
+        .with_arg_reg_use(Arg::Reg(), rd)
+}
+
+fn make_memupd_reg(op: Op, mem: MemArg, rn: MachReg, rd: MachReg) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_use_def(Arg::Mem(mem), rn)
+        .with_arg_reg_use(Arg::Reg(), rd)
+}
+
+fn make_mem2reg_reg(
+    op: Op,
+    mem: MemArg,
+    rn: MachReg,
+    rm: MachReg,
+    rd: MachReg,
+) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_2reg(Arg::Mem(mem), rn, rm)
+        .with_arg_reg_use(Arg::Reg(), rd)
 }

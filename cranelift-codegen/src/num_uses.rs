@@ -24,6 +24,7 @@ impl NumUses {
         }
     }
 
+    /// Compute the NumUses analysis result for a function.
     pub fn compute(func: &Function) -> NumUses {
         let mut uses = NumUses::new();
         for ebb in func.layout.ebbs() {
@@ -54,10 +55,12 @@ impl NumUses {
         }
     }
 
-    fn use_count(&self, i: Inst) -> usize {
+    /// How many times is an instruction used?
+    pub fn use_count(&self, i: Inst) -> usize {
         self.uses[i] as usize
     }
 
+    /// Is an instruction used at all?
     fn is_used(&self, i: Inst) -> bool {
         self.use_count(i) > 0
     }
