@@ -14,6 +14,7 @@ use std::hash::Hash;
 
 pub mod lower;
 pub mod pattern;
+pub mod pattern_prefix;
 
 /// A machine register in a machine instruction. Can be virtual (pre-regalloc) or allocated
 /// (post-regalloc).
@@ -146,7 +147,7 @@ pub trait MachInstArgGetKind {
 
 /// The argument slots of a machine instruction, parameterized on the architecture-specific
 /// argument data.
-pub type MachInstArgs<Arg: MachInstArg> = SmallVec<[Arg; 3]>;
+pub type MachInstArgs<Arg> = SmallVec<[Arg; 3]>;
 
 /// The register slots of a machine instruction.
 pub type MachInstRegs = SmallVec<[(MachReg, MachRegDefUse); 3]>;

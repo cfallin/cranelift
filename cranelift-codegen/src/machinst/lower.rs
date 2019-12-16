@@ -6,8 +6,8 @@ use crate::cursor::FuncCursor;
 use crate::entity::SecondaryMap;
 use crate::ir::{Ebb, Function, Inst, Opcode, Value};
 use crate::machinst::*;
-use crate::machinst::{MachInst, MachInstArg, MachInstOp};
 use crate::num_uses::NumUses;
+use crate::HashSet;
 use std::mem;
 
 use alloc::vec::Vec;
@@ -25,6 +25,7 @@ pub struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
     num_uses: &'a NumUses,
     rev_insts: Vec<MachInst<Op, Arg>>,
     vregs: SecondaryMap<Value, MachReg>,
+    skipped: HashSet<Inst>,
 }
 
 // Basic strategy:
@@ -55,6 +56,7 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
             num_uses,
             rev_insts: vec![],
             vregs: SecondaryMap::with_default(MachReg::Virtual(0)),
+            skipped: HashSet::new(),
         }
     }
 
@@ -88,7 +90,26 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
     }
 
     fn lower_inst(&mut self, ins: Inst) {
-        // TODO. Use tables.
+        if self.skipped.contains(&ins) {
+            return;
+        }
+        /*
+        if let Some(lookup) = self.table.lookup(func, ins, num_uses) {
+            // Build the vectors of input registers and result registers to pass
+            // to the lowering action.
+            let input_regs = lookup.input_values.iter().map(|v| {
+                let v = self.func.dfg.resolve_aliases(*v);
+                self.reg(v)
+            }).collect::<SmallVec<_>>();
+            let result_regs = lookup.result_values.iter().map(|v| {
+                let v = self.func.dfg.resolve_aliases(*v);
+                self.reg(v)
+            }).collect::<SmallVec<_>>();
+            // Perform the lowering.
+            let action = lookup.action.unwrap();
+            action(self, &lookup.insts[..], &input_regs[..], &result_regs[..]);
+        }
+        */
     }
 
     /// Emit a machine instruction. The machine instructions will eventually be ordered in reverse
