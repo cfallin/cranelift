@@ -74,12 +74,3 @@ impl<Op: MachInstOp, Arg: MachInstArg> LowerTable<Op, Arg> {
         self.entries.get(&root_op).map(|v| &v[..])
     }
 }
-
-/// An action to perform when matching a tree of ops. Returns `true` if codegen was successful.
-/// Otherwise, another pattern/action should be used instead.
-pub type LowerAction<Op, Arg> = for<'a> fn(
-    ctx: &mut MachInstLowerCtx<'a, Op, Arg>,
-    insts: &[&'a InstructionData],
-    regs: &[MachReg],
-    results: &[MachReg],
-) -> bool;

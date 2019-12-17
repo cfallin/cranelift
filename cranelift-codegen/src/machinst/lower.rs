@@ -4,13 +4,34 @@
 
 use crate::cursor::FuncCursor;
 use crate::entity::SecondaryMap;
-use crate::ir::{Ebb, Function, Inst, Opcode, Value};
+use crate::ir::{Ebb, Function, Inst, Opcode, Value, InstructionData};
+use crate::machinst::pattern::*;
+use crate::machinst::pattern_prefix::*;
 use crate::machinst::*;
 use crate::num_uses::NumUses;
 use crate::HashSet;
+use std::marker::PhantomData;
 use std::mem;
 
 use alloc::vec::Vec;
+
+/// An action to perform when matching a tree of ops. Returns `true` if codegen was successful.
+/// Otherwise, another pattern/action should be used instead.
+pub type LowerAction<Op, Arg> = for<'a> fn(
+    ctx: &mut MachInstLowerCtx<'a, Op, Arg>,
+    insts: &[&'a InstructionData],
+    regs: &[MachReg],
+    results: &[MachReg],
+) -> bool;
+
+/// Dummy stub.
+pub struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
+    _phantom0: PhantomData<&'a ()>,
+    _phantom1: PhantomData<Op>,
+    _phantom2: PhantomData<Arg>,
+}
+
+/*
 
 /// A block of machine instructions with virtual registers.
 pub struct MachInstBlock<Op: MachInstOp, Arg: MachInstArg> {
@@ -20,12 +41,14 @@ pub struct MachInstBlock<Op: MachInstOp, Arg: MachInstArg> {
 /// A carrier struct for context related to lowering a function into machine instructions.
 pub struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
     func: &'a Function,
+    ebb: Ebb,
+    lower_table: &'a LowerTable<Op, Arg>,
     reg_ctr: &'a mut MachRegCounter,
     constraints: &'a mut MachRegConstraints,
     num_uses: &'a NumUses,
     rev_insts: Vec<MachInst<Op, Arg>>,
     vregs: SecondaryMap<Value, MachReg>,
-    skipped: HashSet<Inst>,
+    unused: SeconaryMap<Inst, bool>,
 }
 
 // Basic strategy:
@@ -45,18 +68,22 @@ pub struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
 impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
     fn new(
         func: &'a Function,
+        ebb: Ebb,
+        lower_table: &'a LowerTable<Op, Arg>,
         num_uses: &'a NumUses,
         reg_ctr: &'a mut MachRegCounter,
         constraints: &'a mut MachRegConstraints,
     ) -> MachInstLowerCtx<'a, Op, Arg> {
         MachInstLowerCtx {
             func,
+            ebb,
+            lower_table,
             reg_ctr,
             constraints,
             num_uses,
             rev_insts: vec![],
             vregs: SecondaryMap::with_default(MachReg::Virtual(0)),
-            skipped: HashSet::new(),
+            unused: SecondaryMap::with_default(false),
         }
     }
 
@@ -70,15 +97,13 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
     }
 
     fn alloc_vregs_for_func(&mut self) {
-        for ebb in self.func.layout.ebbs() {
-            for param in self.func.dfg.ebb_params(ebb) {
-                self.alloc_vreg_for_value(*param);
-            }
-            for inst in self.func.layout.ebb_insts(ebb) {
-                let data = &self.func.dfg[inst];
-                for result in self.func.dfg.inst_results(inst) {
-                    self.alloc_vreg_for_value(*result);
-                }
+        for param in self.func.dfg.ebb_params(self.ebb) {
+            self.alloc_vreg_for_value(*param);
+        }
+        for inst in self.func.layout.ebb_insts(self.ebb) {
+            let data = &self.func.dfg[inst];
+            for result in self.func.dfg.inst_results(inst) {
+                self.alloc_vreg_for_value(*result);
             }
         }
     }
@@ -90,27 +115,22 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
     }
 
     fn lower_inst(&mut self, ins: Inst) {
-        if self.skipped.contains(&ins) {
+        if self.unused[ins] {
             return;
         }
-        /*
-        if let Some(lookup) = self.table.lookup(func, ins, num_uses) {
-            // Build the vectors of input registers and result registers to pass
-            // to the lowering action.
-            let input_regs = lookup.input_values.iter().map(|v| {
-                let v = self.func.dfg.resolve_aliases(*v);
-                self.reg(v)
-            }).collect::<SmallVec<_>>();
-            let result_regs = lookup.result_values.iter().map(|v| {
-                let v = self.func.dfg.resolve_aliases(*v);
-                self.reg(v)
-            }).collect::<SmallVec<_>>();
-            // Perform the lowering.
-            let action = lookup.action.unwrap();
-            action(self, &lookup.insts[..], &input_regs[..], &result_regs[..]);
-        }
-        */
+
+        // Build a tree greedily, including single-use instructions.
+        let mut pool = PatternPrefixPool::new();
+        let mut pattern = pool.build();
+        pattern = self.build_inst_tree(pattern, ins);
     }
+
+    fn build_inst_tree<'a>(&self, mut pattern: PatternPrefixBuilder<'a>, ins: Inst) -> PatternPrefixBuilder<'a> {
+        // Check args to determine which, if any, can be included.
+
+    }
+
+    // ----------------- API for use by lowering actions -------------------
 
     /// Emit a machine instruction. The machine instructions will eventually be ordered in reverse
     /// of the calls to this function.
@@ -142,7 +162,7 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInstBlock<Op, Arg> {
         reg_ctr: &mut MachRegCounter,
         constraints: &mut MachRegConstraints,
     ) -> Vec<MachInstBlock<Op, Arg>> {
-        let mut ctx = MachInstLowerCtx::new(func, num_uses, reg_ctr, constraints);
+        let mut ctx = MachInstLowerCtx::new(func, ebb, num_uses, reg_ctr, constraints);
         ctx.alloc_vregs_for_func();
         let mut ret = vec![];
         for ebb in func.layout.ebbs() {
@@ -157,3 +177,5 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInstBlock<Op, Arg> {
         ret
     }
 }
+
+*/
