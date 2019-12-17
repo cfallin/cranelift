@@ -10,28 +10,6 @@ use crate::num_uses::NumUses;
 
 use crate::HashMap;
 
-/*
- * Algorithm:
- *
- * - After collecting a set of tree-prefixes and actions:
- *   - Sort the prefixes by first op.
- *   - Build the prefixes into a single prefix table.
- *
- * - When lowering a block:
- *   - For each value that we want to generate:
- *     - Construct an opcode tree. Here we slurp all single-use, side-effect-free
- *       values into the tree greedily.
- *     - Find the prefixes starting with the root opcode, and try to match each in turn.
- *     - For each that matches, invoke the lowering action. The first lowering action
- *       that returns `true` terminates the codegen for this value.
- *       - The lowering action is given the instructions and their argument registers
- *         in the order they are mentioned in the tree prefix, and the result regs
- *         of the root instruction.
- *       - The lowering action, in turn, can invoke ctx.emit(machinst) to emit a
- *         machine instruction and/or ctx.unused(inst) to note that inst is now unused
- *         and need not be generated.
- */
-
 /// A table of tree patterns and lowering actions.
 pub struct LowerTable<Op: MachInstOp, Arg: MachInstArg> {
     prefix_pool: PatternPrefixPool,
@@ -56,8 +34,12 @@ impl<Op: MachInstOp, Arg: MachInstArg> LowerTable<Op, Arg> {
     }
 
     /// Get the prefix pool of the table to allow building of a new prefix.
-    pub fn pool<'a>(&'a mut self) -> &'a mut PatternPrefixPool {
+    pub fn pool_mut(&mut self) -> &mut PatternPrefixPool {
         &mut self.prefix_pool
+    }
+    /// Get the prefix pool of the table to allow looking up a prefix.
+    pub fn pool(&self) -> &PatternPrefixPool {
+        &self.prefix_pool
     }
 
     /// Add a pattern to the lowering table.

@@ -2,6 +2,28 @@
 //! instructions with virtual registers, with lookup tables as built by the backend. This is
 //! *almost* the final machine code, except for register allocation.
 
+/*
+ * Algorithm:
+ *
+ * - After collecting a set of tree-prefixes and actions:
+ *   - Sort the prefixes by first op.
+ *   - Build the prefixes into a single prefix table.
+ *
+ * - When lowering a block:
+ *   - For each value that we want to generate:
+ *     - Construct an opcode tree. Here we slurp all single-use, side-effect-free
+ *       values into the tree greedily.
+ *     - Find the prefixes starting with the root opcode, and try to match each in turn.
+ *     - For each that matches, invoke the lowering action. The first lowering action
+ *       that returns `true` terminates the codegen for this value.
+ *       - The lowering action is given the instructions and their argument registers
+ *         in the order they are mentioned in the tree prefix, and the result regs
+ *         of the root instruction.
+ *       - The lowering action, in turn, can invoke ctx.emit(machinst) to emit a
+ *         machine instruction and/or ctx.unused(inst) to note that inst is now unused
+ *         and need not be generated.
+ */
+
 use crate::cursor::FuncCursor;
 use crate::entity::SecondaryMap;
 use crate::ir::{Ebb, Function, Inst, InstructionData, Opcode, Value, ValueDef};
@@ -17,15 +39,7 @@ use alloc::vec::Vec;
 
 /// An action to perform when matching a tree of ops. Returns `true` if codegen was successful.
 /// Otherwise, another pattern/action should be used instead.
-pub type LowerAction<Op, Arg> =
-    for<'a> fn(ctx: &mut MachInstLowerCtx<'a, Op, Arg>, inst: Inst) -> bool;
-
-/// Dummy stub.
-pub struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
-    _phantom0: PhantomData<&'a ()>,
-    _phantom1: PhantomData<Op>,
-    _phantom2: PhantomData<Arg>,
-}
+pub type LowerAction<Op, Arg> = for<'a> fn(ctx: &mut LowerCtx<'a, Op, Arg>, inst: Inst) -> bool;
 
 /// Greedily extracts opcode trees from a block.
 pub struct BlockTreeExtractor<'a> {
@@ -100,112 +114,25 @@ impl<'a> BlockTreeExtractor<'a> {
     }
 }
 
-/*
- * TODO: LowerCtx:
- * - get src insts from an inst's op
- * - get src/dst regs from an inst
- */
-
-/*
-
-/// A block of machine instructions with virtual registers.
-pub struct MachInstBlock<Op: MachInstOp, Arg: MachInstArg> {
-    insts: Vec<MachInst<Op, Arg>>,
-}
-
-/// A carrier struct for context related to lowering a function into machine instructions.
-pub struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
+/// Context passed to lowering actions, containing in-progress emitted instructions and a record of
+/// which instructions are already generated, as well as a mapping from Values to machine
+/// registers.
+pub struct LowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
     func: &'a Function,
-    ebb: Ebb,
-    lower_table: &'a LowerTable<Op, Arg>,
-    reg_ctr: &'a mut MachRegCounter,
-    constraints: &'a mut MachRegConstraints,
-    num_uses: &'a NumUses,
     rev_insts: Vec<MachInst<Op, Arg>>,
     vregs: SecondaryMap<Value, MachReg>,
-    unused: SeconaryMap<Inst, bool>,
+    unused: SecondaryMap<Inst, bool>,
 }
 
-// Basic strategy:
-//
-// Given a function and given a NumUses analysis result, for each EBB:
-//
-// - Initialize vreg map:
-//   - Iterate through the EBB's parameters, assigning vregs to each.
-//   - Iterate through the instructions, allocating vregs for each result of each instruction.
-//   - (we assume that the instructions have already been legalized so that every value
-//      can fit in a single register of some class.)
-//
-// - Iterate through the instructions backward, examining each instruction in turn.
-//
-// TODO: register constraints and move-insertion points for regalloc.
-
-impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
-    fn new(
-        func: &'a Function,
-        ebb: Ebb,
-        lower_table: &'a LowerTable<Op, Arg>,
-        num_uses: &'a NumUses,
-        reg_ctr: &'a mut MachRegCounter,
-        constraints: &'a mut MachRegConstraints,
-    ) -> MachInstLowerCtx<'a, Op, Arg> {
-        MachInstLowerCtx {
+impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<'a, Op, Arg> {
+    fn new(func: &'a Function, vregs: SecondaryMap<Value, MachReg>) -> LowerCtx<'a, Op, Arg> {
+        LowerCtx {
             func,
-            ebb,
-            lower_table,
-            reg_ctr,
-            constraints,
-            num_uses,
             rev_insts: vec![],
-            vregs: SecondaryMap::with_default(MachReg::Virtual(0)),
+            vregs,
             unused: SecondaryMap::with_default(false),
         }
     }
-
-    fn alloc_vreg_for_value(&mut self, v: Value) -> MachReg {
-        let r = self.reg_ctr.alloc();
-        let ty = self.func.dfg.value_type(v);
-        let rc = Arg::regclass_for_type(ty);
-        self.constraints.add(&r, MachRegConstraint::from_class(rc));
-        self.vregs[v] = r.clone();
-        r
-    }
-
-    fn alloc_vregs_for_func(&mut self) {
-        for param in self.func.dfg.ebb_params(self.ebb) {
-            self.alloc_vreg_for_value(*param);
-        }
-        for inst in self.func.layout.ebb_insts(self.ebb) {
-            let data = &self.func.dfg[inst];
-            for result in self.func.dfg.inst_results(inst) {
-                self.alloc_vreg_for_value(*result);
-            }
-        }
-    }
-
-    fn take_insts(&mut self) -> Vec<MachInst<Op, Arg>> {
-        let mut v = mem::replace(&mut self.rev_insts, vec![]);
-        v.reverse();
-        v
-    }
-
-    fn lower_inst(&mut self, ins: Inst) {
-        if self.unused[ins] {
-            return;
-        }
-
-        // Build a tree greedily, including single-use instructions.
-        let mut pool = PatternPrefixPool::new();
-        let mut pattern = pool.build();
-        pattern = self.build_inst_tree(pattern, ins);
-    }
-
-    fn build_inst_tree<'a>(&self, mut pattern: PatternPrefixBuilder<'a>, ins: Inst) -> PatternPrefixBuilder<'a> {
-        // Check args to determine which, if any, can be included.
-
-    }
-
-    // ----------------- API for use by lowering actions -------------------
 
     /// Emit a machine instruction. The machine instructions will eventually be ordered in reverse
     /// of the calls to this function.
@@ -218,42 +145,125 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> MachInstLowerCtx<'a, Op, Arg> {
         self.vregs[v].clone()
     }
 
-    /// Constrain a virtual register to a register class.
-    pub fn constrain_rc(&mut self, r: &MachReg, rc: RegClass) {
-        self.constraints.add(r, MachRegConstraint::from_class(rc));
+    /// Get the MachReg corresponding to the `idx`-th input of `inst`.
+    pub fn input(&self, inst: Inst, idx: usize) -> MachReg {
+        let val = self.func.dfg.inst_args(inst)[idx];
+        self.reg(val)
     }
 
-    /// Constrain a virtual register to a fixed physical register.
-    pub fn constrain_fixed(&mut self, r: &MachReg, ru: RegUnit) {
-        self.constraints.add(r, MachRegConstraint::from_fixed(ru));
+    /// Get the MachReg corresponding to the `idx`-th output of `inst`.
+    pub fn output(&self, inst: Inst, idx: usize) -> MachReg {
+        let val = self.func.dfg.inst_results(inst)[idx];
+        self.reg(val)
     }
-}
 
-impl<Op: MachInstOp, Arg: MachInstArg> MachInstBlock<Op, Arg> {
-    /// Lower a function to a list of blocks of machine instructions.
-    pub fn lower(
-        func: &Function,
-        num_uses: &NumUses,
-        reg_ctr: &mut MachRegCounter,
-        constraints: &mut MachRegConstraints,
-    ) -> Vec<MachInstBlock<Op, Arg>> {
-        let mut ctx = MachInstLowerCtx::new(func, ebb, num_uses, reg_ctr, constraints);
-        ctx.alloc_vregs_for_func();
-        let mut ret = vec![];
-        for ebb in func.layout.ebbs() {
-            for ins in func.layout.ebb_insts(ebb).rev() {
-                ctx.lower_inst(ins);
-            }
-            let block = MachInstBlock {
-                insts: ctx.take_insts(),
-            };
-            ret.push(block);
+    /// Get the instruction that produces the `idx`-th input of `inst`.
+    pub fn input_inst(&self, inst: Inst, idx: usize) -> Inst {
+        let val = self.func.dfg.inst_args(inst)[idx];
+        match self.func.dfg.value_def(val) {
+            ValueDef::Result(def_inst, _) => def_inst,
+            _ => panic!("input_inst() on input not defined by another instruction"),
         }
-        ret
+    }
+
+    /// Mark this instruction as "unused". This means that its value does not need to be generated
+    /// (machine instruction lowering can skip it), usually because it was matchedas part of
+    /// another IR instruction's pattern during instruction selection.
+    pub fn unused(&mut self, inst: Inst) {
+        self.unused[inst] = true;
+    }
+
+    /// Has this instruction been marked as unused (no need to generate its value)?
+    pub fn is_unused(&self, inst: Inst) -> bool {
+        self.unused[inst]
     }
 }
 
-*/
+/// Result of lowering a function to machine code.
+pub struct LowerResult<Op: MachInstOp, Arg: MachInstArg> {
+    constraints: MachRegConstraints,
+    insts: Vec<MachInst<Op, Arg>>,
+}
+
+impl<Op: MachInstOp, Arg: MachInstArg> LowerResult<Op, Arg> {
+    /// Lower a function to virtual-reg machine insts.
+    pub fn lower(func: &Function, lower_table: &LowerTable<Op, Arg>) -> LowerResult<Op, Arg> {
+        // Assign virtual register numbers.
+        let mut reg_ctr = MachRegCounter::new();
+        let mut constraints = MachRegConstraints::new();
+        let mut vregs = SecondaryMap::with_default(MachReg::Virtual(0));
+
+        let mut values: SmallVec<[Value; 64]> = SmallVec::new();
+        for ebb in func.layout.ebbs() {
+            for param in func.dfg.ebb_params(ebb) {
+                values.push(*param);
+            }
+            for inst in func.layout.ebb_insts(ebb) {
+                for result in func.dfg.inst_results(inst) {
+                    values.push(*result);
+                }
+            }
+        }
+        for value in values.into_iter() {
+            let reg = reg_ctr.alloc();
+            let ty = func.dfg.value_type(value);
+            let rc = Arg::regclass_for_type(ty);
+            constraints.add(&reg, MachRegConstraint::from_class(rc));
+            vregs[value] = reg;
+        }
+
+        // Set up the context passed to lowering actions.
+        let mut ctx = LowerCtx::new(func, vregs);
+
+        // Compute the number of uses of each value, for use during greedy tree extraction.
+        let num_uses = NumUses::compute(func);
+
+        // Create a pattern-prefix pool for the temporary prefixes extracted from insns.
+        let mut prefix_pool = PatternPrefixPool::new();
+
+        // Lower each EBB in turn, in postorder (so that when we reverse the instructions, they are
+        // in RPO).
+        let ebbs: SmallVec<[Ebb; 16]> = func.layout.ebbs().collect();
+        for ebb in ebbs.into_iter().rev() {
+            // Create the block tree extractor.
+            let bte = BlockTreeExtractor::new(func, &num_uses, ebb);
+
+            // For each instruction, in reverse order, extract the tree.
+            for inst in func.layout.ebb_insts(ebb).rev() {
+                if !ctx.is_unused(inst) {
+                    let ckpt = prefix_pool.checkpoint();
+                    let tree = bte.get_tree(&mut prefix_pool, inst);
+
+                    // Look up the entries for the root opcode and try
+                    // them, if they match, one at a time.
+                    let root_op = prefix_pool.get(&tree).root_op();
+                    if let Some(entries) = lower_table.get_entries(root_op) {
+                        let mut lowered = false;
+                        for entry in entries {
+                            let pat = lower_table.pool().get(&entry.prefix);
+                            let subject = prefix_pool.get(&tree);
+                            if pat.matches(&subject) {
+                                let action = entry.action;
+                                if action(&mut ctx, inst) {
+                                    // Action was successful -- no need to try further patterns.
+                                    lowered = true;
+                                    break;
+                                }
+                            }
+                        }
+                        assert!(lowered);
+                    }
+
+                    prefix_pool.rewind(ckpt);
+                }
+            }
+        }
+
+        let insts: Vec<_> = ctx.rev_insts.into_iter().rev().collect();
+
+        LowerResult { constraints, insts }
+    }
+}
 
 #[cfg(test)]
 mod test {

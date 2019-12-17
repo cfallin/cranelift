@@ -135,6 +135,18 @@ impl PatternPrefixPool {
     pub fn get<'a>(&'a self, range: &PatternPrefixRange) -> PatternPrefix<'a> {
         PatternPrefix::new(Cow::from(&self.elems[range.start..range.end]))
     }
+
+    /// Checkpoint the current table state, allowing pattern-prefixes allocated after the
+    /// checkpoint to be freed with `rewind()`.
+    pub fn checkpoint(&self) -> usize {
+        self.elems.len()
+    }
+
+    /// Rewind to a previous checkpoint. All pattern-prefixes built since the checkpoint are
+    /// invalidated, and their PatternPrefixRanges must not be passed to `get()`.
+    pub fn rewind(&mut self, checkpoint: usize) {
+        self.elems.truncate(checkpoint);
+    }
 }
 
 /// A builder that builds a new pattern prefix in a pool.
