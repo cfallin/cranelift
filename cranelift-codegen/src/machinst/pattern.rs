@@ -10,18 +10,28 @@ use crate::num_uses::NumUses;
 
 use crate::HashMap;
 
+use std::fmt;
+
 /// A table of tree patterns and lowering actions.
+#[derive(Clone, Debug)]
 pub struct LowerTable<Op: MachInstOp, Arg: MachInstArg> {
     prefix_pool: PatternPrefixPool,
     entries: HashMap<Opcode, SmallVec<[LowerTableEntry<Op, Arg>; 4]>>,
 }
 
 /// A single entry in the lowering table.
+#[derive(Clone)]
 pub struct LowerTableEntry<Op: MachInstOp, Arg: MachInstArg> {
     /// The prefix (tree pattern) associated with this entry.
     pub prefix: PatternPrefixRange,
     /// The lowering action to perform.
     pub action: LowerAction<Op, Arg>,
+}
+
+impl<Op: MachInstOp, Arg: MachInstArg> fmt::Debug for LowerTableEntry<Op, Arg> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "LowerTableEntry(prefix = {:?})", self.prefix)
+    }
 }
 
 impl<Op: MachInstOp, Arg: MachInstArg> LowerTable<Op, Arg> {
@@ -64,7 +74,15 @@ macro_rules! lower_pattern {
     ($t:expr, ($($tree:tt)*), |$ctx:ident, $inst:ident| $body:block) => {
         {
             let mut pat = $t.pool_mut().build();
-            crate::lower_pattern_tree!(pat, $($tree)*);
+            crate::lower_pattern_tree!(pat, ($($tree)*));
+            let pat = pat.build();
+            $t.add(pat, |$ctx, $inst| { $body });
+        }
+    };
+    ($t:expr, $tree:ident, |$ctx:ident, $inst:ident| $body:block) => {
+        {
+            let mut pat = $t.pool_mut().build();
+            crate::lower_pattern_tree!(pat, $tree);
             let pat = pat.build();
             $t.add(pat, |$ctx, $inst| { $body });
         }
@@ -80,18 +98,8 @@ macro_rules! lower_pattern_tree {
     ($pat:ident, $op:ident) => {
         $pat = $pat.opcode(crate::ir::Opcode::$op);
     };
-    ($pat:ident, @($op:expr)) => {
-        $pat = $pat.opcode($op);
-    };
     ($pat:ident, ($op:ident $($arg:tt)*)) => {
         $pat = $pat.opcode_with_args(crate::ir::Opcode::$op);
-        $(
-            crate::lower_pattern_tree!($pat, $arg);
-        )*
-        $pat = $pat.args_end();
-    };
-    ($pat:ident, (@($op:expr) $($arg:tt)*)) => {
-        $pat = $pat.opcode_with_args($op);
         $(
             crate::lower_pattern_tree!($pat, $arg);
         )*

@@ -96,6 +96,7 @@ impl MachRegCounter {
 
 /// A set of constraints on virtual registers, typically held at the Function level to be used by
 /// regalloc.
+#[derive(Clone, Debug)]
 pub struct MachRegConstraints {
     constraints: Vec<(MachReg, MachRegConstraint)>,
 }
@@ -167,6 +168,7 @@ pub enum MachRegDefUse {
 }
 
 /// A machine instruction.
+#[derive(Clone, Debug)]
 pub struct MachInst<Op: MachInstOp, Arg: MachInstArg> {
     /// The opcode.
     pub op: Op,

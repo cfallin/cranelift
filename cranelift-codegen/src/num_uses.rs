@@ -13,6 +13,7 @@ use crate::ir::{DataFlowGraph, Function, Inst, Opcode};
 /// Uses of an instruction include other instructions that use its result, and an implicit use (by
 /// "the universe") if the instruction has a side-effect, such as a memory write or a possible
 /// trap.
+#[derive(Clone, Debug)]
 pub struct NumUses {
     uses: SecondaryMap<Inst, u32>,
 }

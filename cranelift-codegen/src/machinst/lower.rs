@@ -80,7 +80,7 @@ impl<'a> BlockTreeExtractor<'a> {
         pattern_pool: &'pool mut PatternPrefixPool,
         inst: Inst,
     ) -> PatternPrefixRange {
-        let mut pat = pattern_pool.build();
+        let pat = pattern_pool.build();
         self.get_tree_internal(pat, inst).build()
     }
 
@@ -211,6 +211,7 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<'a, Op, Arg> {
 }
 
 /// Result of lowering a function to machine code.
+#[derive(Clone, Debug)]
 pub struct LowerResult<Op: MachInstOp, Arg: MachInstArg> {
     constraints: MachRegConstraints,
     insts: Vec<MachInst<Op, Arg>>,

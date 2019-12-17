@@ -116,6 +116,7 @@ impl<'a> PatternPrefix<'a> {
 }
 
 /// A pool of pattern prefixes that shares storage.
+#[derive(Clone, Debug)]
 pub struct PatternPrefixPool {
     elems: Vec<PatternPrefixElem>,
 }
@@ -176,7 +177,7 @@ impl<'a> PatternPrefixBuilder<'a> {
     }
 
     /// Add an opcode without args to the pattern prefix.
-    pub fn opcode(mut self, op: Opcode) -> Self {
+    pub fn opcode(self, op: Opcode) -> Self {
         self.pool.elems.push(PatternPrefixElem::Op(op));
         self
     }
@@ -187,7 +188,7 @@ impl<'a> PatternPrefixBuilder<'a> {
         self
     }
     /// Add an any-opcode wildcard to the pattern prefix.
-    pub fn any(mut self) -> Self {
+    pub fn any(self) -> Self {
         self.pool.elems.push(PatternPrefixElem::Any);
         self
     }

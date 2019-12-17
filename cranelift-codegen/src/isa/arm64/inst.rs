@@ -281,10 +281,10 @@ pub fn make_mem2reg_reg(
 /// so.
 pub fn with_imm12<'a, F>(ctx: &mut LowerCtx<'a, Op, Arg>, inst: Inst, f: F) -> bool
 where
-    F: FnOnce(ShiftedImm),
+    F: FnOnce(&mut LowerCtx<'a, Op, Arg>, ShiftedImm),
 {
     if let Some(imm) = ShiftedImm::maybe_from_iconst(ctx.inst(inst)) {
-        f(imm);
+        f(ctx, imm);
         true
     } else {
         false
