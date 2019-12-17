@@ -6,6 +6,7 @@ mod enc_tables;
 mod registers;
 pub mod settings;
 mod inst;
+mod lower;
 
 use super::super::settings as shared_settings;
 #[cfg(feature = "testing_hooks")]

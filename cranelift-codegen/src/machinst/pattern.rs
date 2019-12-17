@@ -64,13 +64,15 @@ macro_rules! lower_pattern {
     ($t:expr, ($($tree:tt)*), |$ctx:ident, $inst:ident| $body:block) => {
         {
             let mut pat = $t.pool_mut().build();
-            crate::machinst::pattern::lower_pattern_tree!(pat, $($tree:tt)*);
+            crate::lower_pattern_tree!(pat, $($tree)*);
             let pat = pat.build();
             $t.add(pat, |$ctx, $inst| { $body });
         }
     };
 }
 
+/// Helper for `lower_pattern!`.
+#[macro_export]
 macro_rules! lower_pattern_tree {
     ($pat:ident, _) => {
         $pat = $pat.any();
@@ -78,10 +80,20 @@ macro_rules! lower_pattern_tree {
     ($pat:ident, $op:ident) => {
         $pat = $pat.opcode(crate::ir::Opcode::$op);
     };
-    ($pat:ident, ($op:ident $($arg:tt),*)) => {
+    ($pat:ident, @($op:expr)) => {
+        $pat = $pat.opcode($op);
+    };
+    ($pat:ident, ($op:ident $($arg:tt)*)) => {
         $pat = $pat.opcode_with_args(crate::ir::Opcode::$op);
         $(
-            crate::machinst::pattern::lower_pattern_tree!($pat, $arg);
+            crate::lower_pattern_tree!($pat, $arg);
+        )*
+        $pat = $pat.args_end();
+    };
+    ($pat:ident, (@($op:expr) $($arg:tt)*)) => {
+        $pat = $pat.opcode_with_args($op);
+        $(
+            crate::lower_pattern_tree!($pat, $arg);
         )*
         $pat = $pat.args_end();
     };

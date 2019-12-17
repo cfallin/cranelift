@@ -1,16 +1,19 @@
 //! This module defines `Arm64Inst` and friends, which implement `MachInst`.
 
-use crate::ir::{InstructionData, Type};
+use crate::ir::{Inst, InstructionData, Type};
 use crate::isa::arm64::registers::*;
 use crate::isa::registers::RegClass;
+use crate::machinst::lower::LowerCtx;
 use crate::machinst::*;
 use crate::{mach_args, mach_ops};
 
 mach_ops!(Op, {
     Add,
     AddS,
+    AddI,
     Sub,
     SubS,
+    SubI,
     Cmp,
     Cmn,
     Neg,
@@ -174,21 +177,24 @@ enum Cond {
 
 // -------------------- instruction constructors -------------------
 
-fn make_reg_reg_reg(op: Op, rd: MachReg, rn: MachReg, rm: MachReg) -> MachInst<Op, Arg> {
+/// Make a reg / reg / reg inst.
+pub fn make_reg_reg_reg(op: Op, rd: MachReg, rn: MachReg, rm: MachReg) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use(Arg::Reg(), rn)
         .with_arg_reg_use(Arg::Reg(), rm)
 }
 
-fn make_reg_reg_imm(op: Op, rd: MachReg, rn: MachReg, imm: ShiftedImm) -> MachInst<Op, Arg> {
+/// Make a reg / reg / immediate inst.
+pub fn make_reg_reg_imm(op: Op, rd: MachReg, rn: MachReg, imm: ShiftedImm) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use(Arg::Reg(), rn)
         .with_arg(Arg::Imm(imm))
 }
 
-fn make_reg_reg_rshift(
+/// Make a reg / reg / rshift inst.
+pub fn make_reg_reg_rshift(
     op: Op,
     rd: MachReg,
     rn: MachReg,
@@ -202,7 +208,8 @@ fn make_reg_reg_rshift(
         .with_arg_reg_use(Arg::ShiftedReg(shift, amt), rm)
 }
 
-fn make_reg_reg_rextend(
+/// Make a reg / reg / rextend inst.
+pub fn make_reg_reg_rextend(
     op: Op,
     rd: MachReg,
     rn: MachReg,
@@ -216,19 +223,22 @@ fn make_reg_reg_rextend(
         .with_arg_reg_use(Arg::ExtendedReg(ext, shift_amt), rm)
 }
 
-fn make_reg_mem(op: Op, rd: MachReg, mem: MemArg, rn: MachReg) -> MachInst<Op, Arg> {
+/// Make a reg / memory inst.
+pub fn make_reg_mem(op: Op, rd: MachReg, mem: MemArg, rn: MachReg) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use(Arg::Mem(mem), rn)
 }
 
-fn make_reg_memupd(op: Op, rd: MachReg, mem: MemArg, rn: MachReg) -> MachInst<Op, Arg> {
+/// Make a reg / memory-update-addr inst.
+pub fn make_reg_memupd(op: Op, rd: MachReg, mem: MemArg, rn: MachReg) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use_def(Arg::Mem(mem), rn)
 }
 
-fn make_reg_mem2reg(
+/// Make a reg / memory-2-reg-amode inst.
+pub fn make_reg_mem2reg(
     op: Op,
     rd: MachReg,
     mem: MemArg,
@@ -240,19 +250,22 @@ fn make_reg_mem2reg(
         .with_arg_2reg(Arg::Mem(mem), rn, rm)
 }
 
-fn make_mem_reg(op: Op, mem: MemArg, rn: MachReg, rd: MachReg) -> MachInst<Op, Arg> {
+/// Make a memory / reg inst.
+pub fn make_mem_reg(op: Op, mem: MemArg, rn: MachReg, rd: MachReg) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_use(Arg::Mem(mem), rn)
         .with_arg_reg_use(Arg::Reg(), rd)
 }
 
-fn make_memupd_reg(op: Op, mem: MemArg, rn: MachReg, rd: MachReg) -> MachInst<Op, Arg> {
+/// Make a memory-update-addr / reg inst.
+pub fn make_memupd_reg(op: Op, mem: MemArg, rn: MachReg, rd: MachReg) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_use_def(Arg::Mem(mem), rn)
         .with_arg_reg_use(Arg::Reg(), rd)
 }
 
-fn make_mem2reg_reg(
+/// Make a memory-2-reg-amode / reg inst.
+pub fn make_mem2reg_reg(
     op: Op,
     mem: MemArg,
     rn: MachReg,
@@ -262,4 +275,18 @@ fn make_mem2reg_reg(
     MachInst::new(op)
         .with_arg_2reg(Arg::Mem(mem), rn, rm)
         .with_arg_reg_use(Arg::Reg(), rd)
+}
+
+/// Helper: in a lowering action, check if an Iconst can become an Imm12; invoke a thunk with it if
+/// so.
+pub fn with_imm12<'a, F>(ctx: &mut LowerCtx<'a, Op, Arg>, inst: Inst, f: F) -> bool
+where
+    F: FnOnce(ShiftedImm),
+{
+    if let Some(imm) = ShiftedImm::maybe_from_iconst(ctx.inst(inst)) {
+        f(imm);
+        true
+    } else {
+        false
+    }
 }

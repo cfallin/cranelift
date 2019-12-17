@@ -122,15 +122,24 @@ pub struct LowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
     rev_insts: Vec<MachInst<Op, Arg>>,
     vregs: SecondaryMap<Value, MachReg>,
     unused: SecondaryMap<Inst, bool>,
+    constraints: &'a mut MachRegConstraints,
+    reg_ctr: &'a mut MachRegCounter,
 }
 
 impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<'a, Op, Arg> {
-    fn new(func: &'a Function, vregs: SecondaryMap<Value, MachReg>) -> LowerCtx<'a, Op, Arg> {
+    fn new(
+        func: &'a Function,
+        vregs: SecondaryMap<Value, MachReg>,
+        constraints: &'a mut MachRegConstraints,
+        reg_ctr: &'a mut MachRegCounter,
+    ) -> LowerCtx<'a, Op, Arg> {
         LowerCtx {
             func,
             rev_insts: vec![],
             vregs,
             unused: SecondaryMap::with_default(false),
+            constraints,
+            reg_ctr,
         }
     }
 
@@ -182,6 +191,23 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<'a, Op, Arg> {
     pub fn is_unused(&self, inst: Inst) -> bool {
         self.unused[inst]
     }
+
+    /// Allocate a new machine register.
+    pub fn alloc_reg(&mut self) -> MachReg {
+        self.reg_ctr.alloc()
+    }
+
+    /// Fix a virtual register to a particular physical register.
+    pub fn fix_reg(&mut self, reg: &MachReg, ru: RegUnit) {
+        self.constraints.add(reg, MachRegConstraint::from_fixed(ru));
+    }
+
+    /// Allocate a new machine register and constrain it.
+    pub fn fixed(&mut self, ru: RegUnit) -> MachReg {
+        let r = self.alloc_reg();
+        self.fix_reg(&r, ru);
+        r
+    }
 }
 
 /// Result of lowering a function to machine code.
@@ -218,7 +244,7 @@ impl<Op: MachInstOp, Arg: MachInstArg> LowerResult<Op, Arg> {
         }
 
         // Set up the context passed to lowering actions.
-        let mut ctx = LowerCtx::new(func, vregs);
+        let mut ctx = LowerCtx::new(func, vregs, &mut constraints, &mut reg_ctr);
 
         // Compute the number of uses of each value, for use during greedy tree extraction.
         let num_uses = NumUses::compute(func);
