@@ -263,6 +263,17 @@ impl<Op: MachInstOp, Arg: MachInstArg> LowerResult<Op, Arg> {
 
         LowerResult { constraints, insts }
     }
+
+    /// Return the list of lowered machine instructions.
+    pub fn insts(&self) -> &[MachInst<Op, Arg>] {
+        &self.insts[..]
+    }
+
+    /// Return the register constraints for the virtual registers in the lowered machine
+    /// instructions.
+    pub fn reg_constraints(&self) -> &MachRegConstraints {
+        &self.constraints
+    }
 }
 
 #[cfg(test)]

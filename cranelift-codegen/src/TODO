@@ -1,20 +1,10 @@
 TODO:
 
-- Finish the lowering logic (machinst/lower.rs) using the new lookup table
-  functionality (machinst/pattern.rs).
+- Write some simple isel tree-matching rules for ARM64, for testing. Write some
+  tests of the lowering using this.
 
-- Build some simple lookup tables for tree-matching. Maybe some helper macros
-  for this.
-
-- Wire up an alternative backend flow: right after legalization, feed into
-  MachInst lowering and dump MachInsts. Test with various CLIR inputs.
-
-- Hook up regalloc to lowered blocks; replace regs with real regs (and insert
-  moves/spills/fills where necessary)
-
-  - trait-based interface over sequence of instructions with reg slots
-  - trait-based interface to allow regalloc to insert spills/fills/moves
-  - perhaps go back to CLIR-based rep, but replace Encoding with MachInst (or
-    array of MachInst) for a given insn.
+- Wire up MachInst to regalloc. Figure out how to generalize over MachRegs and
+  existing Value infra. Figure out how to generalize over move/spill/fill
+  insertion.
 
 - Encoding backend
