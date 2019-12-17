@@ -4,7 +4,7 @@
 
 use crate::cursor::FuncCursor;
 use crate::entity::SecondaryMap;
-use crate::ir::{Ebb, Function, Inst, Opcode, Value, InstructionData};
+use crate::ir::{Ebb, Function, Inst, InstructionData, Opcode, Value, ValueDef};
 use crate::machinst::pattern::*;
 use crate::machinst::pattern_prefix::*;
 use crate::machinst::*;
@@ -17,12 +17,8 @@ use alloc::vec::Vec;
 
 /// An action to perform when matching a tree of ops. Returns `true` if codegen was successful.
 /// Otherwise, another pattern/action should be used instead.
-pub type LowerAction<Op, Arg> = for<'a> fn(
-    ctx: &mut MachInstLowerCtx<'a, Op, Arg>,
-    insts: &[&'a InstructionData],
-    regs: &[MachReg],
-    results: &[MachReg],
-) -> bool;
+pub type LowerAction<Op, Arg> =
+    for<'a> fn(ctx: &mut MachInstLowerCtx<'a, Op, Arg>, inst: Inst) -> bool;
 
 /// Dummy stub.
 pub struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
@@ -30,6 +26,85 @@ pub struct MachInstLowerCtx<'a, Op: MachInstOp, Arg: MachInstArg> {
     _phantom1: PhantomData<Op>,
     _phantom2: PhantomData<Arg>,
 }
+
+/// Greedily extracts opcode trees from a block.
+pub struct BlockTreeExtractor<'a> {
+    func: &'a Function,
+    num_uses: &'a NumUses,
+    ebb: Ebb,
+}
+
+impl<'a> BlockTreeExtractor<'a> {
+    /// Create a new tree-extractor for an Ebb.
+    pub fn new(func: &'a Function, num_uses: &'a NumUses, ebb: Ebb) -> BlockTreeExtractor<'a> {
+        BlockTreeExtractor {
+            func,
+            num_uses,
+            ebb,
+        }
+    }
+
+    fn arg_included(&self, inst: Inst, v: Value) -> Option<Inst> {
+        let v = self.func.dfg.resolve_aliases(v);
+        match self.func.dfg.value_def(v) {
+            ValueDef::Result(def_inst, _) => {
+                if self.num_uses.use_count(def_inst) == 1
+                    && self.func.dfg.inst_results(def_inst).len() == 1
+                {
+                    Some(def_inst)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the PatternPrefix opcode tree rooted at the given instruction.
+    pub fn get_tree<'pool>(
+        &self,
+        pattern_pool: &'pool mut PatternPrefixPool,
+        inst: Inst,
+    ) -> PatternPrefixRange {
+        let mut pat = pattern_pool.build();
+        self.get_tree_internal(pat, inst).build()
+    }
+
+    fn get_tree_internal<'pool>(
+        &self,
+        mut pat: PatternPrefixBuilder<'pool>,
+        inst: Inst,
+    ) -> PatternPrefixBuilder<'pool> {
+        let sub_args: SmallVec<[Option<Inst>; 4]> = self
+            .func
+            .dfg
+            .inst_args(inst)
+            .iter()
+            .map(|arg| self.arg_included(inst, *arg))
+            .collect();
+
+        let op = self.func.dfg[inst].opcode();
+        if sub_args.iter().all(|a| a.is_none()) {
+            pat.opcode(op)
+        } else {
+            pat = pat.opcode_with_args(op);
+            for sub_arg in sub_args.into_iter() {
+                if let Some(def_inst) = sub_arg {
+                    pat = self.get_tree_internal(pat, def_inst);
+                } else {
+                    pat = pat.any();
+                }
+            }
+            pat.args_end()
+        }
+    }
+}
+
+/*
+ * TODO: LowerCtx:
+ * - get src insts from an inst's op
+ * - get src/dst regs from an inst
+ */
 
 /*
 
@@ -179,3 +254,72 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInstBlock<Op, Arg> {
 }
 
 */
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use crate::cursor::{Cursor, FuncCursor};
+    use crate::ir::condcodes::*;
+    use crate::ir::types::*;
+    use crate::ir::{Function, InstBuilder, ValueDef};
+    use crate::num_uses::NumUses;
+
+    #[test]
+    fn test_tree_extractor() {
+        let mut func = Function::new();
+        let ebb0 = func.dfg.make_ebb();
+        let arg0 = func.dfg.append_ebb_param(ebb0, I32);
+        let mut pos = FuncCursor::new(&mut func);
+        pos.insert_ebb(ebb0);
+
+        let v0 = pos.ins().iconst(I32, 1);
+        let v1 = pos.ins().iadd(arg0, v0);
+        let v2 = pos.ins().isub(arg0, v1);
+        let v3 = pos.ins().iadd(v2, v2);
+
+        let ins0 = func.dfg.value_def(v0).unwrap_inst();
+        let ins1 = func.dfg.value_def(v1).unwrap_inst();
+        let ins2 = func.dfg.value_def(v2).unwrap_inst();
+        let ins3 = func.dfg.value_def(v3).unwrap_inst();
+
+        let num_uses = NumUses::compute(&func);
+        let bte = BlockTreeExtractor::new(&func, &num_uses, ebb0);
+
+        let mut pool = PatternPrefixPool::new();
+        let tree0 = bte.get_tree(&mut pool, ins0);
+        let tree1 = bte.get_tree(&mut pool, ins1);
+        let tree2 = bte.get_tree(&mut pool, ins2);
+        let tree3 = bte.get_tree(&mut pool, ins3);
+
+        assert!(pool.get(&tree0).root_op() == Opcode::Iconst);
+        assert!(pool.get(&tree1).root_op() == Opcode::Iadd);
+        assert!(pool.get(&tree2).root_op() == Opcode::Isub);
+        assert!(pool.get(&tree3).root_op() == Opcode::Iadd);
+
+        let tree0_expected = pool.build().opcode(Opcode::Iconst).build();
+        let tree1_expected = pool
+            .build()
+            .opcode_with_args(Opcode::Iadd)
+            .any()
+            .opcode(Opcode::Iconst)
+            .args_end()
+            .build();
+        let tree2_expected = pool
+            .build()
+            .opcode_with_args(Opcode::Isub)
+            .any()
+            .opcode_with_args(Opcode::Iadd)
+            .any()
+            .opcode(Opcode::Iconst)
+            .args_end()
+            .args_end()
+            .build();
+        let tree3_expected = pool.build().opcode(Opcode::Iadd).build();
+
+        assert!(pool.get(&tree0) == pool.get(&tree0_expected));
+        assert!(pool.get(&tree1) == pool.get(&tree1_expected));
+        assert!(pool.get(&tree2) == pool.get(&tree2_expected));
+        assert!(pool.get(&tree3) == pool.get(&tree3_expected));
+    }
+}

@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::iter;
 
 /// A prefix for use in the one-level table. Represents a tree of opcodes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PatternPrefix<'a> {
     // Each tuple: opcode and depth. Prefix is given in tree pre-order. If opcode is `None` then
     // any opcode matches.
