@@ -37,6 +37,7 @@ impl<Op: MachInstOp, Arg: MachInstArg> LowerTable<Op, Arg> {
     pub fn pool_mut(&mut self) -> &mut PatternPrefixPool {
         &mut self.prefix_pool
     }
+
     /// Get the prefix pool of the table to allow looking up a prefix.
     pub fn pool(&self) -> &PatternPrefixPool {
         &self.prefix_pool
@@ -55,4 +56,33 @@ impl<Op: MachInstOp, Arg: MachInstArg> LowerTable<Op, Arg> {
     pub fn get_entries(&self, root_op: Opcode) -> Option<&[LowerTableEntry<Op, Arg>]> {
         self.entries.get(&root_op).map(|v| &v[..])
     }
+}
+
+/// Add a lowering pattern to a LowerTable.
+#[macro_export]
+macro_rules! lower_pattern {
+    ($t:expr, ($($tree:tt)*), |$ctx:ident, $inst:ident| $body:block) => {
+        {
+            let mut pat = $t.pool_mut().build();
+            crate::machinst::pattern::lower_pattern_tree!(pat, $($tree:tt)*);
+            let pat = pat.build();
+            $t.add(pat, |$ctx, $inst| { $body });
+        }
+    };
+}
+
+macro_rules! lower_pattern_tree {
+    ($pat:ident, _) => {
+        $pat = $pat.any();
+    };
+    ($pat:ident, $op:ident) => {
+        $pat = $pat.opcode(crate::ir::Opcode::$op);
+    };
+    ($pat:ident, ($op:ident $($arg:tt),*)) => {
+        $pat = $pat.opcode_with_args(crate::ir::Opcode::$op);
+        $(
+            crate::machinst::pattern::lower_pattern_tree!($pat, $arg);
+        )*
+        $pat = $pat.args_end();
+    };
 }

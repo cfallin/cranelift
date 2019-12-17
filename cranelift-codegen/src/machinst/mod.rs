@@ -16,6 +16,9 @@ pub mod lower;
 pub mod pattern;
 pub mod pattern_prefix;
 
+pub use lower::*;
+pub use pattern::*;
+
 /// A machine register in a machine instruction. Can be virtual (pre-regalloc) or allocated
 /// (post-regalloc).
 #[derive(Clone, Debug)]

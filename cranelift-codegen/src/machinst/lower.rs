@@ -166,6 +166,11 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<'a, Op, Arg> {
         }
     }
 
+    /// Get the instruction data for a given instruction.
+    pub fn inst(&self, inst: Inst) -> &InstructionData {
+        &self.func.dfg[inst]
+    }
+
     /// Mark this instruction as "unused". This means that its value does not need to be generated
     /// (machine instruction lowering can skip it), usually because it was matchedas part of
     /// another IR instruction's pattern during instruction selection.

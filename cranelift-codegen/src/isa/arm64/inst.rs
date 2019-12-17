@@ -1,6 +1,6 @@
 //! This module defines `Arm64Inst` and friends, which implement `MachInst`.
 
-use crate::ir::Type;
+use crate::ir::{InstructionData, Type};
 use crate::isa::arm64::registers::*;
 use crate::isa::registers::RegClass;
 use crate::machinst::*;
@@ -72,6 +72,38 @@ impl MachInstArg for Arg {
 pub struct ShiftedImm {
     bits: usize,
     shift: usize,
+}
+
+impl ShiftedImm {
+    pub fn maybe_from_i64(mut val: i64) -> Option<ShiftedImm> {
+        if val == 0 {
+            Some(ShiftedImm { bits: 0, shift: 0 })
+        } else {
+            let mut shift = 0;
+            while (val & 1) == 0 {
+                shift += 1;
+                val >>= 1;
+            }
+            if val < 0x1000 {
+                // 12 bits
+                Some(ShiftedImm {
+                    bits: val as usize,
+                    shift,
+                })
+            } else {
+                None
+            }
+        }
+    }
+
+    pub fn maybe_from_iconst(inst: &InstructionData) -> Option<ShiftedImm> {
+        let imm: i64 = if let &InstructionData::UnaryImm { ref imm, .. } = inst {
+            imm.clone().into()
+        } else {
+            return None;
+        };
+        ShiftedImm::maybe_from_i64(imm)
+    }
 }
 
 /// A shift operator for a register or immediate.
@@ -147,6 +179,13 @@ fn make_reg_reg_reg(op: Op, rd: MachReg, rn: MachReg, rm: MachReg) -> MachInst<O
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use(Arg::Reg(), rn)
         .with_arg_reg_use(Arg::Reg(), rm)
+}
+
+fn make_reg_reg_imm(op: Op, rd: MachReg, rn: MachReg, imm: ShiftedImm) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg_reg_use(Arg::Reg(), rn)
+        .with_arg(Arg::Imm(imm))
 }
 
 fn make_reg_reg_rshift(
