@@ -283,7 +283,13 @@ impl<Op: MachInstOp, Arg: MachInstArg> LowerResult<Op, Arg> {
                                 }
                             }
                         }
-                        assert!(lowered);
+
+                        if !lowered {
+                            panic!(
+                                "Unable to lower instruction {:?}: {:?}",
+                                inst, func.dfg[inst]
+                            );
+                        }
                     }
 
                     prefix_pool.rewind(ckpt);
