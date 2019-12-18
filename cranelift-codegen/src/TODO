@@ -6,4 +6,8 @@ TODO:
   existing Value infra. Figure out how to generalize over move/spill/fill
   insertion.
 
-- Encoding backend
+- ABI integration.
+
+- Prologue/epilogue integration.
+
+- Encoding backend.
