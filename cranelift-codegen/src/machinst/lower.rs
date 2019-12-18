@@ -166,6 +166,12 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<'a, Op, Arg> {
         self.reg(val)
     }
 
+    /// Get the type of the (first) result of the given instruction.
+    pub fn ty(&self, inst: Inst) -> Type {
+        let val = self.func.dfg.inst_results(inst)[0];
+        self.func.dfg.value_type(val)
+    }
+
     /// Get the instruction that produces the `idx`-th input of `inst`.
     pub fn input_inst(&self, inst: Inst, idx: usize) -> Inst {
         let val = self.func.dfg.inst_args(inst)[idx];
@@ -202,10 +208,17 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<'a, Op, Arg> {
         self.constraints.add(reg, MachRegConstraint::from_fixed(ru));
     }
 
-    /// Allocate a new machine register and constrain it.
+    /// Allocate a new machine register and constrain it to the given fixed register.
     pub fn fixed(&mut self, ru: RegUnit) -> MachReg {
         let r = self.alloc_reg();
         self.fix_reg(&r, ru);
+        r
+    }
+
+    /// Allocate a new machine register and constrain it to the given RegClass.
+    pub fn tmp_rc(&mut self, rc: RegClass) -> MachReg {
+        let r = self.alloc_reg();
+        self.constraints.add(&r, MachRegConstraint::from_class(rc));
         r
     }
 }

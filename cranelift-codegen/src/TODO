@@ -1,7 +1,6 @@
 TODO:
 
-- Write some simple isel tree-matching rules for ARM64, for testing. Write some
-  tests of the lowering using this.
+- Fill out the patterns.
 
 - Wire up MachInst to regalloc. Figure out how to generalize over MachRegs and
   existing Value infra. Figure out how to generalize over move/spill/fill

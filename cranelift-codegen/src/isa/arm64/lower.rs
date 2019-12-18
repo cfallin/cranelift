@@ -1,11 +1,37 @@
 //! Lowering rules for ARM64.
 
-use crate::ir::Opcode;
+use crate::ir::types::*;
+use crate::ir::{InstructionData, Opcode, Type};
 use crate::machinst::lower::*;
 use crate::machinst::pattern::*;
 
 use crate::isa::arm64::inst::*;
+use crate::isa::arm64::registers::*;
 use crate::lower_pattern;
+
+/// Helper: in a lowering action, get a field of an instruction, or fail.
+macro_rules! field {
+    ($inst:expr, $fmt:ident, $field:ident) => {
+        match $inst {
+            InstructionData::$fmt { $field, .. } => $field,
+            _ => {
+                return false;
+            }
+        }
+    };
+}
+
+/// Helper: in a lowering action, get a reference to a field of an instruction, or fail.
+macro_rules! fieldref {
+    ($inst:expr, $fmt:ident, $field:ident) => {
+        match $inst {
+            InstructionData::$fmt { ref $field, .. } => $field,
+            _ => {
+                return false;
+            }
+        }
+    };
+}
 
 /// Create the lowering table for ARM64.
 pub fn make_backend() -> LowerTable<Op, Arg> {
@@ -70,13 +96,8 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
     // TableAddr
 
     // -- arith (112)
-    // Iconst
-    // F32const
-    // F64const
-    // Bconst
     // Vconst
     // Shuffle
-    // Null
     // Select
     // Selectif
     // Bitselect
@@ -84,20 +105,7 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
     // IcmpImm
     // Ifcmp
     // IfcmpImm
-    // Iadd
-    // UaddSat
-    // SaddSat
-    // Isub
-    // UsubSat
-    // SsubSat
-    // Ineg
-    // Imul
-    // Umulhi
-    // Smulhi
-    // Udiv
-    // Sdiv
-    // Urem
-    // Srem
+    //
     // IaddImm
     // ImulImm
     // UdivImm
@@ -117,6 +125,10 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
     // IsubIfbout
     // IsubBorrow
     // IsubIfborrow
+    // UaddSat
+    // SaddSat
+    // UsubSat
+    // SsubSat
     // Band
     // Bor
     // Bxor
@@ -212,15 +224,46 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
     // Extractlane
 
     lower_pattern!(t, Iconst, |ctx, inst| {
-        with_imm12(ctx, inst, |ctx, imm| {
-            let xzr = ctx.fixed(31);
-            ctx.emit(make_reg_reg_imm(Op::AddI, ctx.output(inst, 0), xzr, imm));
-        })
+        let value = fieldref!(ctx.inst(inst), UnaryImm, imm).bits();
+        load_imm(ctx, value as u64, ctx.output(inst, 0));
+        true
+    });
+
+    lower_pattern!(t, F32const, |ctx, inst| {
+        let value: u32 = field!(ctx.inst(inst), UnaryIeee32, imm).bits();
+        load_imm(ctx, value as u64, ctx.output(inst, 0));
+        true
+    });
+
+    lower_pattern!(t, F64const, |ctx, inst| {
+        let value: u64 = field!(ctx.inst(inst), UnaryIeee64, imm).bits();
+        load_imm(ctx, value, ctx.output(inst, 0));
+        true
+    });
+
+    lower_pattern!(t, Bconst, |ctx, inst| {
+        let ty = ctx.ty(inst);
+        let value: u64 = match ty {
+            B1 => 1,
+            B8 => 0xff,
+            B16 => 0xffff,
+            B32 => 0xffff_ffff,
+            B64 => 0xffff_ffff_ffff_ffff,
+            _ => unimplemented!(),
+        };
+        load_imm(ctx, value, ctx.output(inst, 0));
+        true
+    });
+
+    lower_pattern!(t, Null, |ctx, inst| {
+        load_imm(ctx, 0, ctx.output(inst, 0));
+        true
     });
 
     lower_pattern!(t, (Iadd Iconst _), |ctx, inst| {
         let iconst = ctx.input_inst(inst, 0);
-        with_imm12(ctx, iconst, |ctx, imm| {
+        let value = fieldref!(ctx.inst(iconst), UnaryImm, imm).bits();
+        with_imm12(ctx, value as u64, |ctx, imm| {
             ctx.emit(make_reg_reg_imm(Op::AddI,
                                       ctx.output(inst, 0),
                                       ctx.input(inst, 0),
@@ -231,7 +274,8 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
 
     lower_pattern!(t, (Iadd _ Iconst), |ctx, inst| {
         let iconst = ctx.input_inst(inst, 1);
-        with_imm12(ctx, iconst, |ctx, imm| {
+        let value = fieldref!(ctx.inst(iconst), UnaryImm, imm).bits();
+        with_imm12(ctx, value as u64, |ctx, imm| {
             ctx.emit(make_reg_reg_imm(Op::AddI,
                                       ctx.output(inst, 0),
                                       ctx.input(inst, 1),
@@ -254,6 +298,101 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
         ctx.emit(make_reg_reg_reg(
             Op::Sub,
             ctx.output(inst, 0),
+            ctx.input(inst, 0),
+            ctx.input(inst, 1),
+        ));
+        true
+    });
+
+    lower_pattern!(t, Ineg, |ctx, inst| {
+        ctx.emit(make_reg_reg(
+            Op::Neg,
+            ctx.output(inst, 0),
+            ctx.input(inst, 0),
+        ));
+        true
+    });
+
+    lower_pattern!(t, Imul, |ctx, inst| {
+        ctx.emit(make_reg_reg_reg(
+            Op::SMulL,
+            ctx.output(inst, 0),
+            ctx.input(inst, 0),
+            ctx.input(inst, 1),
+        ));
+        true
+    });
+
+    lower_pattern!(t, Umulhi, |ctx, inst| {
+        ctx.emit(make_reg_reg_reg(
+            Op::UMulH,
+            ctx.output(inst, 0),
+            ctx.input(inst, 0),
+            ctx.input(inst, 1),
+        ));
+        true
+    });
+
+    lower_pattern!(t, Smulhi, |ctx, inst| {
+        ctx.emit(make_reg_reg_reg(
+            Op::SMulH,
+            ctx.output(inst, 0),
+            ctx.input(inst, 0),
+            ctx.input(inst, 1),
+        ));
+        true
+    });
+
+    lower_pattern!(t, Udiv, |ctx, inst| {
+        ctx.emit(make_reg_reg_reg(
+            Op::UDiv,
+            ctx.output(inst, 0),
+            ctx.input(inst, 0),
+            ctx.input(inst, 1),
+        ));
+        true
+    });
+
+    lower_pattern!(t, Sdiv, |ctx, inst| {
+        ctx.emit(make_reg_reg_reg(
+            Op::SDiv,
+            ctx.output(inst, 0),
+            ctx.input(inst, 0),
+            ctx.input(inst, 1),
+        ));
+        true
+    });
+
+    lower_pattern!(t, Urem, |ctx, inst| {
+        let quotient = ctx.tmp_rc(GPR);
+        ctx.emit(make_reg_reg_reg_reg(
+            Op::UMSubL,
+            ctx.output(inst, 0),
+            quotient.clone(),
+            ctx.input(inst, 1),
+            ctx.input(inst, 0),
+        ));
+        ctx.emit(make_reg_reg_reg(
+            Op::UDiv,
+            quotient,
+            ctx.input(inst, 0),
+            ctx.input(inst, 1),
+        ));
+        true
+    });
+
+    lower_pattern!(t, Srem, |ctx, inst| {
+        let quotient = ctx.tmp_rc(GPR);
+        ctx.emit(make_reg_reg_reg_reg(
+            Op::SMSubL,
+            ctx.output(inst, 0),
+            quotient.clone(),
+            ctx.input(inst, 1),
+            ctx.input(inst, 0),
+        ));
+        ctx.emit(make_reg_reg_reg(
+            Op::SDiv,
+            quotient,
             ctx.input(inst, 0),
             ctx.input(inst, 1),
         ));

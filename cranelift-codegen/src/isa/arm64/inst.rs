@@ -1,6 +1,7 @@
 //! This module defines `Arm64Inst` and friends, which implement `MachInst`.
 
-use crate::ir::{Inst, InstructionData, Type};
+use crate::ir::constant::{ConstantData, ConstantOffset};
+use crate::ir::{FuncRef, GlobalValue, Inst, InstructionData, Type};
 use crate::isa::arm64::registers::*;
 use crate::isa::registers::RegClass;
 use crate::machinst::lower::LowerCtx;
@@ -9,39 +10,21 @@ use crate::{mach_args, mach_ops};
 
 mach_ops!(Op, {
     Add,
-    AddS,
     AddI,
     Sub,
-    SubS,
     SubI,
-    Cmp,
-    Cmn,
     Neg,
-    NegS,
-    Mov,
-    MovI,
-    And,
-    AndS,
-    Orr,
-    Orn,
-    Eor,
-    Eon,
-    Bic,
-    BicS,
-    Tst,
-    Asr,
-    Lsl,
-    Lsr,
-    Ror,
-    Asrv,
-    Lslv,
-    Lsrv,
-    Rorv,
-    Cls,
-    Clz,
-    Adc,
-    AdcS,
-    Csel
+    SMulH,
+    SMulL,
+    UMulH,
+    UMulL,
+    SMSubL,
+    UMSubL,
+    UDiv,
+    SDiv,
+    LdrImm,
+    LdrLit32,
+    LdrLit64
 });
 
 mach_args!(Arg, ArgKind, {
@@ -78,7 +61,7 @@ pub struct ShiftedImm {
 }
 
 impl ShiftedImm {
-    pub fn maybe_from_i64(mut val: i64) -> Option<ShiftedImm> {
+    pub fn maybe_from_u64(mut val: u64) -> Option<ShiftedImm> {
         if val == 0 {
             Some(ShiftedImm { bits: 0, shift: 0 })
         } else {
@@ -97,15 +80,6 @@ impl ShiftedImm {
                 None
             }
         }
-    }
-
-    pub fn maybe_from_iconst(inst: &InstructionData) -> Option<ShiftedImm> {
-        let imm: i64 = if let &InstructionData::UnaryImm { ref imm, .. } = inst {
-            imm.clone().into()
-        } else {
-            return None;
-        };
-        ShiftedImm::maybe_from_i64(imm)
     }
 }
 
@@ -139,7 +113,18 @@ pub enum MemArg {
     BaseOffsetShifted(usize),
     BaseImmPreIndexed(usize),
     BaseImmPostIndexed(usize),
-    PCRel(usize), // TODO: what is the right type for a label reference?
+    Label(MemLabel),
+}
+
+/// A reference to some memory address.
+#[derive(Clone, Debug)]
+pub enum MemLabel {
+    /// A value in a constant pool, already emitted.
+    ConstantPool(ConstantOffset),
+    /// A value in a constant pool, to be emitted during binemit.
+    ConstantData(ConstantData),
+    Function(FuncRef),
+    GlobalValue(GlobalValue),
 }
 
 impl MemArg {
@@ -150,7 +135,7 @@ impl MemArg {
             &MemArg::BaseOffsetShifted(..) => 2,
             &MemArg::BaseImmPreIndexed(..) => 1,
             &MemArg::BaseImmPostIndexed(..) => 1,
-            &MemArg::PCRel(..) => 0,
+            &MemArg::Label(..) => 0,
         }
     }
 }
@@ -178,11 +163,33 @@ enum Cond {
 // -------------------- instruction constructors -------------------
 
 /// Make a reg / reg / reg inst.
+pub fn make_reg_reg(op: Op, rd: MachReg, rm: MachReg) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg_reg_use(Arg::Reg(), rm)
+}
+
+/// Make a reg / reg / reg inst.
 pub fn make_reg_reg_reg(op: Op, rd: MachReg, rn: MachReg, rm: MachReg) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use(Arg::Reg(), rn)
         .with_arg_reg_use(Arg::Reg(), rm)
+}
+
+/// Make a reg / reg / reg / reg inst.
+pub fn make_reg_reg_reg_reg(
+    op: Op,
+    rd: MachReg,
+    rn: MachReg,
+    rm: MachReg,
+    ra: MachReg,
+) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg_reg_use(Arg::Reg(), rn)
+        .with_arg_reg_use(Arg::Reg(), rm)
+        .with_arg_reg_use(Arg::Reg(), ra)
 }
 
 /// Make a reg / reg / immediate inst.
@@ -221,6 +228,13 @@ pub fn make_reg_reg_rextend(
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use(Arg::Reg(), rn)
         .with_arg_reg_use(Arg::ExtendedReg(ext, shift_amt), rm)
+}
+
+/// Make a reg / memory-label inst.
+pub fn make_reg_memlabel(op: Op, rd: MachReg, mem: MemArg) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg(Arg::Mem(mem))
 }
 
 /// Make a reg / memory inst.
@@ -277,16 +291,62 @@ pub fn make_mem2reg_reg(
         .with_arg_reg_use(Arg::Reg(), rd)
 }
 
-/// Helper: in a lowering action, check if an Iconst can become an Imm12; invoke a thunk with it if
-/// so.
-pub fn with_imm12<'a, F>(ctx: &mut LowerCtx<'a, Op, Arg>, inst: Inst, f: F) -> bool
+/// Helper: load an arbitrary immediate (up to 64 bits large) into a register, using the smallest
+/// possible encoding or constant pool entry.
+pub fn load_imm<'a>(ctx: &mut LowerCtx<'a, Op, Arg>, value: u64, dest: MachReg) {
+    if let Some(imm) = ShiftedImm::maybe_from_u64(value) {
+        let xzr = ctx.fixed(31);
+        ctx.emit(make_reg_reg_imm(Op::AddI, dest, xzr, imm));
+    } else if value <= std::u32::MAX as u64 {
+        ctx.emit(make_reg_memlabel(
+            Op::LdrLit32,
+            dest,
+            MemArg::Label(MemLabel::ConstantData(u32_constant(value as u32))),
+        ));
+    } else {
+        ctx.emit(make_reg_memlabel(
+            Op::LdrLit64,
+            dest,
+            MemArg::Label(MemLabel::ConstantData(u64_constant(value))),
+        ));
+    }
+}
+
+/// Helper: maybe return a `ShiftedImm` if an immediate value fits.
+pub fn with_imm12<'a, F>(ctx: &mut LowerCtx<'a, Op, Arg>, value: u64, f: F) -> bool
 where
     F: FnOnce(&mut LowerCtx<'a, Op, Arg>, ShiftedImm),
 {
-    if let Some(imm) = ShiftedImm::maybe_from_iconst(ctx.inst(inst)) {
+    if let Some(imm) = ShiftedImm::maybe_from_u64(value) {
         f(ctx, imm);
         true
     } else {
         false
     }
+}
+
+/// Helper: get a ConstantData from a u32.
+pub fn u32_constant(bits: u32) -> ConstantData {
+    let data = [
+        (bits & 0xff) as u8,
+        ((bits >> 8) & 0xff) as u8,
+        ((bits >> 16) & 0xff) as u8,
+        ((bits >> 24) & 0xff) as u8,
+    ];
+    ConstantData::from(&data[..])
+}
+
+/// Helper: get a ConstantData from a u64.
+pub fn u64_constant(bits: u64) -> ConstantData {
+    let data = [
+        (bits & 0xff) as u8,
+        ((bits >> 8) & 0xff) as u8,
+        ((bits >> 16) & 0xff) as u8,
+        ((bits >> 24) & 0xff) as u8,
+        ((bits >> 32) & 0xff) as u8,
+        ((bits >> 40) & 0xff) as u8,
+        ((bits >> 48) & 0xff) as u8,
+        ((bits >> 56) & 0xff) as u8,
+    ];
+    ConstantData::from(&data[..])
 }
