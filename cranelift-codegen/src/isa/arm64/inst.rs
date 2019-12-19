@@ -8,6 +8,8 @@ use crate::machinst::lower::LowerCtx;
 use crate::machinst::*;
 use crate::{mach_args, mach_ops};
 
+use std::slice;
+
 mach_ops!(Op, {
     Add,
     AddI,
@@ -28,19 +30,34 @@ mach_ops!(Op, {
 });
 
 mach_args!(Arg, ArgKind, {
+    RegDef(Value),
     Imm(ShiftedImm),
-    Reg(),
-    ShiftedReg(ShiftOp, usize),
-    ExtendedReg(ExtendOp, usize),
+    RegUse(Value),
+    ShiftedReg(Value, ShiftOp, usize),
+    ExtendedReg(Value, ExtendOp, usize),
     Mem(MemArg)
 });
 
 impl MachInstArg for Arg {
-    fn num_regs(&self) -> usize {
+    fn defs(&self) -> &[Value] {
         match self {
-            &Arg::Imm(..) => 0,
-            &Arg::Reg(..) | &Arg::ShiftedReg(..) | &Arg::ExtendedReg(..) => 1,
-            &Arg::Mem(ref m) => m.num_regs(),
+            &Arg::RegDef(ref v) => slice::from_ref(v),
+            &Arg::RegUse(..) |
+            &Arg::Imm(..) |
+            &Arg::ShiftedReg(..) |
+            &Arg::ExtendedReg(..) => &[],
+            &Arg::Mem(ref m) => m.defs(),
+        }
+    }
+
+    fn uses(&self) -> &[Value] {
+        match self {
+            &Arg::RegDef(ref v) => &[],
+            &Arg::RegUse(ref v) => slice::from_ref(v),
+            &Arg::Imm(..) => &[],
+            &Arg::ShiftedReg(ref v, ..) => slice::from_ref(v),
+            &Arg::ExtendedReg(ref v, ..) => slice::from_reg(v),
+            &Arg::Mem(ref m) => m.uses(),
         }
     }
 
@@ -108,11 +125,11 @@ pub enum ExtendOp {
 /// A memory argument to load/store, encapsulating the possible addressing modes.
 #[derive(Clone, Debug)]
 pub enum MemArg {
-    Base,
-    BaseImm(usize),
-    BaseOffsetShifted(usize),
-    BaseImmPreIndexed(usize),
-    BaseImmPostIndexed(usize),
+    Base(Value),
+    BaseImm(Value, usize),
+    BaseOffsetShifted(Value, usize),
+    BaseImmPreIndexed(Value, usize),
+    BaseImmPostIndexed(Value, usize),
     Label(MemLabel),
 }
 
@@ -128,14 +145,25 @@ pub enum MemLabel {
 }
 
 impl MemArg {
-    fn num_regs(&self) -> usize {
+    fn uses(&self) -> &[Value] {
         match self {
-            &MemArg::Base => 1,
-            &MemArg::BaseImm(..) => 1,
-            &MemArg::BaseOffsetShifted(..) => 2,
-            &MemArg::BaseImmPreIndexed(..) => 1,
-            &MemArg::BaseImmPostIndexed(..) => 1,
-            &MemArg::Label(..) => 0,
+            &MemArg::Base(ref v) => slice::from_ref(v),
+            &MemArg::BaseImm(ref v, ..) => slice::from_ref(v),
+            &MemArg::BaseOffsetShifted(ref v, ..) => slice::from_ref(v),
+            &MemArg::BaseImmPreIndexed(ref v, ..) => slice::from_ref(v),
+            &MemArg::BaseImmPostIndexed(ref v, ..) => slice::from_ref(v),
+            &MemArg::Label(..) => &[],
+        }
+    }
+
+    fn defs(&self) -> &[Value] {
+        match self {
+            &MemArg::Base(..) |
+            &MemArg::BaseImm(..) |
+            &MemArg::BaseOffsetShifted(..) => &[],
+            &MemArg::BaseImmPreIndexed(ref v, ..) => slice::from_ref(v),
+            &MemArg::BaseImmPostIndexed(ref v, ..) => slice::from_ref(v),
+            &MemArg::Label(..) => &[],
         }
     }
 }
