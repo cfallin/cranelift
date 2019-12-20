@@ -39,7 +39,7 @@ use alloc::vec::Vec;
 
 /// An action to perform when matching a tree of ops. Returns `true` if codegen was successful.
 /// Otherwise, another pattern/action should be used instead.
-pub type LowerAction<Op, Arg> = for<'a> fn(ctx: &mut LowerCtx<'a, Op, Arg>, inst: Inst) -> bool;
+pub type LowerAction<Op, Arg> = for<'a> fn(ctx: &mut LowerCtx<Op, Arg>) -> bool;
 
 /// Greedily extracts opcode trees from a block.
 pub struct BlockTreeExtractor<'a> {
@@ -129,48 +129,79 @@ pub trait LowerCtx<Op: MachInstOp, Arg: MachInstArg> {
     /// of the calls to this function.
     fn emit(&mut self, inst: MachInst<Op, Arg>);
 
-    /// Get the Value corresponding to the `idx`-th input of `inst`. Can access both
-    /// DataFlowGraph-tracked inputs and "extra" inputs.
-    fn input(&self, inst: Inst, idx: usize) -> Value;
-
-    /// Get the Value corresponding to the `idx`-th output of `inst`.
-    fn output(&self, inst: Inst, idx: usize) -> Value;
-
     /// Get the type of the (first) result of the given instruction.
     fn ty(&self, inst: Inst) -> Type;
+
+    /// Convenience: return a RegRef for the given input on the inst.
+    fn input(&self, idx: usize) -> RegRef {
+        assert!(idx <= std::u8::MAX as usize);
+        RegRef::Input(idx as u8)
+    }
+
+    /// Convenience: return a RegRef for the given output on the inst.
+    fn output(&self, idx: usize) -> RegRef {
+        assert!(idx <= std::u8::MAX as usize);
+        RegRef::Output(idx as u8)
+    }
+
+    /// Copy the input from `from` to `to`.
+    fn copy_input(&mut self, from: Inst, num: usize) -> RegRef;
 
     /// Get the instruction that produces the `idx`-th input of `inst`.
     fn input_inst(&self, inst: Inst, idx: usize) -> Inst;
 
     /// Get the instruction data for a given instruction.
-    fn inst(&self, inst: Inst) -> &InstructionData;
-
-    /// Add an extra input argument to a given IR inst. If the lowered instructions for a given IR
-    /// inst use a Value from another point in the program, then it must be added as an extra arg
-    /// to that IR inst. This returns an index that can be passed to `input`.
-    fn add_input(&mut self, inst: Inst, value: Value) -> usize;
+    fn instdata(&self, inst: Inst) -> &InstructionData;
 
     /// Mark this instruction as "unused". This means that its value does not need to be generated
     /// (machine instruction lowering can skip it), usually because it was matchedas part of
     /// another IR instruction's pattern during instruction selection.
     fn mark_unused(&mut self, inst: Inst);
 
-    /// Fix an existing Value to a given fixed register.
-    fn fix_reg(&mut self, value: Value, ru: RegUnit);
+    /// Fix an existing virtual register to a given fixed register.
+    fn fix_reg(&mut self, reg: &RegRef, ru: RegUnit);
 
-    /// Return a temporary. The Value can be fetched as `ctx.output(ctx.inst(), idx)` where `idx` is
-    /// the return value.
-    fn tmp(&mut self, ty: Type, rc: RegClass) -> usize;
+    /// Fix an existing virtual register to a given register class.
+    fn fix_regclass(&mut self, reg: &RegRef, rc: RegClass);
 
-    /// Return a register-fixed temporary. The Value can be fetched as `ctx.output(ctx.inst(),
-    /// idx)` where `idx` is the return value.
-    fn fixed_tmp(&mut self, ty: Type, ru: RegUnit) -> usize;
+    /// Return a temporary. The temp is an output of this instruction (because it can be written).
+    /// The temporary comes with no register constraints, initially, but should be constrained to a
+    /// fixed register or register class.
+    fn tmp(&mut self, ty: Type) -> RegRef;
+
+    /// Return a register-fixed temporary.
+    fn fixed_tmp(&mut self, ty: Type, ru: RegUnit) -> RegRef {
+        let reg = self.tmp(ty);
+        self.fix_reg(&reg, ru);
+        reg
+    }
+
+    /// Return a temporary in a register class.
+    fn rc_tmp(&mut self, ty: Type, rc: RegClass) -> RegRef {
+        let reg = self.tmp(ty);
+        self.fix_regclass(&reg, rc);
+        reg
+    }
+
+    /// Return the `Value` for a RegRef.
+    fn value(&self, reg: &RegRef) -> Value;
+}
+
+/// A register reference: a reference to one of the inputs or outputs of the IR instruction.
+#[derive(Clone, Debug)]
+pub enum RegRef {
+    /// One of the instruction inputs (arguments). Index refers to the virtual index space formed
+    /// by concatenating `dfg.inst_args(inst)` with `MachInsts::extra_args(inst)`.
+    Input(u8),
+    /// One of the instruction outputs (results). Index refers to the virtual index space formed by
+    /// concatenating `dfg.inst_results(inst)` with `MachInst::extra_results(inst)`.
+    Output(u8),
 }
 
 /// The canonical implementation of the lowering context, used to emit instructions directly to the
 /// machine-instruction portion of the function.
 pub struct LowerCtxImpl<'a, Op: MachInstOp, Arg: MachInstArg> {
-    func: &'a mut Function,
+    func: &'a Function,
     machinsts: &'a mut MachInstsImpl<Op, Arg>,
     constraints: &'a mut MachRegConstraints,
     cur_inst: Option<Inst>,
@@ -204,7 +235,7 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtxImpl<'a, Op, Arg> {
 
     fn cur(&self) -> Inst {
         assert!(self.cur_inst.is_some());
-        self.cur_inst.cloned().unwrap()
+        self.cur_inst.clone().unwrap()
     }
 
     /// Is the given instruction marked as unused?
@@ -214,6 +245,7 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtxImpl<'a, Op, Arg> {
 }
 
 impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a, Op, Arg> {
+    /// Get the current instruction.
     fn inst(&self) -> Inst {
         self.cur()
     }
@@ -224,16 +256,6 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a
         self.machinsts.add_inst(self.cur(), inst);
     }
 
-    /// Get the Value corresponding to the `idx`-th input of `inst`.
-    fn input(&self, inst: Inst, idx: usize) -> Value {
-        self.machinsts.get_arg(&self.func.dfg, inst, idx)
-    }
-
-    /// Get the Value corresponding to the `idx`-th output of `inst`.
-    fn output(&self, inst: Inst, idx: usize) -> Value {
-        self.func.dfg.inst_results(inst)[idx]
-    }
-
     /// Get the type of the (first) result of the given instruction.
     fn ty(&self, inst: Inst) -> Type {
         let val = self.func.dfg.inst_results(inst)[0];
@@ -242,7 +264,7 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a
 
     /// Get the instruction that produces the `idx`-th input of `inst`.
     fn input_inst(&self, inst: Inst, idx: usize) -> Inst {
-        let val = self.input(inst, idx);
+        let val = self.machinsts.get_arg(&self.func.dfg, inst, idx);
         match self.func.dfg.value_def(val) {
             ValueDef::Result(def_inst, _) => def_inst,
             _ => panic!("input_inst() on input not defined by another instruction"),
@@ -250,22 +272,15 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a
     }
 
     /// Get the instruction data for a given instruction.
-    fn inst(&self, inst: Inst) -> &InstructionData {
+    fn instdata(&self, inst: Inst) -> &InstructionData {
         &self.func.dfg[inst]
     }
 
-    /// Add an extra input to the given IR inst, corresponding to an use of this input by the
-    /// lowered machine instructions.
-    fn add_input(&mut self, inst: Inst, value: Value) -> usize {
-        assert!(inst == self.cur());
-        self.func.dfg.inst_args(inst).len() + self.machinsts.add_extra_arg(inst, value)
-    }
-
-    /// Add an extra output to the given IR inst, corresponding to some value defined in the
-    /// lowered machine instructions.
-    fn add_output(&mut self, inst: Inst, ty: Type) -> usize {
-        assert!(inst == self.cur());
-        self.func.dfg.inst_results(inst).len() + self.machinsts.add_extra_result(inst, ty)
+    /// Copy the input from `from` to `to`.
+    fn copy_input(&mut self, from: Inst, num: usize) -> RegRef {
+        let val = self.machinsts.get_arg(&self.func.dfg, from, num);
+        let extra_idx = self.machinsts.add_extra_arg(self.cur(), val);
+        self.input(self.func.dfg.inst_args(self.cur()).len() + extra_idx)
     }
 
     /// Mark this instruction as "unused". This means that its value does not need to be generated
@@ -276,37 +291,46 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a
     }
 
     /// Fix a virtual register to a particular physical register.
-    fn fix_reg(&mut self, value: Value, ru: RegUnit) {
+    fn fix_reg(&mut self, reg: &RegRef, ru: RegUnit) {
+        let value = self.value(reg);
         self.constraints
             .add(value, MachRegConstraint::from_fixed(ru));
     }
 
-    /// Create a fixed temporary as a def (output) of the given insn.
-    fn tmp(&mut self, ty: Type, rc: RegUnit) -> usize {
-        let inst = self.cur();
-        let out_idx = self.add_output(inst, ty);
-        self.add_input(inst, self.output(inst, out_idx));
-        let value = self.output(inst, out_idx);
-        self.constraints.add(value, MachRegConstraint::from_class(rc));
-        out_idx
+    /// Fix a virtual register to a particular register class.
+    fn fix_regclass(&mut self, reg: &RegRef, rc: RegClass) {
+        let value = self.value(reg);
+        self.constraints
+            .add(value, MachRegConstraint::from_class(rc));
     }
 
     /// Create a fixed temporary as a def (output) of the given insn.
-    fn fixed_tmp(&mut self, ty: Type, ru: RegUnit) -> usize {
-        let inst = self.cur();
-        let out_idx = self.add_output(inst, ty);
-        self.add_input(inst, self.output(inst, out_idx));
-        self.fix_reg(self.output(inst, out_idx), ru);
-        out_idx
+    fn tmp(&mut self, ty: Type) -> RegRef {
+        let extra_idx = self.machinsts.add_extra_result(self.cur(), ty);
+        self.output(self.func.dfg.inst_results(self.cur()).len() + extra_idx)
     }
 
-    // TODO: a RegRef type...
+    /// Return the `Value` for a RegRef.
+    fn value(&self, reg: &RegRef) -> Value {
+        match reg {
+            &RegRef::Input(idx) => self
+                .machinsts
+                .get_arg(&self.func.dfg, self.cur(), idx as usize),
+            &RegRef::Output(idx) => {
+                self.machinsts
+                    .get_result(&self.func.dfg, self.cur(), idx as usize)
+            }
+        }
+    }
 }
 
 /// Lower a function to virtual-reg machine insts.
-pub fn lower(func: &mut Function, lower_table: &LowerTable<Op, Arg>) {
+pub fn lower<Op: MachInstOp, Arg: MachInstArg>(
+    func: &mut Function,
+    lower_table: &LowerTable<Op, Arg>,
+) {
     // Create the MachInsts instance.
-    let mut machinsts = MachInstsImpl::new();
+    let mut machinsts = MachInstsImpl::new(&func.dfg);
 
     let mut reg_constraints = MachRegConstraints::new();
 
@@ -331,6 +355,7 @@ pub fn lower(func: &mut Function, lower_table: &LowerTable<Op, Arg>) {
             if !ctx.is_unused(inst) {
                 let ckpt = prefix_pool.checkpoint();
                 let tree = bte.get_tree(&mut prefix_pool, inst);
+                let mut lowered = false;
 
                 ctx.begin_inst(inst);
 
@@ -338,13 +363,12 @@ pub fn lower(func: &mut Function, lower_table: &LowerTable<Op, Arg>) {
                 // them, if they match, one at a time.
                 let root_op = prefix_pool.get(&tree).root_op();
                 if let Some(entries) = lower_table.get_entries(root_op) {
-                    let mut lowered = false;
                     for entry in entries {
                         let pat = lower_table.pool().get(&entry.prefix);
                         let subject = prefix_pool.get(&tree);
                         if pat.matches(&subject) {
                             let action = entry.action;
-                            if action(&mut ctx, inst) {
+                            if action(&mut ctx) {
                                 // Action was successful -- no need to try further patterns.
                                 lowered = true;
                                 break;
@@ -367,8 +391,7 @@ pub fn lower(func: &mut Function, lower_table: &LowerTable<Op, Arg>) {
         }
     }
 
-    func.machinsts = Some(Box::new(machinsts));
-    func.reg_constraints = Some(reg_constraints);
+    // TODO: return a wrapped-up lowering result.
 }
 
 #[cfg(test)]

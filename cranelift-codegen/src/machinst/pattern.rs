@@ -71,20 +71,20 @@ impl<Op: MachInstOp, Arg: MachInstArg> LowerTable<Op, Arg> {
 /// Add a lowering pattern to a LowerTable.
 #[macro_export]
 macro_rules! lower_pattern {
-    ($t:expr, ($($tree:tt)*), |$ctx:ident, $inst:ident| $body:block) => {
+    ($t:expr, ($($tree:tt)*), |$ctx:ident| $body:block) => {
         {
             let mut pat = $t.pool_mut().build();
             crate::lower_pattern_tree!(pat, ($($tree)*));
             let pat = pat.build();
-            $t.add(pat, |$ctx, $inst| { $body });
+            $t.add(pat, |$ctx| { $body });
         }
     };
-    ($t:expr, $tree:ident, |$ctx:ident, $inst:ident| $body:block) => {
+    ($t:expr, $tree:ident, |$ctx:ident| $body:block) => {
         {
             let mut pat = $t.pool_mut().build();
             crate::lower_pattern_tree!(pat, $tree);
             let pat = pat.build();
-            $t.add(pat, |$ctx, $inst| { $body });
+            $t.add(pat, |$ctx| { $body });
         }
     };
 }

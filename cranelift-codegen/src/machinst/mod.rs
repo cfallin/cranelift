@@ -26,8 +26,9 @@
 //! short or empty, leading to less memory overhead.)
 
 use crate::binemit::CodeSink;
+use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;
-use crate::ir::{DataFlowGraph, Opcode, Type, Value};
+use crate::ir::{DataFlowGraph, Inst, Opcode, Type, Value};
 use crate::isa::registers::{RegClass, RegClassMask};
 use crate::isa::RegUnit;
 use crate::HashMap;
@@ -129,9 +130,9 @@ pub struct MachInst<Op: MachInstOp, Arg: MachInstArg> {
     pub args: MachInstArgs<Arg>,
 }
 
-impl<Op: MachInstOp, Arg: MachInstArg, Reg: Debug + Clone> MachInst<Op, Arg, Reg> {
+impl<Op: MachInstOp, Arg: MachInstArg> MachInst<Op, Arg> {
     /// Create a new machine instruction.
-    pub fn new(op: Op) -> MachInst<Op, Arg, Reg> {
+    pub fn new(op: Op) -> MachInst<Op, Arg> {
         MachInst {
             op,
             args: SmallVec::new(),
@@ -160,13 +161,15 @@ impl<Op: MachInstOp, Arg: MachInstArg, Reg: Debug + Clone> MachInst<Op, Arg, Reg
 /// This trait represents, in addition to the lowered machine instructions per IR instruction, an
 /// overlay over IR  instructions that can define new inputs (args), new outputs (results), and new
 /// Values with types.
-pub trait MachInsts: Clone + Debug {
+pub trait MachInsts {
     /// Clear the list of machine instructions.
     fn clear(&mut self);
     /// Get the number of machine instructions.
     fn num_machinsts(&self) -> usize;
     /// Get the extra arg values for a given IR instruction added during lowering.
     fn extra_args(&self, inst: Inst) -> &[Value];
+    /// Get the extra result values for a given IR instruction added during lowering.
+    fn extra_results(&self, inst: Inst) -> &[Value];
     /// Get the number of normal and extra args for the given IR instruction.
     fn num_total_args(&self, dfg: &DataFlowGraph, inst: Inst) -> usize;
     /// Get the given normal or extra arg for the given IR instruction.
@@ -207,7 +210,7 @@ struct MachInstsEntry {
 impl<Op: MachInstOp, Arg: MachInstArg> MachInstsImpl<Op, Arg> {
     /// Create a new MachInstsImpl.
     pub fn new(dfg: &DataFlowGraph) -> MachInstsImpl<Op, Arg> {
-        let dfg_values = dfg.values().len();
+        let dfg_values = dfg.num_values();
         MachInstsImpl {
             entries: SecondaryMap::with_default(Default::default()),
             mach_insts: vec![],
@@ -221,13 +224,13 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInstsImpl<Op, Arg> {
     }
 
     fn start_inst(&mut self, from: Inst) {
-        let entry = self.entries[from];
+        let entry = &mut self.entries[from];
         if &self.last_inst != &Some(from) {
             assert!(entry.inst_count == 0);
             assert!(entry.extra_arg_count == 0);
-            entry.inst_start = self.insts.len();
-            entry.extra_arg_start = self.extra_args.len();
-            entry.extra_result_start = self.extra_results.len();
+            entry.inst_start = self.mach_insts.len() as u32;
+            entry.extra_arg_start = self.extra_args.len() as u32;
+            entry.extra_result_start = self.extra_results.len() as u32;
             self.last_inst = Some(from);
         }
     }
@@ -242,16 +245,16 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInstsImpl<Op, Arg> {
     /// Add a new MachInst corresponding to the given IR inst.
     pub fn add_inst(&mut self, from: Inst, inst: MachInst<Op, Arg>) {
         self.start_inst(from);
-        let entry = self.entries[from];
+        let entry = &mut self.entries[from];
         entry.inst_count += 1;
-        self.insts.push(inst);
+        self.mach_insts.push(inst);
     }
 
     /// Add a new extra arg corresponding to the given IR inst. Returns the index of this extra
     /// arg.
     pub fn add_extra_arg(&mut self, from: Inst, value: Value) -> usize {
         self.start_inst(from);
-        let entry = self.entries[from];
+        let entry = &mut self.entries[from];
         let idx = entry.extra_arg_count as usize;
         entry.extra_arg_count += 1;
         self.extra_args.push(value);
@@ -262,9 +265,9 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInstsImpl<Op, Arg> {
     /// arg.
     pub fn add_extra_result(&mut self, from: Inst, ty: Type) -> usize {
         self.start_inst(from);
-        let entry = self.entries[from];
+        let entry = &mut self.entries[from];
         let idx = entry.extra_arg_count as usize;
-        entry.extra_results_count += 1;
+        entry.extra_result_count += 1;
         let value = self.new_value(ty);
         self.extra_results.push(value);
         idx
@@ -275,18 +278,19 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInsts for MachInstsImpl<Op, Arg> {
     /// Clear the list of machine instructions.
     fn clear(&mut self) {
         self.entries.clear();
-        self.insts.clear();
+        self.mach_insts.clear();
         self.extra_args.clear();
+        self.extra_results.clear();
     }
 
     /// Get the number of machine instructions.
     fn num_machinsts(&self) -> usize {
-        self.insts.len()
+        self.mach_insts.len()
     }
 
     /// Get the extra arg values for a given IR instruction added during lowering.
     fn extra_args(&self, inst: Inst) -> &[Value] {
-        let entry = self.entries[from];
+        let entry = &self.entries[inst];
         let start = entry.extra_arg_start as usize;
         let end = start + (entry.extra_arg_count as usize);
         &self.extra_args[start..end]
@@ -294,7 +298,7 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInsts for MachInstsImpl<Op, Arg> {
 
     /// Get the extra result values for a given IR instruction added during lowering.
     fn extra_results(&self, inst: Inst) -> &[Value] {
-        let entry = self.entries[from];
+        let entry = &self.entries[inst];
         let start = entry.extra_result_start as usize;
         let end = start + (entry.extra_result_count as usize);
         &self.extra_results[start..end]
@@ -327,7 +331,7 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInsts for MachInstsImpl<Op, Arg> {
     }
 
     fn get_type(&self, dfg: &DataFlowGraph, v: Value) -> Type {
-        if idx < self.first_extra_type {
+        if v.index() < self.first_extra_value {
             dfg.value_type(v)
         } else {
             self.extra_values[v.index() - self.first_extra_value]

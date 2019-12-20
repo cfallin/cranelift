@@ -2,6 +2,7 @@
 
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::{FuncRef, GlobalValue, Inst, InstructionData, Type};
+use crate::ir::types::*;
 use crate::isa::arm64::registers::*;
 use crate::isa::registers::RegClass;
 use crate::machinst::lower::LowerCtx;
@@ -26,17 +27,6 @@ mach_ops!(Op, {
     LdrLit32,
     LdrLit64
 });
-
-/// Reference to register of the corresponding ir::Inst.
-#[derive(Clone, Debug)]
-pub enum RegRef {
-    /// One of instruction arguments. Index refers to slice returned by `dfg.inst_args(inst)`
-    /// or, if past the end of that slice, to `MachInsts::extra_args(inst)`.
-    Arg(u8),
-    /// One of instruction results. Index refers to slice returned by `dfg.inst_results(inst)`
-    /// or, if past the end of that slice, to `MachInsts::extra_results(inst)`.
-    Result(u8),
-}
 
 mach_args!(Arg, ArgKind, {
     Imm(ShiftedImm),
@@ -142,22 +132,10 @@ enum Cond {
 
 // -------------------- instruction constructors -------------------
 
-/// Build a register reference for the given nput  of the containing IR inst.
-pub fn input_reg(num: usize) -> RegRef {
-    assert!(num < std::u8::MAX as usize);
-    RegRef::Arg(num as u8)
-}
-
-/// Build a register reference for the given output of the containing IR inst.
-pub fn output_reg(num: usize) -> RegRef {
-    assert!(num < std::u8::MAX as usize);
-    RegRef::Result(num as u8)
-}
-
 /// Make a reg / reg / reg inst.
 pub fn make_reg_reg(op: Op, rd: RegRef, rm: RegRef) -> MachInst<Op, Arg> {
     MachInst::new(op)
-        .with_arg(Arg::Reg(rd)
+        .with_arg(Arg::Reg(rd))
         .with_arg(Arg::Reg(rm))
 }
 
@@ -217,8 +195,8 @@ pub fn make_reg_reg_rextend(
     shift_amt: usize,
 ) -> MachInst<Op, Arg> {
     MachInst::new(op)
-        .with_arg(Arg::Reg(rd), rd)
-        .with_arg(Arg::Reg(rn), rn)
+        .with_arg(Arg::Reg(rd))
+        .with_arg(Arg::Reg(rn))
         .with_arg(Arg::ExtendedReg(rm, ext, shift_amt))
 }
 
@@ -245,9 +223,9 @@ pub fn make_mem_reg(op: Op, mem: MemArg, rn: RegRef) -> MachInst<Op, Arg> {
 
 /// Helper: load an arbitrary immediate (up to 64 bits large) into a register, using the smallest
 /// possible encoding or constant pool entry.
-pub fn load_imm<'a>(ctx: &mut LowerCtx<'a, Op, Arg>, value: u64, dest: RegRef) {
+pub fn load_imm<'a>(ctx: &mut LowerCtx<Op, Arg>, value: u64, dest: RegRef) {
     if let Some(imm) = ShiftedImm::maybe_from_u64(value) {
-        let xzr = output_reg(ctx.fixed_tmp(I64, 31));
+        let xzr = ctx.fixed_tmp(I64, 31);
         ctx.emit(make_reg_reg_imm(Op::AddI, dest, xzr, imm));
     } else if value <= std::u32::MAX as u64 {
         ctx.emit(make_reg_memlabel(
@@ -265,9 +243,9 @@ pub fn load_imm<'a>(ctx: &mut LowerCtx<'a, Op, Arg>, value: u64, dest: RegRef) {
 }
 
 /// Helper: maybe return a `ShiftedImm` if an immediate value fits.
-pub fn with_imm12<'a, F>(ctx: &mut LowerCtx<'a, Op, Arg>, value: u64, f: F) -> bool
+pub fn with_imm12<'a, F>(ctx: &mut LowerCtx<Op, Arg>, value: u64, f: F) -> bool
 where
-    F: FnOnce(&mut LowerCtx<'a, Op, Arg>, ShiftedImm),
+    F: FnOnce(&mut LowerCtx<Op, Arg>, ShiftedImm),
 {
     if let Some(imm) = ShiftedImm::maybe_from_u64(value) {
         f(ctx, imm);
