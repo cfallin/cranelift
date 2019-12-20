@@ -1,4 +1,13 @@
-//! This module defines `Arm64Inst` and friends, which implement `MachInst`.
+//! This module defines `Op` and `Arg` and friends for Arm64, along with constructors/helpers for
+//! lowering code that constructs `MachInst<Op, Arg>` values.
+
+/*
+ * TODO:
+ * - Support lowering table keying on "controlling typevar".
+ *
+ * - Support (Iadd (Uextend ...) ...) and (Iadd (Ishl_imm ...) ...) using extended-register and
+ *   shifted-register forms.
+ */
 
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::{FuncRef, GlobalValue, Inst, InstructionData, Type};
@@ -10,11 +19,16 @@ use crate::machinst::*;
 use crate::{mach_args, mach_ops};
 
 mach_ops!(Op, {
-    Add,
-    AddI,
-    Sub,
-    SubI,
-    Neg,
+    Add32,
+    Add64,
+    AddI32,
+    AddI64,
+    Sub32,
+    Sub64,
+    SubI32,
+    SubI64,
+    Neg32,
+    Neg64,
     SMulH,
     SMulL,
     UMulH,
@@ -36,32 +50,47 @@ mach_args!(Arg, ArgKind, {
     Mem(MemArg)
 });
 
-/// A shifted immediate value.
+impl Arg {
+    /// Get the embedded register reference, if any, in this arg.
+    pub fn reg(&self) -> &RegRef {
+        match self {
+            &Arg::Reg(ref r) => r,
+            &Arg::ShiftedReg(ref r, ..) => r,
+            &Arg::ExtendedReg(ref r, ..) => r,
+            _ => panic!("reg() on arg without register"),
+        }
+    }
+}
+
+/// A shifted immediate value in 'imm12' format: supports 12 bits, shifted left by 0 or 12 places.
 #[derive(Clone, Debug)]
 pub struct ShiftedImm {
-    bits: usize,
-    shift: usize,
+    /// The immediate bits.
+    pub bits: usize,
+    /// Whether the immediate bits are shifted left by 12 or not.
+    pub shift12: bool,
 }
 
 impl ShiftedImm {
-    pub fn maybe_from_u64(mut val: u64) -> Option<ShiftedImm> {
+    /// Compute a ShiftedImm from raw bits, if possible.
+    pub fn maybe_from_u64(val: u64) -> Option<ShiftedImm> {
         if val == 0 {
-            Some(ShiftedImm { bits: 0, shift: 0 })
+            Some(ShiftedImm { bits: 0, shift12: false })
+        } else if val < 0xfff {
+            Some(ShiftedImm { bits: val as usize, shift12: false })
+        } else if val < 0xfff_000 && (val & 0xfff == 0) {
+            Some(ShiftedImm { bits: (val as usize) >> 12, shift12: true })
         } else {
-            let mut shift = 0;
-            while (val & 1) == 0 {
-                shift += 1;
-                val >>= 1;
-            }
-            if val < 0x1000 {
-                // 12 bits
-                Some(ShiftedImm {
-                    bits: val as usize,
-                    shift,
-                })
-            } else {
-                None
-            }
+            None
+        }
+    }
+
+    /// Bits for 2-bit "shift" field in e.g. AddI.
+    pub fn shift_bits(&self) -> u8 {
+        if self.shift12 {
+            0b01
+        } else {
+            0b00
         }
     }
 }
@@ -75,17 +104,45 @@ pub enum ShiftOp {
     ROR,
 }
 
+impl ShiftOp {
+    /// Get the encoding of this shift op.
+    pub fn bits(&self) -> u8 {
+        match self {
+            &ShiftOp::LSL => 0b00,
+            &ShiftOp::LSR => 0b01,
+            &ShiftOp::ASR => 0b10,
+            &ShiftOp::ROR => 0b11,
+        }
+    }
+}
+
 /// An extend operator for a register.
 #[derive(Clone, Debug)]
 pub enum ExtendOp {
     SXTB,
     SXTH,
     SXTW,
-    XSTX,
+    SXTX,
     UXTB,
     UXTH,
     UXTW,
     UXTX,
+}
+
+impl ExtendOp {
+    /// Encoding of this op.
+    pub fn bits(&self) -> u8 {
+        match self {
+            &ExtendOp::UXTB => 0b000,
+            &ExtendOp::UXTH => 0b001,
+            &ExtendOp::UXTW => 0b010,
+            &ExtendOp::UXTX => 0b011,
+            &ExtendOp::SXTB => 0b100,
+            &ExtendOp::SXTH => 0b101,
+            &ExtendOp::SXTW => 0b110,
+            &ExtendOp::SXTX => 0b111,
+        }
+    }
 }
 
 /// A memory argument to load/store, encapsulating the possible addressing modes.
@@ -226,7 +283,7 @@ pub fn make_mem_reg(op: Op, mem: MemArg, rn: RegRef) -> MachInst<Op, Arg> {
 pub fn load_imm<'a>(ctx: &mut LowerCtx<Op, Arg>, value: u64, dest: RegRef) {
     if let Some(imm) = ShiftedImm::maybe_from_u64(value) {
         let xzr = ctx.fixed_tmp(I64, 31);
-        ctx.emit(make_reg_reg_imm(Op::AddI, dest, xzr, imm));
+        ctx.emit(make_reg_reg_imm(Op::AddI64, dest, xzr, imm));
     } else if value <= std::u32::MAX as u64 {
         ctx.emit(make_reg_memlabel(
             Op::LdrLit32,
@@ -279,4 +336,13 @@ pub fn u64_constant(bits: u64) -> ConstantData {
         ((bits >> 56) & 0xff) as u8,
     ];
     ConstantData::from(&data[..])
+}
+
+/// Helper: pick one of two opcodes based on size.
+pub fn choose_32_64(ty: Type, op32: Op, op64: Op) -> Op {
+    match ty {
+        I32 | B32 | F32 => op32,
+        I64 | B64 | F64 => op64,
+        _ => panic!("Bad type: {}", ty),
+    }
 }

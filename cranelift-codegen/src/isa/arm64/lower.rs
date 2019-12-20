@@ -268,8 +268,9 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
     lower_pattern!(t, (Iadd Iconst _), |ctx| {
         let iconst = ctx.input_inst(ctx.inst(), 0);
         let value = fieldref!(ctx.instdata(iconst), UnaryImm, imm).bits();
+        let op = choose_32_64(ctx.ty(ctx.inst()), Op::AddI32, Op::AddI64);
         with_imm12(ctx, value as u64, |ctx, imm| {
-            ctx.emit(make_reg_reg_imm(Op::AddI,
+            ctx.emit(make_reg_reg_imm(op,
                                       ctx.output(0),
                                       ctx.input(0),
                                       imm));
@@ -280,8 +281,9 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
     lower_pattern!(t, (Iadd _ Iconst), |ctx| {
         let iconst = ctx.input_inst(ctx.inst(), 1);
         let value = fieldref!(ctx.instdata(iconst), UnaryImm, imm).bits();
+        let op = choose_32_64(ctx.ty(ctx.inst()), Op::AddI32, Op::AddI64);
         with_imm12(ctx, value as u64, |ctx, imm| {
-            ctx.emit(make_reg_reg_imm(Op::AddI,
+            ctx.emit(make_reg_reg_imm(op,
                                       ctx.output(0),
                                       ctx.input(1),
                                       imm));
@@ -291,7 +293,7 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
 
     lower_pattern!(t, Iadd, |ctx| {
         ctx.emit(make_reg_reg_reg(
-            Op::Add,
+            choose_32_64(ctx.ty(ctx.inst()), Op::Add32, Op::Add64),
             ctx.output(0),
             ctx.input(0),
             ctx.input(1),
@@ -301,7 +303,7 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
 
     lower_pattern!(t, Isub, |ctx| {
         ctx.emit(make_reg_reg_reg(
-            Op::Sub,
+            choose_32_64(ctx.ty(ctx.inst()), Op::Sub32, Op::Sub64),
             ctx.output(0),
             ctx.input(0),
             ctx.input(1),
@@ -310,7 +312,8 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
     });
 
     lower_pattern!(t, Ineg, |ctx| {
-        ctx.emit(make_reg_reg(Op::Neg, ctx.output(0), ctx.input(0)));
+        let op = choose_32_64(ctx.ty(ctx.inst()), Op::Neg32, Op::Neg64);
+        ctx.emit(make_reg_reg(op, ctx.output(0), ctx.input(0)));
         true
     });
 

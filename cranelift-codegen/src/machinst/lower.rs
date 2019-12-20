@@ -188,7 +188,7 @@ pub trait LowerCtx<Op: MachInstOp, Arg: MachInstArg> {
 }
 
 /// A register reference: a reference to one of the inputs or outputs of the IR instruction.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RegRef {
     /// One of the instruction inputs (arguments). Index refers to the virtual index space formed
     /// by concatenating `dfg.inst_args(inst)` with `MachInsts::extra_args(inst)`.

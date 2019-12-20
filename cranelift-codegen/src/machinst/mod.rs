@@ -28,6 +28,7 @@
 use crate::binemit::CodeSink;
 use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;
+use crate::ir::ValueLocations;
 use crate::ir::{DataFlowGraph, Inst, Opcode, Type, Value};
 use crate::isa::registers::{RegClass, RegClassMask};
 use crate::isa::RegUnit;
@@ -149,8 +150,19 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInst<Op, Arg> {
     pub fn name(&self) -> &'static str {
         self.op.name()
     }
+}
 
-    // TODO: encoder (size, emit); branch relaxation; relocations.
+/// A map from RegRef (referring to input/output Values of a given IR inst) to actual registers
+/// (RegUnit values), given to the encoding functions.
+pub type MachLocations = HashMap<RegRef, RegUnit>;
+
+/// A trait describing the ability to encode a MachInst into binary machine code.
+pub trait MachInstEncode<Op: MachInstOp, Arg: MachInstArg, CS: CodeSink> {
+    /// Get the size of the instruction.
+    fn size(&self, locs: &MachLocations) -> usize;
+
+    /// Encode the instruction.
+    fn encode(&self, locs: &MachLocations, cs: &mut CS);
 }
 
 /// A trait wrapping a list of machine instructions, held by `Function`. This allows the Cranelift
@@ -180,6 +192,8 @@ pub trait MachInsts: Debug {
     fn get_result(&self, dfg: &DataFlowGraph, inst: Inst, idx: usize) -> Value;
     /// Get the type of the given Value.
     fn get_type(&self, dfg: &DataFlowGraph, value: Value) -> Type;
+    /// Emit the MachInsts to a CodeSink, given a mapping from Value to ValueLoc.
+    fn emit(&self, locs: &ValueLocations, sink: &mut CodeSink);
 }
 
 /// Canonical implementation of MachInsts.
@@ -336,6 +350,10 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInsts for MachInstsImpl<Op, Arg> {
         } else {
             self.extra_values[v.index() - self.first_extra_value]
         }
+    }
+
+    fn emit(&self, locs: &ValueLocations, sink: &mut CodeSink) {
+        // TODO.
     }
 }
 
