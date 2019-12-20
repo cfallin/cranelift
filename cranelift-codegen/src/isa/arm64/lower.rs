@@ -431,11 +431,11 @@ mod test {
 
         let t = make_backend();
 
-        let lowered = LowerResult::lower(&func, &t);
+        lower(&func, &t);
 
         println!("func: {:?}", func);
-        println!("lowered: {:?}", lowered);
 
-        assert!(lowered.insts().len() == 3);
+        assert!(func.machinsts().unwrap().num_machinsts() == 3);
+        println!("machinsts: {:?}", func.machinsts().unwrap());
     }
 }

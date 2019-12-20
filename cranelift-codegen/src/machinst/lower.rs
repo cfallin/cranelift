@@ -122,21 +122,16 @@ impl<'a> BlockTreeExtractor<'a> {
 /// to extract symbolic representations of the lowered code or to assist with statically generating
 /// specialized/optimized backend.
 pub trait LowerCtx<Op: MachInstOp, Arg: MachInstArg> {
-    /// The machine-register type.
-    type Reg: Clone + Debug;
-
     /// Emit a machine instruction. The machine instructions will eventually be ordered in reverse
     /// of the calls to this function.
     fn emit(&mut self, inst: MachInst<Op, Arg>);
 
-    /// Look up the register for a given value.
-    fn reg(&self, v: Value) -> Reg;
+    /// Get the Value corresponding to the `idx`-th input of `inst`. Can access both
+    /// DataFlowGraph-tracked inputs and "extra" inputs.
+    fn input(&self, inst: Inst, idx: usize) -> Value;
 
-    /// Get the Reg corresponding to the `idx`-th input of `inst`.
-    fn input(&self, inst: Inst, idx: usize) -> Reg;
-
-    /// Get the Reg corresponding to the `idx`-th output of `inst`.
-    fn output(&self, inst: Inst, idx: usize) -> Reg;
+    /// Get the Value corresponding to the `idx`-th output of `inst`.
+    fn output(&self, inst: Inst, idx: usize) -> Value;
 
     /// Get the type of the (first) result of the given instruction.
     fn ty(&self, inst: Inst) -> Type;
@@ -147,74 +142,84 @@ pub trait LowerCtx<Op: MachInstOp, Arg: MachInstArg> {
     /// Get the instruction data for a given instruction.
     fn inst(&self, inst: Inst) -> &InstructionData;
 
+    /// Add an extra input argument to a given IR inst. If the lowered instructions for a given IR
+    /// inst use a Value from another point in the program, then it must be added as an extra arg
+    /// to that IR inst. This returns an index that can be passed to `input`.
+    fn add_input(&mut self, inst: Inst, value: Value) -> usize;
+
     /// Mark this instruction as "unused". This means that its value does not need to be generated
     /// (machine instruction lowering can skip it), usually because it was matchedas part of
     /// another IR instruction's pattern during instruction selection.
-    fn unused(&mut self, inst: Inst);
+    fn mark_unused(&mut self, inst: Inst);
 
-    /// Fix an existing virtual machine register to a given fixed register.
-    fn fix_reg(&mut self, reg: &Reg, ru: RegUnit);
+    /// Fix an existing Value to a given fixed register.
+    fn fix_reg(&mut self, value: Value, ru: RegUnit);
 
-    /// Allocate a new machine register and constrain it to the given fixed register.
-    fn fixed_tmp(&mut self, ru: RegUnit) -> Reg;
-
-    /// Allocate a new machine register and constrain it to the given RegClass.
-    fn tmp(&mut self, rc: RegClass) -> Reg;
+    // TODO: temporaries? So far, we haven't needed to allocate temporaries within the MachInsts
+    // for a given IR inst.
 }
-
-
 
 /// The canonical implementation of the lowering context, used to emit instructions directly to the
 /// machine-instruction portion of the function.
 pub struct LowerCtxImpl<'a, Op: MachInstOp, Arg: MachInstArg> {
     func: &'a mut Function,
+    machinsts: &'a mut MachInstsImpl<Op, Arg>,
+    constraints: &'a mut MachRegConstraints,
     cur_inst: Option<Inst>,
-    vregs: SecondaryMap<Value, MachReg>,
     unused: SecondaryMap<Inst, bool>,
 }
 
 impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtxImpl<'a, Op, Arg> {
     fn new(
         func: &'a Function,
-        vregs: SecondaryMap<Value, MachReg>,
+        machinsts: &'a mut MachInstsImpl<Op, Arg>,
         constraints: &'a mut MachRegConstraints,
-        reg_ctr: &'a mut MachRegCounter,
     ) -> LowerCtxImpl<'a, Op, Arg> {
         LowerCtxImpl {
             func,
-            cur_inst: None,
-            vregs,
-            unused: SecondaryMap::with_default(false),
+            machinsts,
             constraints,
-            reg_ctr,
+            cur_inst: None,
+            unused: SecondaryMap::with_default(false),
         }
+    }
+
+    /// Called from lowering traversal: start of processing the givenIR inst.
+    pub fn begin_inst(&mut self, inst: Inst) {
+        self.cur_inst = Some(inst);
+    }
+
+    /// Called from lowering traversal: end of processing the current IR inst.
+    pub fn end_inst(&mut self) {
+        self.cur_inst = None;
+    }
+
+    fn cur(&self) -> Inst {
+        assert!(self.cur_inst.is_some());
+        self.cur_inst.cloned().unwrap()
+    }
+
+    /// Is the given instruction marked as unused?
+    pub fn is_unused(&self, inst: Inst) -> bool {
+        self.unused[inst]
     }
 }
 
-impl<<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a, Op, Arg> {
-    type Reg = Value;
-
+impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a, Op, Arg> {
     /// Emit a machine instruction. The machine instructions will eventually be ordered in reverse
     /// of the calls to this function.
     fn emit(&mut self, inst: MachInst<Op, Arg>) {
-        self.func.
+        self.machinsts.add_inst(self.cur(), inst);
     }
 
-    /// Look up the register for a given value.
-    fn reg(&self, v: Value) -> MachReg {
-        self.vregs[v].clone()
+    /// Get the Value corresponding to the `idx`-th input of `inst`.
+    fn input(&self, inst: Inst, idx: usize) -> Value {
+        self.machinsts.get_arg(&self.func.dfg, inst, idx)
     }
 
-    /// Get the MachReg corresponding to the `idx`-th input of `inst`.
-    fn input(&self, inst: Inst, idx: usize) -> MachReg {
-        let val = self.func.dfg.inst_args(inst)[idx];
-        self.reg(val)
-    }
-
-    /// Get the MachReg corresponding to the `idx`-th output of `inst`.
-    fn output(&self, inst: Inst, idx: usize) -> MachReg {
-        let val = self.func.dfg.inst_results(inst)[idx];
-        self.reg(val)
+    /// Get the Value corresponding to the `idx`-th output of `inst`.
+    fn output(&self, inst: Inst, idx: usize) -> Value {
+        self.func.dfg.inst_results(inst)[idx]
     }
 
     /// Get the type of the (first) result of the given instruction.
@@ -225,7 +230,7 @@ impl<<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'
 
     /// Get the instruction that produces the `idx`-th input of `inst`.
     fn input_inst(&self, inst: Inst, idx: usize) -> Inst {
-        let val = self.func.dfg.inst_args(inst)[idx];
+        let val = self.input(inst, idx);
         match self.func.dfg.value_def(val) {
             ValueDef::Result(def_inst, _) => def_inst,
             _ => panic!("input_inst() on input not defined by another instruction"),
@@ -237,66 +242,36 @@ impl<<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'
         &self.func.dfg[inst]
     }
 
+    /// Add an extra input to the given IR inst, corresponding to an use of this input by the
+    /// lowered machine instructions.
+    fn add_input(&mut self, inst: Inst, value: Value) -> usize {
+        assert!(inst == self.cur());
+        self.func.dfg.inst_results(inst).len() + self.machinsts.add_extra_arg(inst, value)
+    }
+
     /// Mark this instruction as "unused". This means that its value does not need to be generated
     /// (machine instruction lowering can skip it), usually because it was matchedas part of
     /// another IR instruction's pattern during instruction selection.
-    fn unused(&mut self, inst: Inst) {
+    fn mark_unused(&mut self, inst: Inst) {
         self.unused[inst] = true;
     }
 
-    /// Has this instruction been marked as unused (no need to generate its value)?
-    fn is_unused(&self, inst: Inst) -> bool {
-        self.unused[inst]
-    }
-
     /// Fix a virtual register to a particular physical register.
-    pub fn fix_reg(&mut self, reg: &MachReg, ru: RegUnit) {
-        self.constraints.add(reg, MachRegConstraint::from_fixed(ru));
-    }
-
-    /// Allocate a new machine register and constrain it to the given fixed register.
-    pub fn fixed_tmp(&mut self, ru: RegUnit) -> MachReg {
-        let r = self.reg_ctr.alloc();
-        self.constraints.add(reg, MachRegConstraint::from_fixed(ru));
-        r
-    }
-
-    /// Allocate a new machine register and constrain it to the given RegClass.
-    pub fn tmp(&mut self, rc: RegClass) -> MachReg {
-        let r = self.reg_ctr.alloc();
-        self.constraints.add(&r, MachRegConstraint::from_class(rc));
-        r
+    fn fix_reg(&mut self, value: Value, ru: RegUnit) {
+        self.constraints
+            .add(value, MachRegConstraint::from_fixed(ru));
     }
 }
 
 /// Lower a function to virtual-reg machine insts.
-pub fn lower(func: &Function, lower_table: &LowerTable<Op, Arg>) {
-    // Assign virtual register numbers.
-    let mut reg_ctr = MachRegCounter::new();
-    let mut constraints = MachRegConstraints::new();
-    let mut vregs = SecondaryMap::with_default(MachReg::Virtual(0));
+pub fn lower(func: &mut Function, lower_table: &LowerTable<Op, Arg>) {
+    // Create the MachInsts instance.
+    let mut machinsts = MachInstsImpl::new();
 
-    let mut values: SmallVec<[Value; 64]> = SmallVec::new();
-    for ebb in func.layout.ebbs() {
-        for param in func.dfg.ebb_params(ebb) {
-            values.push(*param);
-        }
-        for inst in func.layout.ebb_insts(ebb) {
-            for result in func.dfg.inst_results(inst) {
-                values.push(*result);
-            }
-        }
-    }
-    for value in values.into_iter() {
-        let reg = reg_ctr.alloc();
-        let ty = func.dfg.value_type(value);
-        let rc = Arg::regclass_for_type(ty);
-        constraints.add(&reg, MachRegConstraint::from_class(rc));
-        vregs[value] = reg;
-    }
+    let mut reg_constraints = MachRegConstraints::new();
 
     // Set up the context passed to lowering actions.
-    let mut ctx = LowerCtxImpl::new(func, vregs, &mut constraints, &mut reg_ctr);
+    let mut ctx = LowerCtxImpl::new(func, &mut machinsts, &mut reg_constraints);
 
     // Compute the number of uses of each value, for use during greedy tree extraction.
     let num_uses = NumUses::compute(func);
@@ -311,11 +286,13 @@ pub fn lower(func: &Function, lower_table: &LowerTable<Op, Arg>) {
         // Create the block tree extractor.
         let bte = BlockTreeExtractor::new(func, &num_uses, ebb);
 
-        // For each instruction, in reverse order, extract the tree.
+        // For each instruction, in reverse order, extract the tree and lower it.
         for inst in func.layout.ebb_insts(ebb).rev() {
             if !ctx.is_unused(inst) {
                 let ckpt = prefix_pool.checkpoint();
                 let tree = bte.get_tree(&mut prefix_pool, inst);
+
+                ctx.begin_inst(inst);
 
                 // Look up the entries for the root opcode and try
                 // them, if they match, one at a time.
@@ -334,13 +311,15 @@ pub fn lower(func: &Function, lower_table: &LowerTable<Op, Arg>) {
                             }
                         }
                     }
+                }
 
-                    if !lowered {
-                        panic!(
-                            "Unable to lower instruction {:?}: {:?}",
-                            inst, func.dfg[inst]
-                        );
-                    }
+                ctx.end_inst();
+
+                if !lowered {
+                    panic!(
+                        "Unable to lower instruction {:?}: {:?}",
+                        inst, func.dfg[inst]
+                    );
                 }
 
                 prefix_pool.rewind(ckpt);
@@ -348,10 +327,8 @@ pub fn lower(func: &Function, lower_table: &LowerTable<Op, Arg>) {
         }
     }
 
-    let insts: Vec<_> = ctx.rev_insts.into_iter().rev().collect();
-
-    // TODO: add insts to func.
-    // TODO: add constraints to func.
+    func.machinsts = Some(Box::new(machinsts));
+    func.reg_constraints = Some(reg_constraints);
 }
 
 #[cfg(test)]

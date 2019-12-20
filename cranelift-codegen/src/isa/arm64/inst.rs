@@ -8,8 +8,6 @@ use crate::machinst::lower::LowerCtx;
 use crate::machinst::*;
 use crate::{mach_args, mach_ops};
 
-use std::slice;
-
 mach_ops!(Op, {
     Add,
     AddI,
@@ -29,46 +27,24 @@ mach_ops!(Op, {
     LdrLit64
 });
 
+/// Reference to register of the corresponding ir::Inst.
+#[derive(Clone, Debug)]
+pub enum RegRef {
+    /// One of instruction arguments. Index refers to slice returned by `dfg.inst_args(inst)`
+    /// or, if past the end of that slice, to `MachInsts::extra_args(inst)`.
+    Arg(u8),
+    /// One of instruction results. Index refers to slice returned by `dfg.inst_results(inst)`
+    /// or, if past the end of that slice, to `MachInsts::extra_results(inst)`.
+    Result(u8),
+}
+
 mach_args!(Arg, ArgKind, {
-    RegDef(Value),
     Imm(ShiftedImm),
-    RegUse(Value),
-    ShiftedReg(Value, ShiftOp, usize),
-    ExtendedReg(Value, ExtendOp, usize),
+    Reg(RegRef),
+    ShiftedReg(RegRef, ShiftOp, usize),
+    ExtendedReg(RegRef, ExtendOp, usize),
     Mem(MemArg)
 });
-
-impl MachInstArg for Arg {
-    fn defs(&self) -> &[Value] {
-        match self {
-            &Arg::RegDef(ref v) => slice::from_ref(v),
-            &Arg::RegUse(..) |
-            &Arg::Imm(..) |
-            &Arg::ShiftedReg(..) |
-            &Arg::ExtendedReg(..) => &[],
-            &Arg::Mem(ref m) => m.defs(),
-        }
-    }
-
-    fn uses(&self) -> &[Value] {
-        match self {
-            &Arg::RegDef(ref v) => &[],
-            &Arg::RegUse(ref v) => slice::from_ref(v),
-            &Arg::Imm(..) => &[],
-            &Arg::ShiftedReg(ref v, ..) => slice::from_ref(v),
-            &Arg::ExtendedReg(ref v, ..) => slice::from_reg(v),
-            &Arg::Mem(ref m) => m.uses(),
-        }
-    }
-
-    fn regclass_for_type(ty: Type) -> RegClass {
-        if ty.is_int() || ty.is_bool() {
-            GPR
-        } else {
-            FPR
-        }
-    }
-}
 
 /// A shifted immediate value.
 #[derive(Clone, Debug)]
@@ -125,11 +101,11 @@ pub enum ExtendOp {
 /// A memory argument to load/store, encapsulating the possible addressing modes.
 #[derive(Clone, Debug)]
 pub enum MemArg {
-    Base(Value),
-    BaseImm(Value, usize),
-    BaseOffsetShifted(Value, usize),
-    BaseImmPreIndexed(Value, usize),
-    BaseImmPostIndexed(Value, usize),
+    Base(RegRef),
+    BaseImm(RegRef, usize),
+    BaseOffsetShifted(RegRef, usize),
+    BaseImmPreIndexed(RegRef, usize),
+    BaseImmPostIndexed(RegRef, usize),
     Label(MemLabel),
 }
 
@@ -142,30 +118,6 @@ pub enum MemLabel {
     ConstantData(ConstantData),
     Function(FuncRef),
     GlobalValue(GlobalValue),
-}
-
-impl MemArg {
-    fn uses(&self) -> &[Value] {
-        match self {
-            &MemArg::Base(ref v) => slice::from_ref(v),
-            &MemArg::BaseImm(ref v, ..) => slice::from_ref(v),
-            &MemArg::BaseOffsetShifted(ref v, ..) => slice::from_ref(v),
-            &MemArg::BaseImmPreIndexed(ref v, ..) => slice::from_ref(v),
-            &MemArg::BaseImmPostIndexed(ref v, ..) => slice::from_ref(v),
-            &MemArg::Label(..) => &[],
-        }
-    }
-
-    fn defs(&self) -> &[Value] {
-        match self {
-            &MemArg::Base(..) |
-            &MemArg::BaseImm(..) |
-            &MemArg::BaseOffsetShifted(..) => &[],
-            &MemArg::BaseImmPreIndexed(ref v, ..) => slice::from_ref(v),
-            &MemArg::BaseImmPostIndexed(ref v, ..) => slice::from_ref(v),
-            &MemArg::Label(..) => &[],
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -190,15 +142,27 @@ enum Cond {
 
 // -------------------- instruction constructors -------------------
 
-/// Make a reg / reg / reg inst.
-pub fn make_reg_reg(op: Op, rd: MachReg, rm: MachReg) -> MachInst<Op, Arg> {
-    MachInst::new(op)
-        .with_arg_reg_def(Arg::Reg(), rd)
-        .with_arg_reg_use(Arg::Reg(), rm)
+/// Build a register reference for the given nput  of the containing IR inst.
+pub fn input_reg(num: usize) -> RegRef {
+    assert!(num < std::u8::MAX as usize);
+    RegRef::Arg(num as u8)
+}
+
+/// Build a register reference for the given output of the containing IR inst.
+pub fn output_Reg(num: usize) -> RegRef {
+    assert!(num < std::u8::MAX as usize);
+    RegRef::Result(num as u8)
 }
 
 /// Make a reg / reg / reg inst.
-pub fn make_reg_reg_reg(op: Op, rd: MachReg, rn: MachReg, rm: MachReg) -> MachInst<Op, Arg> {
+pub fn make_reg_reg(op: Op, rd: RegRef, rm: RegRef) -> MachInst<Op, Arg> {
+    MachInst::new(op)
+        .with_arg(Arg::Reg(rd)
+        .with_arg(Arg::Reg(rm))
+}
+
+/// Make a reg / reg / reg inst.
+pub fn make_reg_reg_reg(op: Op, rd: RegRef, rn: RegRef, rm: RegRef) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use(Arg::Reg(), rn)
@@ -208,10 +172,10 @@ pub fn make_reg_reg_reg(op: Op, rd: MachReg, rn: MachReg, rm: MachReg) -> MachIn
 /// Make a reg / reg / reg / reg inst.
 pub fn make_reg_reg_reg_reg(
     op: Op,
-    rd: MachReg,
-    rn: MachReg,
-    rm: MachReg,
-    ra: MachReg,
+    rd: RegRef,
+    rn: RegRef,
+    rm: RegRef,
+    ra: RegRef,
 ) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
@@ -221,7 +185,7 @@ pub fn make_reg_reg_reg_reg(
 }
 
 /// Make a reg / reg / immediate inst.
-pub fn make_reg_reg_imm(op: Op, rd: MachReg, rn: MachReg, imm: ShiftedImm) -> MachInst<Op, Arg> {
+pub fn make_reg_reg_imm(op: Op, rd: RegRef, rn: RegRef, imm: ShiftedImm) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use(Arg::Reg(), rn)
@@ -231,9 +195,9 @@ pub fn make_reg_reg_imm(op: Op, rd: MachReg, rn: MachReg, imm: ShiftedImm) -> Ma
 /// Make a reg / reg / rshift inst.
 pub fn make_reg_reg_rshift(
     op: Op,
-    rd: MachReg,
-    rn: MachReg,
-    rm: MachReg,
+    rd: RegRef,
+    rn: RegRef,
+    rm: RegRef,
     shift: ShiftOp,
     amt: usize,
 ) -> MachInst<Op, Arg> {
@@ -246,9 +210,9 @@ pub fn make_reg_reg_rshift(
 /// Make a reg / reg / rextend inst.
 pub fn make_reg_reg_rextend(
     op: Op,
-    rd: MachReg,
-    rn: MachReg,
-    rm: MachReg,
+    rd: RegRef,
+    rn: RegRef,
+    rm: RegRef,
     ext: ExtendOp,
     shift_amt: usize,
 ) -> MachInst<Op, Arg> {
@@ -259,21 +223,21 @@ pub fn make_reg_reg_rextend(
 }
 
 /// Make a reg / memory-label inst.
-pub fn make_reg_memlabel(op: Op, rd: MachReg, mem: MemArg) -> MachInst<Op, Arg> {
+pub fn make_reg_memlabel(op: Op, rd: RegRef, mem: MemArg) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg(Arg::Mem(mem))
 }
 
 /// Make a reg / memory inst.
-pub fn make_reg_mem(op: Op, rd: MachReg, mem: MemArg, rn: MachReg) -> MachInst<Op, Arg> {
+pub fn make_reg_mem(op: Op, rd: RegRef, mem: MemArg, rn: RegRef) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use(Arg::Mem(mem), rn)
 }
 
 /// Make a reg / memory-update-addr inst.
-pub fn make_reg_memupd(op: Op, rd: MachReg, mem: MemArg, rn: MachReg) -> MachInst<Op, Arg> {
+pub fn make_reg_memupd(op: Op, rd: RegRef, mem: MemArg, rn: RegRef) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
         .with_arg_reg_use_def(Arg::Mem(mem), rn)
@@ -282,10 +246,10 @@ pub fn make_reg_memupd(op: Op, rd: MachReg, mem: MemArg, rn: MachReg) -> MachIns
 /// Make a reg / memory-2-reg-amode inst.
 pub fn make_reg_mem2reg(
     op: Op,
-    rd: MachReg,
+    rd: RegRef,
     mem: MemArg,
-    rn: MachReg,
-    rm: MachReg,
+    rn: RegRef,
+    rm: RegRef,
 ) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_def(Arg::Reg(), rd)
@@ -293,14 +257,14 @@ pub fn make_reg_mem2reg(
 }
 
 /// Make a memory / reg inst.
-pub fn make_mem_reg(op: Op, mem: MemArg, rn: MachReg, rd: MachReg) -> MachInst<Op, Arg> {
+pub fn make_mem_reg(op: Op, mem: MemArg, rn: RegRef, rd: RegRef) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_use(Arg::Mem(mem), rn)
         .with_arg_reg_use(Arg::Reg(), rd)
 }
 
 /// Make a memory-update-addr / reg inst.
-pub fn make_memupd_reg(op: Op, mem: MemArg, rn: MachReg, rd: MachReg) -> MachInst<Op, Arg> {
+pub fn make_memupd_reg(op: Op, mem: MemArg, rn: RegRef, rd: RegRef) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_reg_use_def(Arg::Mem(mem), rn)
         .with_arg_reg_use(Arg::Reg(), rd)
@@ -310,9 +274,9 @@ pub fn make_memupd_reg(op: Op, mem: MemArg, rn: MachReg, rd: MachReg) -> MachIns
 pub fn make_mem2reg_reg(
     op: Op,
     mem: MemArg,
-    rn: MachReg,
-    rm: MachReg,
-    rd: MachReg,
+    rn: RegRef,
+    rm: RegRef,
+    rd: RegRef,
 ) -> MachInst<Op, Arg> {
     MachInst::new(op)
         .with_arg_2reg(Arg::Mem(mem), rn, rm)
@@ -321,7 +285,7 @@ pub fn make_mem2reg_reg(
 
 /// Helper: load an arbitrary immediate (up to 64 bits large) into a register, using the smallest
 /// possible encoding or constant pool entry.
-pub fn load_imm<'a>(ctx: &mut LowerCtx<'a, Op, Arg>, value: u64, dest: MachReg) {
+pub fn load_imm<'a>(ctx: &mut LowerCtx<'a, Op, Arg>, value: u64, dest: RegRef) {
     if let Some(imm) = ShiftedImm::maybe_from_u64(value) {
         let xzr = ctx.fixed(31);
         ctx.emit(make_reg_reg_imm(Op::AddI, dest, xzr, imm));

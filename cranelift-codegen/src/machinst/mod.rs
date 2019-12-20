@@ -1,7 +1,33 @@
 //! This module exposes the machine-specific backend definition pieces.
+//!
+//! Machine backends define two types, an `Op` (opcode) and `Arg` (instruction argument, meant to
+//! encapsulate, register, immediate, and memory references).
+//!
+//! Machine instructions (`MachInst` instances) are statically parameterized on these types for efficiency.
+//! They in turn are held by an implementation of the `MachInsts` trait that the `Function` holds
+//! by dynamic reference, in order to avoid parameterizing the entire IR world on machine backend.
+//!
+//! The `Function` requests a lowering of its IR (`ir::Inst`s) into machine-specific code, and the
+//! results are kept alongside the original IR, with a 1-to-N correspondence: each Cranelift IR
+//! instruction can correspond to N contiguous machine instructions. (N=0 is possible, if e.g. two
+//! IR instructions are fused into a single machine instruction: then the final value-producing
+//! instruction is the only one that has machine instructions.)
+//!
+//! To keep the interface with the register allocator simple, the control-flow and the register
+//! defs/uses of the Cranelift IR remain mostly canonical, even after lowering. There is one
+//! exception: because instruction lowering may require extra temps within a sequence of machine
+//! instructions (a Value that is def'd and use'd immediately), or may use a value from an earlier
+//! IR instruction if fusing instructions, we need to be able to add new args and results to
+//! Cranelift IR instructions. Rather than rewrite the instructions in place, or somehow alter
+//! their format, the `MachInsts` container keeps extra `Value` args and results for instructions
+//! as it goes. The register allocator queries this as well as the original instruction. (Why not
+//! just rewrite the whole list of defs/uses and make the regalloc ignore the originals? The common
+//! case is that no defs/uses change; the "exceptions" list should in the common case be very
+//! short or empty, leading to less memory overhead.)
 
 use crate::binemit::CodeSink;
-use crate::ir::{Opcode, Type, Value};
+use crate::entity::SecondaryMap;
+use crate::ir::{DataFlowGraph, Opcode, Type, Value};
 use crate::isa::registers::{RegClass, RegClassMask};
 use crate::isa::RegUnit;
 use crate::HashMap;
@@ -78,14 +104,7 @@ pub trait MachInstArgKind: Clone + Debug + Hash + PartialEq + Eq {}
 /// The trait implemented by an architecture-specific argument data blob. The purpose of this trait
 /// is to allow the arch-specific part to inform the arch-independent part about the `Value`s
 /// (registers) that the argument defines and uses.
-pub trait MachInstArg: Clone + Debug + MachInstArgGetKind {
-    /// What values does this arg define?
-    fn defs(&self) -> &[Value];
-    /// What values does this arg use?
-    fn uses(&self) -> &[Value];
-    /// What register class should be used for a value of the given type?
-    fn regclass_for_type(ty: Type) -> RegClass;
-}
+pub trait MachInstArg: Clone + Debug + MachInstArgGetKind {}
 
 /// A helper trait providing the link between a MachInstArg and its Kind. Automatically implemented
 /// by the `mach_args!` macro.
@@ -121,7 +140,6 @@ impl<Op: MachInstOp, Arg: MachInstArg, Reg: Debug + Clone> MachInst<Op, Arg, Reg
 
     /// Add an argument to a machine instruction.
     pub fn with_arg(mut self, arg: Arg) -> Self {
-        assert!(arg.num_regs() == 0);
         self.args.push(arg);
         self
     }
@@ -138,13 +156,183 @@ impl<Op: MachInstOp, Arg: MachInstArg, Reg: Debug + Clone> MachInst<Op, Arg, Reg
 /// IR, which holds the machine-specific instructions after lowering, to remain unparameterized on
 /// Op/Arg (and machine-specific types in general). The trait provides methods to allow for codegen
 /// but does not (cannot) leak individual MachInst instances.
+///
+/// This trait represents, in addition to the lowered machine instructions per IR instruction, an
+/// overlay over IR  instructions that can define new inputs (args), new outputs (results), and new
+/// Values with types.
 pub trait MachInsts: Clone + Debug {
+    /// Clear the list of machine instructions.
     fn clear(&mut self);
+    /// Get the number of machine instructions.
+    fn num_machinsts(&self) -> usize;
+    /// Get the extra arg values for a given IR instruction added during lowering.
+    fn extra_args(&self, inst: Inst) -> &[Value];
+    /// Get the number of normal and extra args for the given IR instruction.
+    fn num_total_args(&self, dfg: &DataFlowGraph, inst: Inst) -> usize;
+    /// Get the given normal or extra arg for the given IR instruction.
+    fn get_arg(&self, dfg: &DataFlowGraph, inst: Inst, idx: usize) -> Value;
+    /// Get the number of normal and extra results for the given IR instruction.
+    fn num_total_results(&self, dfg: &DataFlowGraph, inst: Inst) -> usize;
+    /// Get the given normal or extra arg for the given IR instruction.
+    fn get_result(&self, dfg: &DataFlowGraph, inst: Inst, idx: usize) -> Value;
+    /// Get the type of the given Value.
+    fn get_type(&self, dfg: &DataFlowGraph, value: Value) -> Type;
 }
 
+/// Canonical implementation of MachInsts.
 #[derive(Clone, Debug)]
 pub struct MachInstsImpl<Op: MachInstOp, Arg: MachInstArg> {
-    insts: Vec<MachInst<Op, Arg>>,
+    entries: SecondaryMap<Inst, MachInstsEntry>,
+    mach_insts: Vec<MachInst<Op, Arg>>,
+    extra_args: Vec<Value>,
+    extra_results: Vec<Value>,
+    first_extra_value: usize,
+    next_value: usize,
+    extra_values: Vec<Type>,
+    last_inst: Option<Inst>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct MachInstsEntry {
+    // Indices into the respective dense Vecs. Pack the u32s together for efficiency: this struct
+    // should be 16 bytes total with padding.
+    inst_start: u32,
+    extra_arg_start: u32,
+    extra_result_start: u32,
+    inst_count: u8,
+    extra_arg_count: u8,
+    extra_result_count: u8,
+}
+
+impl<Op: MachInstOp, Arg: MachInstArg> MachInstsImpl<Op, Arg> {
+    /// Create a new MachInstsImpl.
+    pub fn new(dfg: &DataFlowGraph) -> MachInstsImpl<Op, Arg> {
+        let dfg_values = dfg.values().len();
+        MachInstsImpl {
+            entries: SecondaryMap::with_default(Default::default()),
+            mach_insts: vec![],
+            extra_args: vec![],
+            extra_results: vec![],
+            first_extra_value: dfg_values,
+            next_value: dfg_values,
+            extra_values: vec![],
+            last_inst: None,
+        }
+    }
+
+    fn start_inst(&mut self, from: Inst) {
+        let entry = self.entries[from];
+        if &self.last_inst != &Some(from) {
+            assert!(entry.inst_count == 0);
+            assert!(entry.extra_arg_count == 0);
+            entry.inst_start = self.insts.len();
+            entry.extra_arg_start = self.extra_args.len();
+            entry.extra_result_start = self.extra_results.len();
+            self.last_inst = Some(from);
+        }
+    }
+
+    fn new_value(&mut self, ty: Type) -> Value {
+        let idx = self.next_value;
+        self.next_value += 1;
+        self.extra_values.push(ty);
+        Value::new(idx)
+    }
+
+    /// Add a new MachInst corresponding to the given IR inst.
+    pub fn add_inst(&mut self, from: Inst, inst: MachInst<Op, Arg>) {
+        self.start_inst(from);
+        let entry = self.entries[from];
+        entry.inst_count += 1;
+        self.insts.push(inst);
+    }
+
+    /// Add a new extra arg corresponding to the given IR inst. Returns the index of this extra
+    /// arg.
+    pub fn add_extra_arg(&mut self, from: Inst, value: Value) -> usize {
+        self.start_inst(from);
+        let entry = self.entries[from];
+        let idx = entry.extra_arg_count as usize;
+        entry.extra_arg_count += 1;
+        self.extra_args.push(value);
+        idx
+    }
+
+    /// Add a new extra output corresponding to the given IR inst. Returns the index of this extra
+    /// arg.
+    pub fn add_extra_result(&mut self, from: Inst, ty: Type) -> usize {
+        self.start_inst(from);
+        let entry = self.entries[from];
+        let idx = entry.extra_arg_count as usize;
+        entry.extra_results_count += 1;
+        let value = self.new_value(ty);
+        self.extra_results.push(value);
+        idx
+    }
+}
+
+impl<Op: MachInstOp, Arg: MachInstArg> MachInsts for MachInstsImpl<Op, Arg> {
+    /// Clear the list of machine instructions.
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.insts.clear();
+        self.extra_args.clear();
+    }
+
+    /// Get the number of machine instructions.
+    fn num_machinsts(&self) -> usize {
+        self.insts.len()
+    }
+
+    /// Get the extra arg values for a given IR instruction added during lowering.
+    fn extra_args(&self, inst: Inst) -> &[Value] {
+        let entry = self.entries[from];
+        let start = entry.extra_arg_start as usize;
+        let end = start + (entry.extra_arg_count as usize);
+        &self.extra_args[start..end]
+    }
+
+    /// Get the extra result values for a given IR instruction added during lowering.
+    fn extra_results(&self, inst: Inst) -> &[Value] {
+        let entry = self.entries[from];
+        let start = entry.extra_result_start as usize;
+        let end = start + (entry.extra_result_count as usize);
+        &self.extra_results[start..end]
+    }
+
+    fn num_total_args(&self, dfg: &DataFlowGraph, inst: Inst) -> usize {
+        dfg.inst_args(inst).len() + self.extra_args(inst).len()
+    }
+
+    fn num_total_results(&self, dfg: &DataFlowGraph, inst: Inst) -> usize {
+        dfg.inst_results(inst).len() + self.extra_results(inst).len()
+    }
+
+    fn get_arg(&self, dfg: &DataFlowGraph, inst: Inst, idx: usize) -> Value {
+        let args = dfg.inst_args(inst);
+        if idx < args.len() {
+            args[idx]
+        } else {
+            self.extra_args(inst)[idx - args.len()]
+        }
+    }
+
+    fn get_result(&self, dfg: &DataFlowGraph, inst: Inst, idx: usize) -> Value {
+        let results = dfg.inst_results(inst);
+        if idx < results.len() {
+            results[idx]
+        } else {
+            self.extra_results(inst)[idx - results.len()]
+        }
+    }
+
+    fn get_type(&self, dfg: &DataFlowGraph, v: Value) -> Type {
+        if idx < self.first_extra_type {
+            dfg.value_type(v)
+        } else {
+            self.extra_values[v.index() - self.first_extra_value]
+        }
+    }
 }
 
 /// A macro to allow a machine backend to define an opcode type.
@@ -197,5 +385,7 @@ macro_rules! mach_args {
                 }
             }
         }
+
+        impl crate::machinst::MachInstArg for $name {}
     }
 }
