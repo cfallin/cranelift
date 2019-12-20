@@ -164,9 +164,9 @@ pub fn make_reg_reg(op: Op, rd: RegRef, rm: RegRef) -> MachInst<Op, Arg> {
 /// Make a reg / reg / reg inst.
 pub fn make_reg_reg_reg(op: Op, rd: RegRef, rn: RegRef, rm: RegRef) -> MachInst<Op, Arg> {
     MachInst::new(op)
-        .with_arg_reg_def(Arg::Reg(), rd)
-        .with_arg_reg_use(Arg::Reg(), rn)
-        .with_arg_reg_use(Arg::Reg(), rm)
+        .with_arg(Arg::Reg(rd))
+        .with_arg(Arg::Reg(rn))
+        .with_arg(Arg::Reg(rm))
 }
 
 /// Make a reg / reg / reg / reg inst.
@@ -178,17 +178,17 @@ pub fn make_reg_reg_reg_reg(
     ra: RegRef,
 ) -> MachInst<Op, Arg> {
     MachInst::new(op)
-        .with_arg_reg_def(Arg::Reg(), rd)
-        .with_arg_reg_use(Arg::Reg(), rn)
-        .with_arg_reg_use(Arg::Reg(), rm)
-        .with_arg_reg_use(Arg::Reg(), ra)
+        .with_arg(Arg::Reg(rd))
+        .with_arg(Arg::Reg(rn))
+        .with_arg(Arg::Reg(rm))
+        .with_arg(Arg::Reg(ra))
 }
 
 /// Make a reg / reg / immediate inst.
 pub fn make_reg_reg_imm(op: Op, rd: RegRef, rn: RegRef, imm: ShiftedImm) -> MachInst<Op, Arg> {
     MachInst::new(op)
-        .with_arg_reg_def(Arg::Reg(), rd)
-        .with_arg_reg_use(Arg::Reg(), rn)
+        .with_arg(Arg::Reg(rd))
+        .with_arg(Arg::Reg(rn))
         .with_arg(Arg::Imm(imm))
 }
 
@@ -202,9 +202,9 @@ pub fn make_reg_reg_rshift(
     amt: usize,
 ) -> MachInst<Op, Arg> {
     MachInst::new(op)
-        .with_arg_reg_def(Arg::Reg(), rd)
-        .with_arg_reg_use(Arg::Reg(), rn)
-        .with_arg_reg_use(Arg::ShiftedReg(shift, amt), rm)
+        .with_arg(Arg::Reg(rd))
+        .with_arg(Arg::Reg(rn))
+        .with_arg(Arg::ShiftedReg(rm, shift, amt))
 }
 
 /// Make a reg / reg / rextend inst.
@@ -217,77 +217,37 @@ pub fn make_reg_reg_rextend(
     shift_amt: usize,
 ) -> MachInst<Op, Arg> {
     MachInst::new(op)
-        .with_arg_reg_def(Arg::Reg(), rd)
-        .with_arg_reg_use(Arg::Reg(), rn)
-        .with_arg_reg_use(Arg::ExtendedReg(ext, shift_amt), rm)
+        .with_arg(Arg::Reg(rd), rd)
+        .with_arg(Arg::Reg(rn), rn)
+        .with_arg(Arg::ExtendedReg(rm, ext, shift_amt))
 }
 
 /// Make a reg / memory-label inst.
 pub fn make_reg_memlabel(op: Op, rd: RegRef, mem: MemArg) -> MachInst<Op, Arg> {
     MachInst::new(op)
-        .with_arg_reg_def(Arg::Reg(), rd)
+        .with_arg(Arg::Reg(rd))
         .with_arg(Arg::Mem(mem))
 }
 
 /// Make a reg / memory inst.
-pub fn make_reg_mem(op: Op, rd: RegRef, mem: MemArg, rn: RegRef) -> MachInst<Op, Arg> {
+pub fn make_reg_mem(op: Op, rd: RegRef, mem: MemArg) -> MachInst<Op, Arg> {
     MachInst::new(op)
-        .with_arg_reg_def(Arg::Reg(), rd)
-        .with_arg_reg_use(Arg::Mem(mem), rn)
-}
-
-/// Make a reg / memory-update-addr inst.
-pub fn make_reg_memupd(op: Op, rd: RegRef, mem: MemArg, rn: RegRef) -> MachInst<Op, Arg> {
-    MachInst::new(op)
-        .with_arg_reg_def(Arg::Reg(), rd)
-        .with_arg_reg_use_def(Arg::Mem(mem), rn)
-}
-
-/// Make a reg / memory-2-reg-amode inst.
-pub fn make_reg_mem2reg(
-    op: Op,
-    rd: RegRef,
-    mem: MemArg,
-    rn: RegRef,
-    rm: RegRef,
-) -> MachInst<Op, Arg> {
-    MachInst::new(op)
-        .with_arg_reg_def(Arg::Reg(), rd)
-        .with_arg_2reg(Arg::Mem(mem), rn, rm)
+        .with_arg(Arg::Reg(rd))
+        .with_arg(Arg::Mem(mem))
 }
 
 /// Make a memory / reg inst.
-pub fn make_mem_reg(op: Op, mem: MemArg, rn: RegRef, rd: RegRef) -> MachInst<Op, Arg> {
+pub fn make_mem_reg(op: Op, mem: MemArg, rn: RegRef) -> MachInst<Op, Arg> {
     MachInst::new(op)
-        .with_arg_reg_use(Arg::Mem(mem), rn)
-        .with_arg_reg_use(Arg::Reg(), rd)
-}
-
-/// Make a memory-update-addr / reg inst.
-pub fn make_memupd_reg(op: Op, mem: MemArg, rn: RegRef, rd: RegRef) -> MachInst<Op, Arg> {
-    MachInst::new(op)
-        .with_arg_reg_use_def(Arg::Mem(mem), rn)
-        .with_arg_reg_use(Arg::Reg(), rd)
-}
-
-/// Make a memory-2-reg-amode / reg inst.
-pub fn make_mem2reg_reg(
-    op: Op,
-    mem: MemArg,
-    rn: RegRef,
-    rm: RegRef,
-    rd: RegRef,
-) -> MachInst<Op, Arg> {
-    MachInst::new(op)
-        .with_arg_2reg(Arg::Mem(mem), rn, rm)
-        .with_arg_reg_use(Arg::Reg(), rd)
+        .with_arg(Arg::Mem(mem))
+        .with_arg(Arg::Reg(rn))
 }
 
 /// Helper: load an arbitrary immediate (up to 64 bits large) into a register, using the smallest
 /// possible encoding or constant pool entry.
 pub fn load_imm<'a>(ctx: &mut LowerCtx<'a, Op, Arg>, value: u64, dest: RegRef) {
     if let Some(imm) = ShiftedImm::maybe_from_u64(value) {
-        let xzr = ctx.fixed(31);
+        // let xzr = TODO;
         ctx.emit(make_reg_reg_imm(Op::AddI, dest, xzr, imm));
     } else if value <= std::u32::MAX as u64 {
         ctx.emit(make_reg_memlabel(
