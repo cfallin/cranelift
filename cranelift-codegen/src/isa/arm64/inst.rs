@@ -149,7 +149,7 @@ pub fn input_reg(num: usize) -> RegRef {
 }
 
 /// Build a register reference for the given output of the containing IR inst.
-pub fn output_Reg(num: usize) -> RegRef {
+pub fn output_reg(num: usize) -> RegRef {
     assert!(num < std::u8::MAX as usize);
     RegRef::Result(num as u8)
 }
@@ -247,7 +247,7 @@ pub fn make_mem_reg(op: Op, mem: MemArg, rn: RegRef) -> MachInst<Op, Arg> {
 /// possible encoding or constant pool entry.
 pub fn load_imm<'a>(ctx: &mut LowerCtx<'a, Op, Arg>, value: u64, dest: RegRef) {
     if let Some(imm) = ShiftedImm::maybe_from_u64(value) {
-        // let xzr = TODO;
+        let xzr = output_reg(ctx.fixed_tmp(I64, 31));
         ctx.emit(make_reg_reg_imm(Op::AddI, dest, xzr, imm));
     } else if value <= std::u32::MAX as u64 {
         ctx.emit(make_reg_memlabel(

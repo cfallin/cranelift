@@ -122,6 +122,9 @@ impl<'a> BlockTreeExtractor<'a> {
 /// to extract symbolic representations of the lowered code or to assist with statically generating
 /// specialized/optimized backend.
 pub trait LowerCtx<Op: MachInstOp, Arg: MachInstArg> {
+    /// Return the current IR inst.
+    fn inst(&self) -> Inst;
+
     /// Emit a machine instruction. The machine instructions will eventually be ordered in reverse
     /// of the calls to this function.
     fn emit(&mut self, inst: MachInst<Op, Arg>);
@@ -155,8 +158,13 @@ pub trait LowerCtx<Op: MachInstOp, Arg: MachInstArg> {
     /// Fix an existing Value to a given fixed register.
     fn fix_reg(&mut self, value: Value, ru: RegUnit);
 
-    // TODO: temporaries? So far, we haven't needed to allocate temporaries within the MachInsts
-    // for a given IR inst.
+    /// Return a temporary. The Value can be fetched as `ctx.output(ctx.inst(), idx)` where `idx` is
+    /// the return value.
+    fn tmp(&mut self, ty: Type, rc: RegClass) -> usize;
+
+    /// Return a register-fixed temporary. The Value can be fetched as `ctx.output(ctx.inst(),
+    /// idx)` where `idx` is the return value.
+    fn fixed_tmp(&mut self, ty: Type, ru: RegUnit) -> usize;
 }
 
 /// The canonical implementation of the lowering context, used to emit instructions directly to the
@@ -206,6 +214,10 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtxImpl<'a, Op, Arg> {
 }
 
 impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a, Op, Arg> {
+    fn inst(&self) -> Inst {
+        self.cur()
+    }
+
     /// Emit a machine instruction. The machine instructions will eventually be ordered in reverse
     /// of the calls to this function.
     fn emit(&mut self, inst: MachInst<Op, Arg>) {
@@ -246,7 +258,14 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a
     /// lowered machine instructions.
     fn add_input(&mut self, inst: Inst, value: Value) -> usize {
         assert!(inst == self.cur());
-        self.func.dfg.inst_results(inst).len() + self.machinsts.add_extra_arg(inst, value)
+        self.func.dfg.inst_args(inst).len() + self.machinsts.add_extra_arg(inst, value)
+    }
+
+    /// Add an extra output to the given IR inst, corresponding to some value defined in the
+    /// lowered machine instructions.
+    fn add_output(&mut self, inst: Inst, ty: Type) -> usize {
+        assert!(inst == self.cur());
+        self.func.dfg.inst_results(inst).len() + self.machinsts.add_extra_result(inst, ty)
     }
 
     /// Mark this instruction as "unused". This means that its value does not need to be generated
@@ -261,6 +280,27 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a
         self.constraints
             .add(value, MachRegConstraint::from_fixed(ru));
     }
+
+    /// Create a fixed temporary as a def (output) of the given insn.
+    fn tmp(&mut self, ty: Type, rc: RegUnit) -> usize {
+        let inst = self.cur();
+        let out_idx = self.add_output(inst, ty);
+        self.add_input(inst, self.output(inst, out_idx));
+        let value = self.output(inst, out_idx);
+        self.constraints.add(value, MachRegConstraint::from_class(rc));
+        out_idx
+    }
+
+    /// Create a fixed temporary as a def (output) of the given insn.
+    fn fixed_tmp(&mut self, ty: Type, ru: RegUnit) -> usize {
+        let inst = self.cur();
+        let out_idx = self.add_output(inst, ty);
+        self.add_input(inst, self.output(inst, out_idx));
+        self.fix_reg(self.output(inst, out_idx), ru);
+        out_idx
+    }
+
+    // TODO: a RegRef type...
 }
 
 /// Lower a function to virtual-reg machine insts.
