@@ -161,7 +161,7 @@ impl<Op: MachInstOp, Arg: MachInstArg> MachInst<Op, Arg> {
 /// This trait represents, in addition to the lowered machine instructions per IR instruction, an
 /// overlay over IR  instructions that can define new inputs (args), new outputs (results), and new
 /// Values with types.
-pub trait MachInsts {
+pub trait MachInsts: Debug {
     /// Clear the list of machine instructions.
     fn clear(&mut self);
     /// Get the number of machine instructions.

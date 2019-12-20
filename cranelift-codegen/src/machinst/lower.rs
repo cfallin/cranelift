@@ -324,74 +324,96 @@ impl<'a, Op: MachInstOp, Arg: MachInstArg> LowerCtx<Op, Arg> for LowerCtxImpl<'a
     }
 }
 
-/// Lower a function to virtual-reg machine insts.
-pub fn lower<Op: MachInstOp, Arg: MachInstArg>(
-    func: &mut Function,
-    lower_table: &LowerTable<Op, Arg>,
-) {
-    // Create the MachInsts instance.
-    let mut machinsts = MachInstsImpl::new(&func.dfg);
+/// The result of lowering.
+#[derive(Debug)]
+pub struct LoweringResult {
+    mach_insts: Box<dyn MachInsts>,
+    reg_constraints: MachRegConstraints,
+}
 
-    let mut reg_constraints = MachRegConstraints::new();
+impl LoweringResult {
+    /// Lower a function to virtual-reg machine insts.
+    pub fn lower<Op: MachInstOp + 'static, Arg: MachInstArg + 'static>(
+        func: &Function,
+        lower_table: &LowerTable<Op, Arg>,
+    ) -> LoweringResult {
+        // Create the MachInsts instance.
+        let mut machinsts = MachInstsImpl::new(&func.dfg);
 
-    // Set up the context passed to lowering actions.
-    let mut ctx = LowerCtxImpl::new(func, &mut machinsts, &mut reg_constraints);
+        let mut reg_constraints = MachRegConstraints::new();
 
-    // Compute the number of uses of each value, for use during greedy tree extraction.
-    let num_uses = NumUses::compute(func);
+        // Set up the context passed to lowering actions.
+        let mut ctx = LowerCtxImpl::new(func, &mut machinsts, &mut reg_constraints);
 
-    // Create a pattern-prefix pool for the temporary prefixes extracted from insns.
-    let mut prefix_pool = PatternPrefixPool::new();
+        // Compute the number of uses of each value, for use during greedy tree extraction.
+        let num_uses = NumUses::compute(func);
 
-    // Lower each EBB in turn, in postorder (so that when we reverse the instructions, they are
-    // in RPO).
-    let ebbs: SmallVec<[Ebb; 16]> = func.layout.ebbs().collect();
-    for ebb in ebbs.into_iter().rev() {
-        // Create the block tree extractor.
-        let bte = BlockTreeExtractor::new(func, &num_uses, ebb);
+        // Create a pattern-prefix pool for the temporary prefixes extracted from insns.
+        let mut prefix_pool = PatternPrefixPool::new();
 
-        // For each instruction, in reverse order, extract the tree and lower it.
-        for inst in func.layout.ebb_insts(ebb).rev() {
-            if !ctx.is_unused(inst) {
-                let ckpt = prefix_pool.checkpoint();
-                let tree = bte.get_tree(&mut prefix_pool, inst);
-                let mut lowered = false;
+        // Lower each EBB in turn, in postorder (so that when we reverse the instructions, they are
+        // in RPO).
+        let ebbs: SmallVec<[Ebb; 16]> = func.layout.ebbs().collect();
+        for ebb in ebbs.into_iter().rev() {
+            // Create the block tree extractor.
+            let bte = BlockTreeExtractor::new(func, &num_uses, ebb);
 
-                ctx.begin_inst(inst);
+            // For each instruction, in reverse order, extract the tree and lower it.
+            for inst in func.layout.ebb_insts(ebb).rev() {
+                if !ctx.is_unused(inst) {
+                    let ckpt = prefix_pool.checkpoint();
+                    let tree = bte.get_tree(&mut prefix_pool, inst);
+                    let mut lowered = false;
 
-                // Look up the entries for the root opcode and try
-                // them, if they match, one at a time.
-                let root_op = prefix_pool.get(&tree).root_op();
-                if let Some(entries) = lower_table.get_entries(root_op) {
-                    for entry in entries {
-                        let pat = lower_table.pool().get(&entry.prefix);
-                        let subject = prefix_pool.get(&tree);
-                        if pat.matches(&subject) {
-                            let action = entry.action;
-                            if action(&mut ctx) {
-                                // Action was successful -- no need to try further patterns.
-                                lowered = true;
-                                break;
+                    ctx.begin_inst(inst);
+
+                    // Look up the entries for the root opcode and try
+                    // them, if they match, one at a time.
+                    let root_op = prefix_pool.get(&tree).root_op();
+                    if let Some(entries) = lower_table.get_entries(root_op) {
+                        for entry in entries {
+                            let pat = lower_table.pool().get(&entry.prefix);
+                            let subject = prefix_pool.get(&tree);
+                            if pat.matches(&subject) {
+                                let action = entry.action;
+                                if action(&mut ctx) {
+                                    // Action was successful -- no need to try further patterns.
+                                    lowered = true;
+                                    break;
+                                }
                             }
                         }
                     }
+
+                    ctx.end_inst();
+
+                    if !lowered {
+                        panic!(
+                            "Unable to lower instruction {:?}: {:?}",
+                            inst, func.dfg[inst]
+                        );
+                    }
+
+                    prefix_pool.rewind(ckpt);
                 }
-
-                ctx.end_inst();
-
-                if !lowered {
-                    panic!(
-                        "Unable to lower instruction {:?}: {:?}",
-                        inst, func.dfg[inst]
-                    );
-                }
-
-                prefix_pool.rewind(ckpt);
             }
+        }
+
+        LoweringResult {
+            mach_insts: Box::new(machinsts),
+            reg_constraints,
         }
     }
 
-    // TODO: return a wrapped-up lowering result.
+    /// Return the MachInsts instance that wraps the lowered instructions.
+    pub fn mach_insts(&self) -> &MachInsts {
+        &*self.mach_insts
+    }
+
+    /// Return the register constraints.
+    pub fn reg_constraints(&self) -> &MachRegConstraints {
+        &self.reg_constraints
+    }
 }
 
 #[cfg(test)]

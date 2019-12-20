@@ -403,7 +403,6 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
     t
 }
 
-/*
 #[cfg(test)]
 mod test {
     use super::*;
@@ -433,12 +432,11 @@ mod test {
 
         let t = make_backend();
 
-        lower(&func, &t);
+        let lowered = LoweringResult::lower(&func, &t);
 
         println!("func: {:?}", func);
 
-        assert!(func.machinsts().unwrap().num_machinsts() == 3);
-        println!("machinsts: {:?}", func.machinsts().unwrap());
+        assert!(lowered.mach_insts().num_machinsts() == 3);
+        println!("machinsts: {:?}", lowered.mach_insts());
     }
 }
-*/

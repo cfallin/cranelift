@@ -1,12 +1,5 @@
 TODO:
 
-- Generalize the ctx as a trait, and create a machine-specific ctx.
-
-- Instead of a reg, let the MachInst refer to a Value as a register.
-
-- Fill out the patterns.
-  - definitions of insns in meta/src/shared/instructions.rs.
-
 - Wire up MachInst to regalloc. Figure out how to generalize over MachRegs and
   existing Value infra. Figure out how to generalize over move/spill/fill
   insertion.
@@ -16,5 +9,8 @@ TODO:
 - ABI integration.
 
 - Prologue/epilogue integration.
+
+- Fill out the patterns.
+  - definitions of insns in meta/src/shared/instructions.rs.
 
 - Encoding backend.
