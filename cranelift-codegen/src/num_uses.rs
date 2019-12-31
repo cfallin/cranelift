@@ -65,4 +65,9 @@ impl NumUses {
     fn is_used(&self, i: Inst) -> bool {
         self.use_count(i) > 0
     }
+
+    /// Take the complete uses map, consuming this analysis result.
+    fn take_uses(self) -> SecondaryMap<Inst, u32> {
+        self.uses
+    }
 }

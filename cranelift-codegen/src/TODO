@@ -1,10 +1,10 @@
 TODO:
 
-- Wire up MachInst to regalloc. Figure out how to generalize over MachRegs and
-  existing Value infra. Figure out how to generalize over move/spill/fill
-  insertion.
-  - Perhaps we need to move back to storing MachInsts like we do Encodings
-    currently. The only tricky bit is where to store the registers.
+- Rebuild lowering in more direct form, without pattern system (materialize a
+  value in a particular context instead).
+
+- Integrate old regalloc for now. Fit into Cranelift IR's CFG. Abstract the
+  use/def interface and spill/fill insertion.
 
 - ABI integration.
 

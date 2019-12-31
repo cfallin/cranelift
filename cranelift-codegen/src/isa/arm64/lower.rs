@@ -2,37 +2,11 @@
 
 use crate::ir::types::*;
 use crate::ir::{InstructionData, Opcode, Type};
-use crate::machinst::lower::*;
-use crate::machinst::pattern::*;
 
 use crate::isa::arm64::inst::*;
 use crate::isa::arm64::registers::*;
-use crate::lower_pattern;
 
-/// Helper: in a lowering action, get a field of an instruction, or fail.
-macro_rules! field {
-    ($inst:expr, $fmt:ident, $field:ident) => {
-        match $inst {
-            InstructionData::$fmt { $field, .. } => $field,
-            _ => {
-                return false;
-            }
-        }
-    };
-}
-
-/// Helper: in a lowering action, get a reference to a field of an instruction, or fail.
-macro_rules! fieldref {
-    ($inst:expr, $fmt:ident, $field:ident) => {
-        match $inst {
-            InstructionData::$fmt { ref $field, .. } => $field,
-            _ => {
-                return false;
-            }
-        }
-    };
-}
-
+/*
 /// Create the lowering table for ARM64.
 pub fn make_backend() -> LowerTable<Op, Arg> {
     let mut t = LowerTable::new();
@@ -405,41 +379,4 @@ pub fn make_backend() -> LowerTable<Op, Arg> {
 
     t
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::cursor::{Cursor, FuncCursor};
-    use crate::ir::condcodes::*;
-    use crate::ir::types::*;
-    use crate::ir::{Function, InstBuilder, ValueDef};
-    use crate::machinst::lower::*;
-
-    #[test]
-    fn test_lower_simple_match() {
-        let mut func = Function::new();
-        let ebb0 = func.dfg.make_ebb();
-        let arg0 = func.dfg.append_ebb_param(ebb0, I32);
-        let mut pos = FuncCursor::new(&mut func);
-        pos.insert_ebb(ebb0);
-
-        let v0 = pos.ins().iconst(I32, 1);
-        let v1 = pos.ins().iadd(arg0, v0);
-        let v2 = pos.ins().isub(arg0, v1);
-        let v3 = pos.ins().iadd(v2, v2);
-
-        let ins0 = func.dfg.value_def(v0).unwrap_inst();
-        let ins1 = func.dfg.value_def(v1).unwrap_inst();
-        let ins2 = func.dfg.value_def(v2).unwrap_inst();
-        let ins3 = func.dfg.value_def(v3).unwrap_inst();
-
-        let t = make_backend();
-
-        let lowered = LoweringResult::lower(&func, &t);
-
-        println!("func: {:?}", func);
-
-        assert!(lowered.mach_insts().num_machinsts() == 3);
-        println!("machinsts: {:?}", lowered.mach_insts());
-    }
-}
+*/

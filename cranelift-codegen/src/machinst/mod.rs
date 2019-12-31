@@ -41,11 +41,7 @@ use smallvec::SmallVec;
 use std::hash::Hash;
 
 pub mod lower;
-pub mod pattern;
-pub mod pattern_prefix;
-
 pub use lower::*;
-pub use pattern::*;
 
 /// A constraint on a virtual register in a machine instruction.
 #[derive(Clone, Debug)]
@@ -94,320 +90,45 @@ impl MachRegConstraints {
     }
 }
 
-/// The trait implemented by an architecture-specific opcode type.
-pub trait MachInstOp: Clone + Debug {
-    /// The name of the opcode.
-    fn name(&self) -> &'static str;
+/// A register reference in a machine instruction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MachReg {
+    /// Undefined. Used as a placeholder.
+    Undefined,
+    /// A virtual register.
+    Virtual(usize),
+    /// An allocated physical register.
+    Allocated(RegUnit),
 }
 
-/// An enum type that defines the kinds of a machine-specific argument.
-pub trait MachInstArgKind: Clone + Debug + Hash + PartialEq + Eq {}
-
-/// The trait implemented by an architecture-specific argument data blob. The purpose of this trait
-/// is to allow the arch-specific part to inform the arch-independent part about the `Value`s
-/// (registers) that the argument defines and uses.
-pub trait MachInstArg: Clone + Debug + MachInstArgGetKind {}
-
-/// A helper trait providing the link between a MachInstArg and its Kind. Automatically implemented
-/// by the `mach_args!` macro.
-pub trait MachInstArgGetKind {
-    /// The kind enum for this arg type.
-    type Kind: MachInstArgKind;
-    /// What kind of argument is this?
-    fn kind(&self) -> Self::Kind;
+/// The mode in which a register is used or defined.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MachRegMode {
+    Use,  // Read by instruction.
+    Def,  // Written by instruction.
+    Modify,  // Both read and written by instruction.
 }
 
-/// The argument slots of a machine instruction, parameterized on the architecture-specific
-/// argument data.
-pub type MachInstArgs<Arg> = SmallVec<[Arg; 3]>;
+/// A list of MachRegs used/def'd by a MachInst.
+pub type MachInstRegs = SmallVec<[(MachReg, MachRegMode); 4]>;
 
 /// A machine instruction.
-#[derive(Clone, Debug)]
-pub struct MachInst<Op: MachInstOp, Arg: MachInstArg> {
-    /// The opcode.
-    pub op: Op,
-    /// The argument data: this is target-specific. It does not include the registers; these are
-    /// kept separately so that the machine-independent regalloc can access them.
-    pub args: MachInstArgs<Arg>,
+pub trait MachInst {
+    /// Return the registers referenced by this machine instruction along with the modes of
+    /// reference (use, def, modify).
+    fn regs(&self) -> MachInstRegs;
+    /// Map virtual registers to physical registers using the given virt->phys map.
+    fn map_virtregs(&self, locs: &MachLocations);
 }
 
-impl<Op: MachInstOp, Arg: MachInstArg> MachInst<Op, Arg> {
-    /// Create a new machine instruction.
-    pub fn new(op: Op) -> MachInst<Op, Arg> {
-        MachInst {
-            op,
-            args: SmallVec::new(),
-        }
-    }
-
-    /// Add an argument to a machine instruction.
-    pub fn with_arg(mut self, arg: Arg) -> Self {
-        self.args.push(arg);
-        self
-    }
-
-    /// Returns the name of this machine instruction.
-    pub fn name(&self) -> &'static str {
-        self.op.name()
-    }
-}
-
-/// A map from RegRef (referring to input/output Values of a given IR inst) to actual registers
-/// (RegUnit values), given to the encoding functions.
-pub type MachLocations = HashMap<RegRef, RegUnit>;
+/// A map from virtual registers to physical registers.
+pub type MachLocations = Vec<RegUnit>;  // Indexed by virtual register number.
 
 /// A trait describing the ability to encode a MachInst into binary machine code.
-pub trait MachInstEncode<Op: MachInstOp, Arg: MachInstArg, CS: CodeSink> {
+pub trait MachInstEncode<CS: CodeSink>: MachInst {
     /// Get the size of the instruction.
-    fn size(&self, locs: &MachLocations) -> usize;
+    fn size(&self) -> usize;
 
     /// Encode the instruction.
-    fn encode(&self, locs: &MachLocations, cs: &mut CS);
-}
-
-/// A trait wrapping a list of machine instructions, held by `Function`. This allows the Cranelift
-/// IR, which holds the machine-specific instructions after lowering, to remain unparameterized on
-/// Op/Arg (and machine-specific types in general). The trait provides methods to allow for codegen
-/// but does not (cannot) leak individual MachInst instances.
-///
-/// This trait represents, in addition to the lowered machine instructions per IR instruction, an
-/// overlay over IR  instructions that can define new inputs (args), new outputs (results), and new
-/// Values with types.
-pub trait MachInsts: Debug {
-    /// Clear the list of machine instructions.
-    fn clear(&mut self);
-    /// Get the number of machine instructions.
-    fn num_machinsts(&self) -> usize;
-    /// Get the extra arg values for a given IR instruction added during lowering.
-    fn extra_args(&self, inst: Inst) -> &[Value];
-    /// Get the extra result values for a given IR instruction added during lowering.
-    fn extra_results(&self, inst: Inst) -> &[Value];
-    /// Get the number of normal and extra args for the given IR instruction.
-    fn num_total_args(&self, dfg: &DataFlowGraph, inst: Inst) -> usize;
-    /// Get the given normal or extra arg for the given IR instruction.
-    fn get_arg(&self, dfg: &DataFlowGraph, inst: Inst, idx: usize) -> Value;
-    /// Get the number of normal and extra results for the given IR instruction.
-    fn num_total_results(&self, dfg: &DataFlowGraph, inst: Inst) -> usize;
-    /// Get the given normal or extra arg for the given IR instruction.
-    fn get_result(&self, dfg: &DataFlowGraph, inst: Inst, idx: usize) -> Value;
-    /// Get the type of the given Value.
-    fn get_type(&self, dfg: &DataFlowGraph, value: Value) -> Type;
-    /// Emit the MachInsts to a CodeSink, given a mapping from Value to ValueLoc.
-    fn emit(&self, locs: &ValueLocations, sink: &mut CodeSink);
-}
-
-/// Canonical implementation of MachInsts.
-#[derive(Clone, Debug)]
-pub struct MachInstsImpl<Op: MachInstOp, Arg: MachInstArg> {
-    entries: SecondaryMap<Inst, MachInstsEntry>,
-    mach_insts: Vec<MachInst<Op, Arg>>,
-    extra_args: Vec<Value>,
-    extra_results: Vec<Value>,
-    first_extra_value: usize,
-    next_value: usize,
-    extra_values: Vec<Type>,
-    last_inst: Option<Inst>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct MachInstsEntry {
-    // Indices into the respective dense Vecs. Pack the u32s together for efficiency: this struct
-    // should be 16 bytes total with padding.
-    inst_start: u32,
-    extra_arg_start: u32,
-    extra_result_start: u32,
-    inst_count: u8,
-    extra_arg_count: u8,
-    extra_result_count: u8,
-}
-
-impl<Op: MachInstOp, Arg: MachInstArg> MachInstsImpl<Op, Arg> {
-    /// Create a new MachInstsImpl.
-    pub fn new(dfg: &DataFlowGraph) -> MachInstsImpl<Op, Arg> {
-        let dfg_values = dfg.num_values();
-        MachInstsImpl {
-            entries: SecondaryMap::with_default(Default::default()),
-            mach_insts: vec![],
-            extra_args: vec![],
-            extra_results: vec![],
-            first_extra_value: dfg_values,
-            next_value: dfg_values,
-            extra_values: vec![],
-            last_inst: None,
-        }
-    }
-
-    fn start_inst(&mut self, from: Inst) {
-        let entry = &mut self.entries[from];
-        if &self.last_inst != &Some(from) {
-            assert!(entry.inst_count == 0);
-            assert!(entry.extra_arg_count == 0);
-            entry.inst_start = self.mach_insts.len() as u32;
-            entry.extra_arg_start = self.extra_args.len() as u32;
-            entry.extra_result_start = self.extra_results.len() as u32;
-            self.last_inst = Some(from);
-        }
-    }
-
-    fn new_value(&mut self, ty: Type) -> Value {
-        let idx = self.next_value;
-        self.next_value += 1;
-        self.extra_values.push(ty);
-        Value::new(idx)
-    }
-
-    /// Add a new MachInst corresponding to the given IR inst.
-    pub fn add_inst(&mut self, from: Inst, inst: MachInst<Op, Arg>) {
-        self.start_inst(from);
-        let entry = &mut self.entries[from];
-        entry.inst_count += 1;
-        self.mach_insts.push(inst);
-    }
-
-    /// Add a new extra arg corresponding to the given IR inst. Returns the index of this extra
-    /// arg.
-    pub fn add_extra_arg(&mut self, from: Inst, value: Value) -> usize {
-        self.start_inst(from);
-        let entry = &mut self.entries[from];
-        let idx = entry.extra_arg_count as usize;
-        entry.extra_arg_count += 1;
-        self.extra_args.push(value);
-        idx
-    }
-
-    /// Add a new extra output corresponding to the given IR inst. Returns the index of this extra
-    /// arg.
-    pub fn add_extra_result(&mut self, from: Inst, ty: Type) -> usize {
-        self.start_inst(from);
-        let entry = &mut self.entries[from];
-        let idx = entry.extra_arg_count as usize;
-        entry.extra_result_count += 1;
-        let value = self.new_value(ty);
-        self.extra_results.push(value);
-        idx
-    }
-}
-
-impl<Op: MachInstOp, Arg: MachInstArg> MachInsts for MachInstsImpl<Op, Arg> {
-    /// Clear the list of machine instructions.
-    fn clear(&mut self) {
-        self.entries.clear();
-        self.mach_insts.clear();
-        self.extra_args.clear();
-        self.extra_results.clear();
-    }
-
-    /// Get the number of machine instructions.
-    fn num_machinsts(&self) -> usize {
-        self.mach_insts.len()
-    }
-
-    /// Get the extra arg values for a given IR instruction added during lowering.
-    fn extra_args(&self, inst: Inst) -> &[Value] {
-        let entry = &self.entries[inst];
-        let start = entry.extra_arg_start as usize;
-        let end = start + (entry.extra_arg_count as usize);
-        &self.extra_args[start..end]
-    }
-
-    /// Get the extra result values for a given IR instruction added during lowering.
-    fn extra_results(&self, inst: Inst) -> &[Value] {
-        let entry = &self.entries[inst];
-        let start = entry.extra_result_start as usize;
-        let end = start + (entry.extra_result_count as usize);
-        &self.extra_results[start..end]
-    }
-
-    fn num_total_args(&self, dfg: &DataFlowGraph, inst: Inst) -> usize {
-        dfg.inst_args(inst).len() + self.extra_args(inst).len()
-    }
-
-    fn num_total_results(&self, dfg: &DataFlowGraph, inst: Inst) -> usize {
-        dfg.inst_results(inst).len() + self.extra_results(inst).len()
-    }
-
-    fn get_arg(&self, dfg: &DataFlowGraph, inst: Inst, idx: usize) -> Value {
-        let args = dfg.inst_args(inst);
-        if idx < args.len() {
-            args[idx]
-        } else {
-            self.extra_args(inst)[idx - args.len()]
-        }
-    }
-
-    fn get_result(&self, dfg: &DataFlowGraph, inst: Inst, idx: usize) -> Value {
-        let results = dfg.inst_results(inst);
-        if idx < results.len() {
-            results[idx]
-        } else {
-            self.extra_results(inst)[idx - results.len()]
-        }
-    }
-
-    fn get_type(&self, dfg: &DataFlowGraph, v: Value) -> Type {
-        if v.index() < self.first_extra_value {
-            dfg.value_type(v)
-        } else {
-            self.extra_values[v.index() - self.first_extra_value]
-        }
-    }
-
-    fn emit(&self, locs: &ValueLocations, sink: &mut CodeSink) {
-        // TODO.
-    }
-}
-
-/// A macro to allow a machine backend to define an opcode type.
-#[macro_export]
-macro_rules! mach_ops {
-    ($name:ident, { $($op:ident),* }) => {
-        #[derive(Clone, Debug, PartialEq, Eq)]
-        pub enum $name {
-            $($op),*
-        }
-
-        impl crate::machinst::MachInstOp for $name {
-            fn name(&self) -> &'static str {
-                match self {
-                    $($name::$op => stringify!($op)),*
-                }
-            }
-        }
-    };
-}
-
-/// A macro to allow a machine backend to define its argument type.
-#[macro_export]
-macro_rules! mach_args {
-    ($name:ident, $kind:ident, { $($op:ident($($oparg:tt)*)),* }) => {
-        /// Kinds of machine-specific argument.
-        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-        pub enum $kind {
-            $($op),*
-        }
-
-        /// Machine-specific instruction argument type.
-        #[derive(Clone, Debug)]
-        pub enum $name {
-            $(
-                $op($($oparg)*)
-            ),*
-        }
-
-        impl crate::machinst::MachInstArgKind for $kind {}
-
-        impl crate::machinst::MachInstArgGetKind for $name {
-            type Kind = $kind;
-
-            fn kind(&self) -> Self::Kind {
-                match self {
-                    $(
-                        &$name::$op(..) => $kind::$op
-                    ),*
-                }
-            }
-        }
-
-        impl crate::machinst::MachInstArg for $name {}
-    }
+    fn encode(&self, cs: &mut CS);
 }

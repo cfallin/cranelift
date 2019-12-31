@@ -1,5 +1,6 @@
 //! This module defines the encoding for `MachInst<Op, Arg>`.
 
+/*
 use crate::binemit::CodeSink;
 use crate::isa::arm64::inst::*;
 use crate::isa::arm64::registers::*;
@@ -131,3 +132,4 @@ impl<CS: CodeSink> MachInstEncode<Op, Arg, CS> for MachInst<Op, Arg> {
         }
     }
 }
+*/
