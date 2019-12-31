@@ -3,7 +3,7 @@
 //! *almost* the final machine code, except for register allocation.
 
 use crate::entity::SecondaryMap;
-use crate::ir::{Ebb, Function, Inst, InstructionData, Type, Value};
+use crate::ir::{Ebb, Function, Inst, InstructionData, Type, Value, ValueDef};
 use crate::isa::registers::{RegClass, RegUnit};
 use crate::machinst::MachReg;
 use crate::num_uses::NumUses;
@@ -15,11 +15,16 @@ use smallvec::SmallVec;
 pub trait LowerCtx<I> {
     /// Get the instdata for a given IR instruction.
     fn data(&self, ir_inst: Inst) -> &InstructionData;
+    /// Get the controlling type for a polymorphic IR instruction.
+    fn ty(&self, ir_inst: Inst) -> Type;
     /// Emit a machine instruction.
     fn emit(&mut self, mach_inst: I);
     /// Reduce the use-count of an IR instruction. Use this when, e.g., isel incorporates the
     /// computation of an input instruction directly.
     fn dec_use(&mut self, ir_inst: Inst);
+    /// Get the producing instruction, if any, and output number, for the `idx`th input to the
+    /// given IR instruction
+    fn input_inst(&self, ir_inst: Inst, idx: usize) -> Option<(Inst, usize)>;
     /// Get the `idx`th input to the given IR instruction as a virtual register.
     fn input(&self, ir_inst: Inst, idx: usize) -> MachReg;
     /// Get the `idx`th output of the given IR instruction as a virtual register.
@@ -28,6 +33,10 @@ pub trait LowerCtx<I> {
     fn num_inputs(&self, ir_inst: Inst) -> usize;
     /// Get the number of outputs to the given IR instruction.
     fn num_outputs(&self, ir_inst: Inst) -> usize;
+    /// Get the type for an instruction's input.
+    fn input_ty(&self, ir_inst: Inst, idx: usize) -> Type;
+    /// Get the type for an instruction's output.
+    fn output_ty(&self, ir_inst: Inst, idx: usize) -> Type;
     /// Get a new temp.
     fn tmp(&mut self, rc: RegClass) -> MachReg;
 }
@@ -39,7 +48,7 @@ pub trait LowerBackend {
     type MInst;
 
     /// Lower a single instruction. Instructions are lowered in reverse order.
-    fn lower(&mut self, ctx: &mut dyn LowerCtx<Self::MInst>, inst: Inst, ctrl_typevar: Type);
+    fn lower(&mut self, ctx: &mut dyn LowerCtx<Self::MInst>, inst: Inst);
 }
 
 /// Machine-independent lowering driver / machine-instruction container. Maintains a correspondence
@@ -119,9 +128,8 @@ impl<'a, I> Lower<'a, I> {
         for ebb in ebbs.into_iter().rev() {
             for inst in self.f.layout.ebb_insts(ebb).rev() {
                 if self.num_uses[inst] > 0 {
-                    let ty = self.f.dfg.ctrl_typevar(inst);
                     self.start_inst(inst);
-                    backend.lower(self, inst, ty);
+                    backend.lower(self, inst);
                     self.end_inst();
                 }
             }
@@ -145,6 +153,11 @@ impl<'a, I> LowerCtx<I> for Lower<'a, I> {
         &self.f.dfg[ir_inst]
     }
 
+    /// Get the controlling type for a polymorphic IR instruction.
+    fn ty(&self, ir_inst: Inst) -> Type {
+        self.f.dfg.ctrl_typevar(ir_inst)
+    }
+
     /// Emit a machine instruction.
     fn emit(&mut self, mach_inst: I) {
         let cur_inst = self.cur_inst.clone().unwrap();
@@ -158,6 +171,16 @@ impl<'a, I> LowerCtx<I> for Lower<'a, I> {
     fn dec_use(&mut self, ir_inst: Inst) {
         assert!(self.num_uses[ir_inst] > 0);
         self.num_uses[ir_inst] -= 1;
+    }
+
+    /// Get the producing instruction, if any, and output number, for the `idx`th input to the
+    /// given IR instruction.
+    fn input_inst(&self, ir_inst: Inst, idx: usize) -> Option<(Inst, usize)> {
+        let val = self.f.dfg.inst_args(ir_inst)[idx];
+        match self.f.dfg.value_def(val) {
+            ValueDef::Result(src_inst, result_idx) => Some((src_inst, result_idx)),
+            _ => None,
+        }
     }
 
     /// Get the `idx`th input to the given IR instruction as a virtual register.
@@ -187,6 +210,16 @@ impl<'a, I> LowerCtx<I> for Lower<'a, I> {
     /// Get the number of outputs for the given IR instruction.
     fn num_outputs(&self, ir_inst: Inst) -> usize {
         self.f.dfg.inst_results(ir_inst).len()
+    }
+
+    /// Get the type for an instruction's input.
+    fn input_ty(&self, ir_inst: Inst, idx: usize) -> Type {
+        self.f.dfg.value_type(self.f.dfg.inst_args(ir_inst)[idx])
+    }
+
+    /// Get the type for an instruction's output.
+    fn output_ty(&self, ir_inst: Inst, idx: usize) -> Type {
+        self.f.dfg.value_type(self.f.dfg.inst_results(ir_inst)[idx])
     }
 }
 
