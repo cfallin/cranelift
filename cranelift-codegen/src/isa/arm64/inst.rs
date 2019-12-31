@@ -1,22 +1,10 @@
-//! This module defines `Op` and `Arg` and friends for Arm64, along with constructors/helpers for
-//! lowering code that constructs `MachInst<Op, Arg>` values.
-
-/*
- * TODO:
- * - Support lowering table keying on "controlling typevar".
- *
- * - Support (Iadd (Uextend ...) ...) and (Iadd (Ishl_imm ...) ...) using extended-register and
- *   shifted-register forms.
- */
+//! This module defines arm64-specific machine instruction types.
 
 use crate::ir::constant::{ConstantData, ConstantOffset};
-use crate::ir::{FuncRef, GlobalValue, Inst, InstructionData, Type};
-use crate::ir::types::*;
+use crate::ir::{FuncRef, GlobalValue};
 use crate::isa::arm64::registers::*;
 use crate::isa::registers::RegClass;
-use crate::machinst::lower::LowerCtx;
 use crate::machinst::*;
-use crate::{mach_args, mach_ops};
 
 /// An ALU operation. This can be paired with several instruction formats below (see `Inst`) in any
 /// combination.
@@ -28,44 +16,90 @@ pub enum ALUOp {
     Sub64,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Instruction formats.
+#[derive(Clone, Debug)]
 pub enum Inst {
     /// An ALU operation with two register sources and a register destination.
-    AluRRR { alu_op: ALUOp, rd: RegRef, rn: RegRef, rm: RegRef },
-    /// An ALU operation with a register source and an immediate source, and a register destionat.
-    AluRRI { alu_op: ALUOp, rd: RegRef, rn: RegRef, imm12: ShiftedImm, },
+    AluRRR {
+        alu_op: ALUOp,
+        rd: MachReg,
+        rn: MachReg,
+        rm: MachReg,
+    },
+    /// An ALU operation with a register source and an immediate-12 source, and a register
+    /// destination.
+    AluRRImm12 {
+        alu_op: ALUOp,
+        rd: MachReg,
+        rn: MachReg,
+        imm12: Imm12,
+    },
+    /// An ALU operation with a register source and an immediate-logic source, and a register destination.
+    AluRRImmLogic {
+        alu_op: ALUOp,
+        rd: MachReg,
+        rn: MachReg,
+        imml: ImmLogic,
+    },
+    /// An ALU operation with a register source and an immediate-shiftamt source, and a register destination.
+    AluRRImmShift {
+        alu_op: ALUOp,
+        rd: MachReg,
+        rn: MachReg,
+        immshift: ImmShift,
+    },
     /// An ALU operation with two register sources, one of which can be shifted, and a register
     /// destination.
-    AluRRRShift { alu_op: ALUOp, rd: RegRef, rn: RegRef, rm: RegRef, shiftop: ShiftOpAndAmt },
+    AluRRRShift {
+        alu_op: ALUOp,
+        rd: MachReg,
+        rn: MachReg,
+        rm: MachReg,
+        shiftop: ShiftOpAndAmt,
+    },
     /// An ALU operation with two register sources, one of which can be {zero,sign}-extended and
     /// shifted, and a register destination.
-    AluRRRExtend { alu_op: ALUOp, rd: RegRef, rn: RegRef, rm: RegRef, extendop: ExtendOpAndAmt },
+    AluRRRExtend {
+        alu_op: ALUOp,
+        rd: MachReg,
+        rn: MachReg,
+        rm: MachReg,
+        extendop: ExtendOpAndAmt,
+    },
     /// A load with a register destination and a memory source.
-    Load { rd: RegRef, mem: MemArg },
+    Load { rd: MachReg, mem: MemArg },
     /// A store with a register source and a memory destination.
-    Store { rd: RegRef, mem: MemArg },
-
+    Store { rd: MachReg, mem: MemArg },
     // TODO: control flow ops.
 }
 
 /// A shifted immediate value in 'imm12' format: supports 12 bits, shifted left by 0 or 12 places.
 #[derive(Clone, Debug)]
-pub struct ShiftedImm {
+pub struct Imm12 {
     /// The immediate bits.
     pub bits: usize,
     /// Whether the immediate bits are shifted left by 12 or not.
     pub shift12: bool,
 }
 
-impl ShiftedImm {
-    /// Compute a ShiftedImm from raw bits, if possible.
-    pub fn maybe_from_u64(val: u64) -> Option<ShiftedImm> {
+impl Imm12 {
+    /// Compute a Imm12 from raw bits, if possible.
+    pub fn maybe_from_u64(val: u64) -> Option<Imm12> {
         if val == 0 {
-            Some(ShiftedImm { bits: 0, shift12: false })
+            Some(Imm12 {
+                bits: 0,
+                shift12: false,
+            })
         } else if val < 0xfff {
-            Some(ShiftedImm { bits: val as usize, shift12: false })
+            Some(Imm12 {
+                bits: val as usize,
+                shift12: false,
+            })
         } else if val < 0xfff_000 && (val & 0xfff == 0) {
-            Some(ShiftedImm { bits: (val as usize) >> 12, shift12: true })
+            Some(Imm12 {
+                bits: (val as usize) >> 12,
+                shift12: true,
+            })
         } else {
             None
         }
@@ -81,8 +115,45 @@ impl ShiftedImm {
     }
 }
 
-/// A shift operator for a register or immediate.
+/// An immediate for logical instructions.
 #[derive(Clone, Debug)]
+pub struct ImmLogic {
+    /// `N` flag.
+    pub N: bool,
+    /// `S` field: element size and element bits.
+    pub R: u8,
+    /// `R` field: rotate amount.
+    pub S: u8,
+}
+
+impl ImmLogic {
+    /// Compute an ImmLogic from raw bits, if possible.
+    pub fn maybe_from_u64(val: u64) -> Option<ImmLogic> {
+        // TODO: implement.
+        None
+    }
+}
+
+/// An immediate for shift instructions.
+#[derive(Clone, Debug)]
+pub struct ImmShift {
+    /// 6-bit shift amount.
+    pub imm: u8,
+}
+
+impl ImmShift {
+    /// Create an ImmShift from raw bits, if possible.
+    pub fn maybe_from_u64(val: u64) -> Option<ImmShift> {
+        if val > 0 && val < 64 {
+            Some(ImmShift { imm: val as u8 })
+        } else {
+            None
+        }
+    }
+}
+
+/// A shift operator for a register or immediate.
+#[derive(Clone, Copy, Debug)]
 pub enum ShiftOp {
     ASR,
     LSR,
@@ -116,10 +187,7 @@ impl ShiftOpAndAmt {
     /// Create a new shiftop-with-amount.
     pub fn new(op: ShiftOp, shift: usize) -> ShiftOpAndAmt {
         assert!(shift <= Self::MAX_SHIFT);
-        ShiftOpAndAmt {
-            op,
-            shift,
-        }
+        ShiftOpAndAmt { op, shift }
     }
 
     /// Get the shift op.
@@ -134,7 +202,7 @@ impl ShiftOpAndAmt {
 }
 
 /// An extend operator for a register.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ExtendOp {
     SXTB,
     SXTH,
@@ -176,10 +244,7 @@ impl ExtendOpAndAmt {
     /// Create a new extend-op-with-shift-amount.
     pub fn new(op: ExtendOp, amt: usize) -> ExtendOpAndAmt {
         assert!(amt <= Self::MAX_SHIFT);
-        ExtendOpAndAmt {
-            op,
-            amt,
-        }
+        ExtendOpAndAmt { op, amt }
     }
 
     /// Get the extend operator.
@@ -196,11 +261,11 @@ impl ExtendOpAndAmt {
 /// A memory argument to load/store, encapsulating the possible addressing modes.
 #[derive(Clone, Debug)]
 pub enum MemArg {
-    Base(RegRef),
-    BaseImm(RegRef, usize),
-    BaseOffsetShifted(RegRef, usize),
-    BaseImmPreIndexed(RegRef, usize),
-    BaseImmPostIndexed(RegRef, usize),
+    Base(MachReg),
+    BaseImm(MachReg, usize),
+    BaseOffsetShifted(MachReg, usize),
+    BaseImmPreIndexed(MachReg, usize),
+    BaseImmPostIndexed(MachReg, usize),
     Label(MemLabel),
 }
 

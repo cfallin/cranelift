@@ -48,6 +48,9 @@ extern crate alloc;
 #[macro_use]
 extern crate std;
 
+#[macro_use]
+extern crate bitflags;
+
 #[cfg(not(feature = "std"))]
 use hashbrown::{hash_map, HashMap, HashSet};
 #[cfg(feature = "std")]

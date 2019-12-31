@@ -104,9 +104,12 @@ pub enum MachReg {
 /// The mode in which a register is used or defined.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MachRegMode {
-    Use,  // Read by instruction.
-    Def,  // Written by instruction.
-    Modify,  // Both read and written by instruction.
+    /// Read (used) by the instruction.
+    Use,
+    /// Written (defined) by the instruction.
+    Def,
+    /// Both read and written by the instruction.
+    Modify,
 }
 
 /// A list of MachRegs used/def'd by a MachInst.

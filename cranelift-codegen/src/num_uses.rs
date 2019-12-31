@@ -62,12 +62,12 @@ impl NumUses {
     }
 
     /// Is an instruction used at all?
-    fn is_used(&self, i: Inst) -> bool {
+    pub fn is_used(&self, i: Inst) -> bool {
         self.use_count(i) > 0
     }
 
     /// Take the complete uses map, consuming this analysis result.
-    fn take_uses(self) -> SecondaryMap<Inst, u32> {
+    pub fn take_uses(self) -> SecondaryMap<Inst, u32> {
         self.uses
     }
 }

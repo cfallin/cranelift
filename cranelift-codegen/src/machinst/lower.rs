@@ -2,25 +2,32 @@
 //! instructions with virtual registers, with lookup tables as built by the backend. This is
 //! *almost* the final machine code, except for register allocation.
 
-use crate::machinst::{MachInst
-use crate::ir::{Inst, Function, InstructionData};
+use crate::entity::SecondaryMap;
+use crate::ir::{Ebb, Function, Inst, InstructionData, Type, Value};
 use crate::isa::registers::{RegClass, RegUnit};
-use crate::ir::entity::SecondaryMap;
+use crate::machinst::MachReg;
 use crate::num_uses::NumUses;
 
+use alloc::vec::Vec;
+use smallvec::SmallVec;
+
 /// A context that machine-specific lowering code can use to emit lowered instructions.
-pub trait LowerCtx<I: MachInst> {
+pub trait LowerCtx<I> {
     /// Get the instdata for a given IR instruction.
     fn data(&self, ir_inst: Inst) -> &InstructionData;
     /// Emit a machine instruction.
     fn emit(&mut self, mach_inst: I);
     /// Reduce the use-count of an IR instruction. Use this when, e.g., isel incorporates the
     /// computation of an input instruction directly.
-    fn dec_use(&self, ir_inst: Inst);
+    fn dec_use(&mut self, ir_inst: Inst);
     /// Get the `idx`th input to the given IR instruction as a virtual register.
     fn input(&self, ir_inst: Inst, idx: usize) -> MachReg;
     /// Get the `idx`th output of the given IR instruction as a virtual register.
     fn output(&self, ir_inst: Inst, idx: usize) -> MachReg;
+    /// Get the number of inputs to the given IR instruction.
+    fn num_inputs(&self, ir_inst: Inst) -> usize;
+    /// Get the number of outputs to the given IR instruction.
+    fn num_outputs(&self, ir_inst: Inst) -> usize;
     /// Get a new temp.
     fn tmp(&mut self, rc: RegClass) -> MachReg;
 }
@@ -29,15 +36,15 @@ pub trait LowerCtx<I: MachInst> {
 /// lowering.
 pub trait LowerBackend {
     /// The machine instruction type.
-    pub type MInst: MachInst;
+    type MInst;
 
     /// Lower a single instruction. Instructions are lowered in reverse order.
-    fn lower(&mut self, ctx: &mut dyn LowerCtx<Inst>, inst: Inst);
+    fn lower(&mut self, ctx: &mut dyn LowerCtx<Self::MInst>, inst: Inst, ctrl_typevar: Type);
 }
 
 /// Machine-independent lowering driver / machine-instruction container. Maintains a correspondence
-/// from original ir::Inst to MachInsts.
-pub struct Lower<'a, I: MachInst> {
+/// from original Inst to MachInsts.
+pub struct Lower<'a, I> {
     // The function to lower.
     f: &'a Function,
 
@@ -61,18 +68,18 @@ pub struct Lower<'a, I: MachInst> {
     cur_inst: Option<Inst>,
 }
 
-fn alloc_vreg(reg: &mut MachReg, next_vreg: &mut usize) {
-    match reg {
-        &mut MachReg::Undefined => {
+fn alloc_vreg(value_regs: &mut SecondaryMap<Value, MachReg>, value: Value, next_vreg: &mut usize) {
+    match value_regs[value] {
+        MachReg::Undefined => {
             let v = *next_vreg;
             *next_vreg += 1;
-            *reg = MachReg::Virtual(v);
+            value_regs[value] = MachReg::Virtual(v);
         }
         _ => {}
     }
 }
 
-impl<'a, I: MachInst> Lower<'a, I> {
+impl<'a, I> Lower<'a, I> {
     /// Prepare a new lowering context for the given IR function.
     pub fn new(f: &'a Function) -> Lower<'a, I> {
         let num_uses = NumUses::compute(f).take_uses();
@@ -81,14 +88,14 @@ impl<'a, I: MachInst> Lower<'a, I> {
         let mut value_regs = SecondaryMap::with_default(MachReg::Undefined);
         for ebb in f.layout.ebbs() {
             for param in f.dfg.ebb_params(ebb) {
-                alloc_vreg(&mut value_regs[param], &mut next_vreg);
+                alloc_vreg(&mut value_regs, *param, &mut next_vreg);
             }
             for inst in f.layout.ebb_insts(ebb) {
                 for arg in f.dfg.inst_args(inst) {
-                    alloc_reg(&mut value_regs[arg], &mut next_vreg);
+                    alloc_vreg(&mut value_regs, *arg, &mut next_vreg);
                 }
                 for result in f.dfg.inst_results(inst) {
-                    alloc_reg(&mut value_regs[result], &mut next_vreg);
+                    alloc_vreg(&mut value_regs, *result, &mut next_vreg);
                 }
             }
         }
@@ -99,31 +106,32 @@ impl<'a, I: MachInst> Lower<'a, I> {
             num_uses,
             inst_indices: SecondaryMap::with_default((0, 0)),
             value_regs,
-            next_vreg, 
+            next_vreg,
             cur_inst: None,
         }
     }
 
     /// Lower the function.
-    pub fn lower(&mut self, backend: &mut dyn LowerBackend<MInst=I>) {
+    pub fn lower(&mut self, backend: &mut dyn LowerBackend<MInst = I>) {
         // Work backward (postorder for EBBs, reverse through each EBB), skipping insns with
         // zero uses.
         let ebbs: SmallVec<[Ebb; 16]> = self.f.layout.ebbs().collect();
         for ebb in ebbs.into_iter().rev() {
             for inst in self.f.layout.ebb_insts(ebb).rev() {
                 if self.num_uses[inst] > 0 {
+                    let ty = self.f.dfg.ctrl_typevar(inst);
                     self.start_inst(inst);
-                    backend.lower(self, inst);
+                    backend.lower(self, inst, ty);
                     self.end_inst();
                 }
             }
         }
     }
 
-    fn start_inst(&mut self, inst: ir::Inst) {
+    fn start_inst(&mut self, inst: Inst) {
         self.cur_inst = Some(inst);
-        let l = self.insts.len();
-        self.inst_indices[inst]  = (l, l);
+        let l = self.insts.len() as u32;
+        self.inst_indices[inst] = (l, l);
     }
 
     fn end_inst(&mut self) {
@@ -131,10 +139,10 @@ impl<'a, I: MachInst> Lower<'a, I> {
     }
 }
 
-impl<'a, I: MachInst> LowerCtx<I> for Lower<'a, I> {
+impl<'a, I> LowerCtx<I> for Lower<'a, I> {
     /// Get the instdata for a given IR instruction.
     fn data(&self, ir_inst: Inst) -> &InstructionData {
-        self.f.dfg[ir_inst]
+        &self.f.dfg[ir_inst]
     }
 
     /// Emit a machine instruction.
@@ -142,12 +150,12 @@ impl<'a, I: MachInst> LowerCtx<I> for Lower<'a, I> {
         let cur_inst = self.cur_inst.clone().unwrap();
         self.insts.push(mach_inst);
         // Bump the end of the range.
-        self.inst_indices[cur_inst].1 = self.insts.len();
+        self.inst_indices[cur_inst].1 = self.insts.len() as u32;
     }
 
     /// Reduce the use-count of an IR instruction. Use this when, e.g., isel incorporates the
     /// computation of an input instruction directly.
-    fn dec_use(&self, ir_inst: Inst) {
+    fn dec_use(&mut self, ir_inst: Inst) {
         assert!(self.num_uses[ir_inst] > 0);
         self.num_uses[ir_inst] -= 1;
     }
@@ -170,4 +178,17 @@ impl<'a, I: MachInst> LowerCtx<I> for Lower<'a, I> {
         self.next_vreg += 1;
         MachReg::Virtual(v)
     }
+
+    /// Get the number of inputs for the given IR instruction.
+    fn num_inputs(&self, ir_inst: Inst) -> usize {
+        self.f.dfg.inst_args(ir_inst).len()
+    }
+
+    /// Get the number of outputs for the given IR instruction.
+    fn num_outputs(&self, ir_inst: Inst) -> usize {
+        self.f.dfg.inst_results(ir_inst).len()
+    }
 }
+
+// TODO: impl RegAllocView for Lower.
+// - iterate over insns (CFG? domtree?)
