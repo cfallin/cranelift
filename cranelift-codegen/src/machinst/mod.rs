@@ -99,6 +99,15 @@ pub enum MachReg {
     Virtual(usize),
     /// An allocated physical register.
     Allocated(RegUnit),
+    /// The zero register.
+    Zero,
+}
+
+impl MachReg {
+    /// Get the zero register.
+    pub fn zero() -> MachReg {
+        MachReg::Zero
+    }
 }
 
 /// The mode in which a register is used or defined.
@@ -121,7 +130,13 @@ pub trait MachInst {
     /// reference (use, def, modify).
     fn regs(&self) -> MachInstRegs;
     /// Map virtual registers to physical registers using the given virt->phys map.
-    fn map_virtregs(&self, locs: &MachLocations);
+    fn map_virtregs(&mut self, locs: &MachLocations);
+
+    /// If this is a simple move, return the (source, destination) tuple of registers.
+    fn is_move(&self) -> Option<(MachReg, MachReg)>;
+
+    /// Finalize this instruction: convert any virtual instruction into a real one.
+    fn finalize(&mut self);
 }
 
 /// A map from virtual registers to physical registers.

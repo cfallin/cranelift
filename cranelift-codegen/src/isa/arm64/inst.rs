@@ -1,10 +1,13 @@
 //! This module defines arm64-specific machine instruction types.
 
 use crate::ir::constant::{ConstantData, ConstantOffset};
-use crate::ir::{FuncRef, GlobalValue};
+use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
 use crate::isa::arm64::registers::*;
 use crate::isa::registers::RegClass;
 use crate::machinst::*;
+
+use smallvec::SmallVec;
+use std::mem;
 
 /// An ALU operation. This can be paired with several instruction formats below (see `Inst`) in any
 /// combination.
@@ -14,6 +17,8 @@ pub enum ALUOp {
     Add64,
     Sub32,
     Sub64,
+    Orr32,
+    Orr64,
 }
 
 /// Instruction formats.
@@ -70,7 +75,32 @@ pub enum Inst {
     Load { rd: MachReg, mem: MemArg },
     /// A store with a register source and a memory destination.
     Store { rd: MachReg, mem: MemArg },
-    // TODO: control flow ops.
+
+    /// An unconditional branch.
+    Jump { dest: Ebb },
+    /// A machine call instruction.
+    Call { dest: FuncRef },
+    /// A machine return instruction.
+    Ret {},
+    /// A machine indirect-branch instruction.
+    JumpInd { rn: MachReg },
+    /// A machine indirect-call instruction.
+    CallInd { rn: MachReg },
+
+    /// A conditional branch on zero.
+    CondBrZ { dest: Ebb, rt: MachReg },
+    /// A conditional branch on nonzero.
+    CondBrNZ { dest: Ebb, rt: MachReg },
+    /// A compare / conditional branch sequence.
+    CmpCondBr {
+        dest: Ebb,
+        rn: MachReg,
+        rm: MachReg,
+        cond: Cond,
+    },
+
+    /// Virtual instruction: a move for regalloc.
+    RegallocMove { dst: MachReg, src: MachReg },
 }
 
 /// A shifted immediate value in 'imm12' format: supports 12 bits, shifted left by 0 or 12 places.
@@ -262,11 +292,83 @@ impl ExtendOpAndAmt {
 #[derive(Clone, Debug)]
 pub enum MemArg {
     Base(MachReg),
-    BaseImm(MachReg, usize),
-    BaseOffsetShifted(MachReg, usize),
-    BaseImmPreIndexed(MachReg, usize),
-    BaseImmPostIndexed(MachReg, usize),
+    BaseSImm9(MachReg, SImm9),
+    BaseUImm12Scaled(MachReg, UImm12Scaled),
+    BasePlusReg(MachReg, MachReg),
+    BasePlusRegScaled(MachReg, MachReg, Type),
     Label(MemLabel),
+    // TODO: use pre-indexed and post-indexed modes
+}
+
+/// a 9-bit signed offset.
+#[derive(Clone, Copy, Debug)]
+pub struct SImm9 {
+    bits: i16,
+}
+
+impl SImm9 {
+    /// Create a signed 9-bit offset from a full-range value, if possible.
+    pub fn maybe_from_i64(value: i64) -> Option<SImm9> {
+        if value >= -256 && value <= 255 {
+            Some(SImm9 { bits: value as i16 })
+        } else {
+            None
+        }
+    }
+}
+
+/// an unsigned, scaled 12-bit offset.
+#[derive(Clone, Copy, Debug)]
+pub struct UImm12Scaled {
+    bits: u16,
+    scale_ty: Type, // multiplied by the size of this type
+}
+
+impl UImm12Scaled {
+    /// Create a UImm12Scaled from a raw offset and the known scale type, if possible.
+    pub fn maybe_from_i64(value: i64, scale_ty: Type) -> Option<UImm12Scaled> {
+        let scale = scale_ty.bytes() as i64;
+        assert!((scale & (scale - 1)) == 0); // must be a power of 2.
+        let limit = 4095 * scale;
+        if value >= 0 && value <= limit && (value & (scale - 1)) == 0 {
+            Some(UImm12Scaled {
+                bits: (value / scale) as u16,
+                scale_ty,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl MemArg {
+    /// Memory reference using an address in a register.
+    pub fn reg(reg: MachReg) -> MemArg {
+        MemArg::Base(reg)
+    }
+
+    /// Memory reference using an address in a register and an offset, if possible.
+    pub fn reg_maybe_offset(reg: MachReg, offset: i64, value_type: Type) -> Option<MemArg> {
+        if offset == 0 {
+            Some(MemArg::Base(reg))
+        } else if let Some(simm9) = SImm9::maybe_from_i64(offset) {
+            Some(MemArg::BaseSImm9(reg, simm9))
+        } else if let Some(uimm12s) = UImm12Scaled::maybe_from_i64(offset, value_type) {
+            Some(MemArg::BaseUImm12Scaled(reg, uimm12s))
+        } else {
+            None
+        }
+    }
+
+    /// Memory reference using the sum of two registers as an address.
+    pub fn reg_reg(reg1: MachReg, reg2: MachReg) -> MemArg {
+        MemArg::BasePlusReg(reg1, reg2)
+    }
+
+    /// Memory reference to a label: a global function or value, or data in the constant pool.
+    pub fn label(label: MemLabel) -> MemArg {
+        MemArg::Label(label)
+    }
 }
 
 /// A reference to some memory address.
@@ -280,8 +382,9 @@ pub enum MemLabel {
     GlobalValue(GlobalValue),
 }
 
+/// Condition for conditional branches.
 #[derive(Clone, Debug)]
-enum Cond {
+pub enum Cond {
     Eq,
     Ne,
     Hs,
@@ -324,4 +427,42 @@ pub fn u64_constant(bits: u64) -> ConstantData {
         ((bits >> 56) & 0xff) as u8,
     ];
     ConstantData::from(&data[..])
+}
+
+impl MachInst for Inst {
+    fn regs(&self) -> MachInstRegs {
+        // TODO: return all regs in the insn args (including the MemArg).
+        SmallVec::new()
+    }
+
+    fn map_virtregs(&mut self, locs: &MachLocations) {
+        // TODO.
+    }
+
+    fn is_move(&self) -> Option<(MachReg, MachReg)> {
+        match self {
+            &Inst::RegallocMove { dst, src } => Some((src.clone(), dst.clone())),
+            _ => None,
+        }
+    }
+
+    fn finalize(&mut self) {
+        match self {
+            &mut Inst::RegallocMove { dst, src } => {
+                let rd = dst.clone();
+                let rn = src.clone();
+                let rm = MachReg::zero();
+                mem::replace(
+                    self,
+                    Inst::AluRRR {
+                        alu_op: ALUOp::Add64,
+                        rd,
+                        rn,
+                        rm,
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
 }

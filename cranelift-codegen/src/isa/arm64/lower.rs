@@ -7,7 +7,7 @@
 
 use crate::ir::types::*;
 use crate::ir::Inst as IRInst;
-use crate::ir::{InstructionData, Opcode, Type};
+use crate::ir::{Ebb, InstructionData, Opcode, Type};
 use crate::machinst::lower::*;
 use crate::machinst::*;
 
@@ -111,6 +111,26 @@ fn maybe_immediate_value(inst_data: &InstructionData) -> Option<u64> {
     }
 }
 
+fn lower_input(
+    ctx: &mut dyn LowerCtx<Inst>,
+    ir_inst: IRInst,
+    arg_num: usize,
+    kinds: ResultKind,
+) -> ResultValue {
+    let reg = ctx.input(ir_inst, arg_num);
+
+    if let Some((input_inst, result_num)) = ctx.input_inst(ir_inst, arg_num) {
+        lower_value(ctx, input_inst, result_num, Some(reg.clone()), kinds)
+    } else {
+        // Not produced by an inst -- EBB param or similar instead. Just get the assigned register.
+        if kinds.contains(ResultKind::Reg) {
+            ResultValue::Reg(reg)
+        } else {
+            ResultValue::None
+        }
+    }
+}
+
 fn lower_value(
     ctx: &mut dyn LowerCtx<Inst>,
     ir_inst: IRInst,
@@ -125,21 +145,25 @@ fn lower_value(
     if let Some(imm64) = maybe_immediate_value(ctx.data(ir_inst)) {
         if kinds.contains(ResultKind::Imm12) {
             if let Some(i) = Imm12::maybe_from_u64(imm64) {
+                ctx.dec_use(ir_inst);
                 return ResultValue::Imm12(i);
             }
         }
         if kinds.contains(ResultKind::ImmLogic) {
             if let Some(i) = ImmLogic::maybe_from_u64(imm64) {
+                ctx.dec_use(ir_inst);
                 return ResultValue::ImmLogic(i);
             }
         }
         if kinds.contains(ResultKind::ImmShift) {
             if let Some(i) = ImmShift::maybe_from_u64(imm64) {
+                ctx.dec_use(ir_inst);
                 return ResultValue::ImmShift(i);
             }
         }
         if kinds.contains(ResultKind::ImmRegShift) {
             if imm64 <= ShiftOpAndAmt::MAX_SHIFT as u64 {
+                ctx.dec_use(ir_inst);
                 return ResultValue::ImmRegShift(imm64 as usize);
             }
         }
@@ -157,6 +181,7 @@ fn lower_value(
                     let out_reg = lower_value(ctx, lhs_inst, lhs_result, into, ResultKind::Reg)
                         .as_reg()
                         .unwrap();
+                    ctx.dec_use(ir_inst);
                     return ResultValue::RegShift(out_reg, ShiftOpAndAmt::new(ShiftOp::LSL, amt));
                 }
             }
@@ -186,6 +211,7 @@ fn lower_value(
                 let out_reg = lower_value(ctx, inner_inst, inner_result, into, ResultKind::Reg)
                     .as_reg()
                     .unwrap();
+                ctx.dec_use(ir_inst);
                 return ResultValue::RegExtend(out_reg, ExtendOpAndAmt::new(extendop, 0));
             }
         }
@@ -202,22 +228,165 @@ fn lower_value(
     ResultValue::None
 }
 
+fn choose_32_64(ty: Type, op32: ALUOp, op64: ALUOp) -> ALUOp {
+    if ty == I32 {
+        op32
+    } else if ty == I64 {
+        op64
+    } else {
+        panic!("type {} is not I32 or I64", ty);
+    }
+}
+
 fn lower_value_reg(
     ctx: &mut dyn LowerCtx<Inst>,
     ir_inst: IRInst,
     result_num: usize,
     dest_reg: MachReg,
 ) {
-    // TODO
-    unimplemented!()
+    // Split off secondary value cases.
+    if result_num > 0 {
+        lower_secondary_value_reg(ctx, ir_inst, result_num, dest_reg);
+        return;
+    }
+
+    let op = ctx.data(ir_inst).opcode();
+    let ty = ctx.output_ty(ir_inst, result_num);
+
+    // Handle immediates.
+    if let Some(data) = maybe_immediate_value(ctx.data(ir_inst)) {
+        if let Some(imm12) = Imm12::maybe_from_u64(data) {
+            ctx.emit(Inst::AluRRImm12 {
+                alu_op: choose_32_64(ty, ALUOp::Add32, ALUOp::Add64),
+                rd: dest_reg,
+                rn: MachReg::zero(),
+                imm12,
+            });
+        } else if let Some(imml) = ImmLogic::maybe_from_u64(data) {
+            ctx.emit(Inst::AluRRImmLogic {
+                alu_op: choose_32_64(ty, ALUOp::Orr32, ALUOp::Orr64),
+                rd: dest_reg,
+                rn: MachReg::zero(),
+                imml,
+            });
+        } else {
+            let const_data = u64_constant(data);
+            ctx.emit(Inst::Load {
+                rd: dest_reg,
+                mem: MemArg::label(MemLabel::ConstantData(const_data)),
+            });
+        }
+        return;
+    }
+
+    match op {
+        Opcode::Iadd => {
+            let rn = lower_input(ctx, ir_inst, 0, ResultKind::Reg)
+                .as_reg()
+                .unwrap();
+            let rm = lower_input(ctx, ir_inst, 1, ResultKind::Reg | ResultKind::Imm12);
+            let alu_op = choose_32_64(ty, ALUOp::Add32, ALUOp::Add64);
+            let inst = match rm {
+                ResultValue::Reg(rm) => Inst::AluRRR {
+                    alu_op,
+                    rd: dest_reg,
+                    rn,
+                    rm,
+                },
+                ResultValue::Imm12(imm12) => Inst::AluRRImm12 {
+                    alu_op,
+                    rd: dest_reg,
+                    rn,
+                    imm12,
+                },
+                _ => panic!("Unexpected result kind"),
+            };
+            ctx.emit(inst);
+        }
+        Opcode::Isub => {
+            let rn = lower_input(ctx, ir_inst, 0, ResultKind::Reg)
+                .as_reg()
+                .unwrap();
+            let rm = lower_input(ctx, ir_inst, 1, ResultKind::Reg | ResultKind::Imm12);
+            let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
+            let inst = match rm {
+                ResultValue::Reg(rm) => Inst::AluRRR {
+                    alu_op,
+                    rd: dest_reg,
+                    rn,
+                    rm,
+                },
+                ResultValue::Imm12(imm12) => Inst::AluRRImm12 {
+                    alu_op,
+                    rd: dest_reg,
+                    rn,
+                    imm12,
+                },
+                _ => panic!("Unexpected result kind"),
+            };
+            ctx.emit(inst);
+        }
+        Opcode::Jump => {
+            lower_ebb_param_moves(ctx, ir_inst);
+            let dest = branch_target(ctx.data(ir_inst)).unwrap();
+            ctx.emit(Inst::Jump { dest });
+        }
+        Opcode::Fallthrough => {
+            lower_ebb_param_moves(ctx, ir_inst);
+        }
+        Opcode::Brz => {
+            let rt = lower_input(ctx, ir_inst, 0, ResultKind::Reg)
+                .as_reg()
+                .unwrap();
+            let dest = branch_target(ctx.data(ir_inst)).unwrap();
+            ctx.emit(Inst::CondBrZ { dest, rt });
+        }
+        Opcode::Brnz => {
+            let rt = lower_input(ctx, ir_inst, 0, ResultKind::Reg)
+                .as_reg()
+                .unwrap();
+            let dest = branch_target(ctx.data(ir_inst)).unwrap();
+            ctx.emit(Inst::CondBrNZ { dest, rt });
+        }
+        // TODO: BrIcmp, Brif/icmp, Brff/icmp, jump tables
+        _ => unimplemented!(),
+    }
 }
 
-fn lower_address(ctx: &mut dyn LowerCtx<Inst>, ir_inst: IRInst, into: Option<MachReg>) -> MemArg {
-    // TODO: allow for constant offsets and two-register forms.
-    let result = lower_value(ctx, ir_inst, 0, into, ResultKind::Reg)
-        .as_reg()
-        .unwrap();
-    MemArg::Base(result)
+fn branch_target(data: &InstructionData) -> Option<Ebb> {
+    match data {
+        &InstructionData::BranchIcmp { destination, .. }
+        | &InstructionData::Branch { destination, .. }
+        | &InstructionData::BranchInt { destination, .. }
+        | &InstructionData::Jump { destination, .. }
+        | &InstructionData::BranchTable { destination, .. }
+        | &InstructionData::BranchFloat { destination, .. } => Some(destination),
+        _ => {
+            assert!(!data.opcode().is_branch());
+            None
+        }
+    }
+}
+
+fn lower_ebb_param_moves(ctx: &mut dyn LowerCtx<Inst>, ir_inst: IRInst) {
+    assert!(ctx.data(ir_inst).opcode().is_branch());
+    let target = branch_target(ctx.data(ir_inst)).unwrap();
+
+    for i in 0..ctx.num_inputs(ir_inst) {
+        let src = ctx.input(ir_inst, i);
+        let dst = ctx.ebb_param(target, i);
+        ctx.emit(Inst::RegallocMove { dst, src });
+    }
+}
+
+fn lower_secondary_value_reg(
+    ctx: &mut dyn LowerCtx<Inst>,
+    ir_inst: IRInst,
+    result_num: usize,
+    dest_reg: MachReg,
+) {
+    assert!(result_num > 0);
+    unimplemented!()
 }
 
 impl LowerBackend for Arm64LowerBackend {

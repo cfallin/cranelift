@@ -7,8 +7,12 @@ TODO:
   use/def interface and spill/fill insertion.
 
 - ABI integration.
+  - register constraints at call to force parameters into registers and return
+    value out of register?
 
 - Prologue/epilogue integration.
+  - standard FP-save boilerplate
+  - stackframe setup: spill slots + used callee-saves
 
 - Fill out the patterns.
   - definitions of insns in meta/src/shared/instructions.rs.

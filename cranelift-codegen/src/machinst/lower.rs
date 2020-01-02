@@ -39,6 +39,8 @@ pub trait LowerCtx<I> {
     fn output_ty(&self, ir_inst: Inst, idx: usize) -> Type;
     /// Get a new temp.
     fn tmp(&mut self, rc: RegClass) -> MachReg;
+    /// Get the register for an EBB param.
+    fn ebb_param(&self, ebb: Ebb, idx: usize) -> MachReg;
 }
 
 /// A backend's lowering logic, to be driven by the machine-independent portion of instruction
@@ -220,6 +222,12 @@ impl<'a, I> LowerCtx<I> for Lower<'a, I> {
     /// Get the type for an instruction's output.
     fn output_ty(&self, ir_inst: Inst, idx: usize) -> Type {
         self.f.dfg.value_type(self.f.dfg.inst_results(ir_inst)[idx])
+    }
+
+    /// Get the register for an EBB param.
+    fn ebb_param(&self, ebb: Ebb, idx: usize) -> MachReg {
+        let val = self.f.dfg.ebb_params(ebb)[idx];
+        self.value_regs[val]
     }
 }
 
