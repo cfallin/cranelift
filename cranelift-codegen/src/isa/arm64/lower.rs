@@ -30,18 +30,6 @@ fn is_alu_op(op: Opcode, ctrl_typevar: Type) -> bool {
     op_to_aluop(op, ctrl_typevar).is_some()
 }
 
-fn is_cflow_op(op: Opcode) -> bool {
-    false
-}
-
-fn lower_cflow(ctx: &mut dyn LowerCtx<Inst>, ir_inst: IRInst) {
-    unimplemented!()
-}
-
-fn lower_store(ctx: &mut dyn LowerCtx<Inst>, ir_inst: IRInst) {
-    unimplemented!()
-}
-
 bitflags! {
     /// The possible kind of result of an integer operation. It may be some type of immediate, or a
     /// register processed through a register shift or extend operator, or simply a register.
@@ -271,7 +259,7 @@ fn lower_value_reg(
             });
         } else {
             let const_data = u64_constant(data);
-            ctx.emit(Inst::Load {
+            ctx.emit(Inst::ULoad64 {
                 rd: dest_reg,
                 mem: MemArg::label(MemLabel::ConstantData(const_data)),
             });
@@ -326,6 +314,177 @@ fn lower_value_reg(
             };
             ctx.emit(inst);
         }
+
+        Opcode::Load
+        | Opcode::Uload8
+        | Opcode::Sload8
+        | Opcode::Uload16
+        | Opcode::Sload16
+        | Opcode::Uload32
+        | Opcode::Sload32
+        | Opcode::LoadComplex
+        | Opcode::Uload8Complex
+        | Opcode::Sload8Complex
+        | Opcode::Uload16Complex
+        | Opcode::Sload16Complex
+        | Opcode::Uload32Complex
+        | Opcode::Sload32Complex => {
+            let off = ldst_offset(ctx.data(ir_inst)).unwrap();
+            let addr = lower_input(ctx, ir_inst, 0, ResultKind::Reg)
+                .as_reg()
+                .unwrap();
+            let is_complex = match op {
+                Opcode::LoadComplex
+                | Opcode::Uload8Complex
+                | Opcode::Sload8Complex
+                | Opcode::Uload16Complex
+                | Opcode::Sload16Complex
+                | Opcode::Uload32Complex
+                | Opcode::Sload32Complex => true,
+                _ => false,
+            };
+            let op_size = match op {
+                Opcode::Sload8 | Opcode::Uload8 => I8,
+                Opcode::Sload16 | Opcode::Uload16 => I16,
+                Opcode::Sload32 | Opcode::Uload32 => I32,
+                Opcode::Load => I64,
+                _ => unreachable!(),
+            };
+
+            // TODO: handle two-register form. Gather together all register and constant offsets,
+            // and match up to two regs or one reg + supported immediate.
+
+            let addr = if is_complex {
+                let mut addr = addr;
+                for i in 1..ctx.num_inputs(ir_inst) {
+                    let addend = lower_input(ctx, ir_inst, i, ResultKind::Reg)
+                        .as_reg()
+                        .unwrap();
+                    let sum = ctx.tmp(GPR);
+                    ctx.emit(Inst::AluRRR {
+                        alu_op: ALUOp::Add64,
+                        rd: sum.clone(),
+                        rn: addr,
+                        rm: addend,
+                    });
+                    addr = sum;
+                }
+                addr
+            } else {
+                addr
+            };
+
+            let memarg =
+                if let Some(memarg) = MemArg::reg_maybe_offset(addr.clone(), off as i64, op_size) {
+                    memarg
+                } else {
+                    let offset_reg = ctx.tmp(GPR);
+                    let addr_reg = ctx.tmp(GPR);
+                    let const_data = u64_constant(off as u64);
+                    ctx.emit(Inst::ULoad64 {
+                        rd: offset_reg.clone(),
+                        mem: MemArg::label(MemLabel::ConstantData(const_data)),
+                    });
+                    ctx.emit(Inst::AluRRR {
+                        alu_op: ALUOp::Add64,
+                        rd: addr_reg.clone(),
+                        rn: addr,
+                        rm: offset_reg,
+                    });
+                    MemArg::reg(addr_reg)
+                };
+
+            let inst = match op {
+                Opcode::Uload8 | Opcode::Uload8Complex => Inst::ULoad8 {
+                    rd: dest_reg,
+                    mem: memarg,
+                },
+                Opcode::Sload8 | Opcode::Sload8Complex => Inst::SLoad8 {
+                    rd: dest_reg,
+                    mem: memarg,
+                },
+                Opcode::Uload16 | Opcode::Uload16Complex => Inst::ULoad16 {
+                    rd: dest_reg,
+                    mem: memarg,
+                },
+                Opcode::Sload16 | Opcode::Sload16Complex => Inst::SLoad16 {
+                    rd: dest_reg,
+                    mem: memarg,
+                },
+                Opcode::Uload32 | Opcode::Uload32Complex => Inst::ULoad32 {
+                    rd: dest_reg,
+                    mem: memarg,
+                },
+                Opcode::Sload32 | Opcode::Sload32Complex => Inst::SLoad32 {
+                    rd: dest_reg,
+                    mem: memarg,
+                },
+                Opcode::Load | Opcode::LoadComplex => Inst::ULoad64 {
+                    rd: dest_reg,
+                    mem: memarg,
+                },
+                _ => unreachable!(),
+            };
+            ctx.emit(inst);
+        }
+
+        // TODO: cmp
+        // TODO: alu ops
+        _ => unimplemented!(),
+    }
+}
+
+fn branch_target(data: &InstructionData) -> Option<Ebb> {
+    match data {
+        &InstructionData::BranchIcmp { destination, .. }
+        | &InstructionData::Branch { destination, .. }
+        | &InstructionData::BranchInt { destination, .. }
+        | &InstructionData::Jump { destination, .. }
+        | &InstructionData::BranchTable { destination, .. }
+        | &InstructionData::BranchFloat { destination, .. } => Some(destination),
+        _ => {
+            assert!(!data.opcode().is_branch());
+            None
+        }
+    }
+}
+
+fn ldst_offset(data: &InstructionData) -> Option<i32> {
+    match data {
+        &InstructionData::Load { offset, .. }
+        | &InstructionData::StackLoad { offset, .. }
+        | &InstructionData::LoadComplex { offset, .. }
+        | &InstructionData::Store { offset, .. }
+        | &InstructionData::StackStore { offset, .. }
+        | &InstructionData::StoreComplex { offset, .. } => Some(offset.into()),
+        _ => None,
+    }
+}
+
+fn lower_ebb_param_moves(ctx: &mut dyn LowerCtx<Inst>, ir_inst: IRInst) {
+    assert!(ctx.data(ir_inst).opcode().is_branch());
+    let target = branch_target(ctx.data(ir_inst)).unwrap();
+
+    for i in 0..ctx.num_inputs(ir_inst) {
+        let src = ctx.input(ir_inst, i);
+        let dst = ctx.ebb_param(target, i);
+        ctx.emit(Inst::RegallocMove { dst, src });
+    }
+}
+
+fn lower_secondary_value_reg(
+    ctx: &mut dyn LowerCtx<Inst>,
+    ir_inst: IRInst,
+    result_num: usize,
+    dest_reg: MachReg,
+) {
+    assert!(result_num > 0);
+    unimplemented!()
+}
+
+fn lower_cflow(ctx: &mut dyn LowerCtx<Inst>, ir_inst: IRInst) {
+    let op = ctx.data(ir_inst).opcode();
+    match op {
         Opcode::Jump => {
             lower_ebb_param_moves(ctx, ir_inst);
             let dest = branch_target(ctx.data(ir_inst)).unwrap();
@@ -353,40 +512,11 @@ fn lower_value_reg(
     }
 }
 
-fn branch_target(data: &InstructionData) -> Option<Ebb> {
-    match data {
-        &InstructionData::BranchIcmp { destination, .. }
-        | &InstructionData::Branch { destination, .. }
-        | &InstructionData::BranchInt { destination, .. }
-        | &InstructionData::Jump { destination, .. }
-        | &InstructionData::BranchTable { destination, .. }
-        | &InstructionData::BranchFloat { destination, .. } => Some(destination),
-        _ => {
-            assert!(!data.opcode().is_branch());
-            None
-        }
+fn lower_store(ctx: &mut dyn LowerCtx<Inst>, ir_inst: IRInst) {
+    let op = ctx.data(ir_inst).opcode();
+    match op {
+        _ => unimplemented!(),
     }
-}
-
-fn lower_ebb_param_moves(ctx: &mut dyn LowerCtx<Inst>, ir_inst: IRInst) {
-    assert!(ctx.data(ir_inst).opcode().is_branch());
-    let target = branch_target(ctx.data(ir_inst)).unwrap();
-
-    for i in 0..ctx.num_inputs(ir_inst) {
-        let src = ctx.input(ir_inst, i);
-        let dst = ctx.ebb_param(target, i);
-        ctx.emit(Inst::RegallocMove { dst, src });
-    }
-}
-
-fn lower_secondary_value_reg(
-    ctx: &mut dyn LowerCtx<Inst>,
-    ir_inst: IRInst,
-    result_num: usize,
-    dest_reg: MachReg,
-) {
-    assert!(result_num > 0);
-    unimplemented!()
 }
 
 impl LowerBackend for Arm64LowerBackend {

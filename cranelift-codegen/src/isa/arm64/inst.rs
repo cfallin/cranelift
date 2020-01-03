@@ -71,10 +71,29 @@ pub enum Inst {
         rm: MachReg,
         extendop: ExtendOpAndAmt,
     },
-    /// A load with a register destination and a memory source.
-    Load { rd: MachReg, mem: MemArg },
-    /// A store with a register source and a memory destination.
-    Store { rd: MachReg, mem: MemArg },
+    /// An unsigned (zero-extending) 8-bit load.
+    ULoad8 { rd: MachReg, mem: MemArg },
+    /// A signed (sign-extending) 8-bit load.
+    SLoad8 { rd: MachReg, mem: MemArg },
+    /// An unsigned (zero-extending) 16-bit load.
+    ULoad16 { rd: MachReg, mem: MemArg },
+    /// A signed (sign-extending) 16-bit load.
+    SLoad16 { rd: MachReg, mem: MemArg },
+    /// An unsigned (zero-extending) 32-bit load.
+    ULoad32 { rd: MachReg, mem: MemArg },
+    /// A signed (sign-extending) 32-bit load.
+    SLoad32 { rd: MachReg, mem: MemArg },
+    /// A 64-bit load.
+    ULoad64 { rd: MachReg, mem: MemArg },
+
+    /// An 8-bit store.
+    Store8 { rd: MachReg, mem: MemArg },
+    /// A 16-bit store.
+    Store16 { rd: MachReg, mem: MemArg },
+    /// A 32-bit store.
+    Store32 { rd: MachReg, mem: MemArg },
+    /// A 64-bit store.
+    Store64 { rd: MachReg, mem: MemArg },
 
     /// An unconditional branch.
     Jump { dest: Ebb },
