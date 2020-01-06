@@ -388,10 +388,18 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
         | Opcode::Sload32Complex => {
             let off = ldst_offset(ctx.data(insn)).unwrap();
             let elem_ty = match op {
-                Opcode::Sload8 | Opcode::Uload8 => I8,
-                Opcode::Sload16 | Opcode::Uload16 => I16,
-                Opcode::Sload32 | Opcode::Uload32 => I32,
-                Opcode::Load => I64,
+                Opcode::Sload8 | Opcode::Uload8 | Opcode::Sload8Complex | Opcode::Uload8Complex => {
+                    I8
+                }
+                Opcode::Sload16
+                | Opcode::Uload16
+                | Opcode::Sload16Complex
+                | Opcode::Uload16Complex => I16,
+                Opcode::Sload32
+                | Opcode::Uload32
+                | Opcode::Sload32Complex
+                | Opcode::Uload32Complex => I32,
+                Opcode::Load | Opcode::LoadComplex => I64,
                 _ => unreachable!(),
             };
 
@@ -406,6 +414,35 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
                 Opcode::Uload32 | Opcode::Uload32Complex => Inst::ULoad32 { rd, mem },
                 Opcode::Sload32 | Opcode::Sload32Complex => Inst::SLoad32 { rd, mem },
                 Opcode::Load | Opcode::LoadComplex => Inst::ULoad64 { rd, mem },
+                _ => unreachable!(),
+            });
+        }
+
+        Opcode::Store
+        | Opcode::Istore8
+        | Opcode::Istore16
+        | Opcode::Istore32
+        | Opcode::StoreComplex
+        | Opcode::Istore8Complex
+        | Opcode::Istore16Complex
+        | Opcode::Istore32Complex => {
+            let off = ldst_offset(ctx.data(insn)).unwrap();
+            let elem_ty = match op {
+                Opcode::Istore8 | Opcode::Istore8Complex => I8,
+                Opcode::Istore16 | Opcode::Istore16Complex => I16,
+                Opcode::Istore32 | Opcode::Istore32Complex => I32,
+                Opcode::Store | Opcode::StoreComplex => I64,
+                _ => unreachable!(),
+            };
+
+            let mem = lower_address(ctx, elem_ty, &inputs[1..], off);
+            let rd = input_to_reg(ctx, inputs[0]);
+
+            ctx.emit(match op {
+                Opcode::Istore8 | Opcode::Istore8Complex => Inst::Store8 { rd, mem },
+                Opcode::Istore16 | Opcode::Istore16Complex => Inst::Store16 { rd, mem },
+                Opcode::Istore32 | Opcode::Istore32Complex => Inst::Store32 { rd, mem },
+                Opcode::Store | Opcode::StoreComplex => Inst::Store64 { rd, mem },
                 _ => unreachable!(),
             });
         }
