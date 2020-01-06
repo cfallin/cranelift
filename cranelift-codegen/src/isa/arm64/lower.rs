@@ -1,10 +1,5 @@
 //! Lowering rules for ARM64.
 
-// TODO: handle multiple-output instructions properly:
-// - add/sub: carry/borrow variants
-// - isplit, vsplit
-// - call with multiple results
-
 use crate::ir::types::*;
 use crate::ir::Inst as IRInst;
 use crate::ir::{Ebb, InstructionData, Opcode, Type};
@@ -302,6 +297,9 @@ fn alu_inst_imm12(op: ALUOp, rd: MachReg, rn: MachReg, rm: ResultRSEImm12) -> In
 
 /// Lower the address of a load or store.
 fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset: i32) -> MemArg {
+    // TODO: support base_reg + scale * index_reg. For this, we would need to pattern-match shl or
+    // mul instructions (Load/StoreComplex don't include scale factors).
+
     // Handle one reg and offset that fits in immediate, if possible.
     if addends.len() == 1 {
         let reg = input_to_reg(ctx, addends[0]);
@@ -320,12 +318,10 @@ fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset:
     // Otherwise, generate add instructions.
     let addr = ctx.tmp(GPR);
 
-    let const_data = u64_constant(offset as u64);
-    ctx.emit(Inst::ULoad64 {
-        rd: addr.clone(),
-        mem: MemArg::label(MemLabel::ConstantData(const_data)),
-    });
+    // Get the const into a reg.
+    lower_constant(ctx, addr.clone(), offset as u64);
 
+    // Add each addend to the address.
     for addend in addends {
         let reg = input_to_reg(ctx, *addend);
         ctx.emit(Inst::AluRRR {
@@ -337,6 +333,36 @@ fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset:
     }
 
     MemArg::Base(addr)
+}
+
+fn lower_constant<'a>(ctx: Ctx<'a>, rd: MachReg, value: u64) {
+    if let Some(imm12) = Imm12::maybe_from_u64(value) {
+        // 12-bit immediate (shifted by 0 or 12 bits) in ADDI using zero register
+        ctx.emit(Inst::AluRRImm12 {
+            alu_op: ALUOp::Add64,
+            rd,
+            rn: MachReg::zero(),
+            imm12,
+        });
+    } else if let Some(imml) = ImmLogic::maybe_from_u64(value) {
+        // Weird logical-instruction immediate in ORI using zero register
+        ctx.emit(Inst::AluRRImmLogic {
+            alu_op: ALUOp::Orr64,
+            rd,
+            rn: MachReg::zero(),
+            imml,
+        });
+    } else if let Some(imm) = MovZConst::maybe_from_u64(value) {
+        // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVZ
+        ctx.emit(Inst::MovZ { rd, imm });
+    } else {
+        // 64-bit constant in constant pool
+        let const_data = u64_constant(value);
+        ctx.emit(Inst::ULoad64 {
+            rd,
+            mem: MemArg::label(MemLabel::ConstantData(const_data)),
+        });
+    }
 }
 
 /// Actually codegen an instruction's results into registers.
@@ -355,6 +381,11 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
     };
 
     match op {
+        Opcode::Iconst | Opcode::Bconst | Opcode::F32const | Opcode::F64const => {
+            let value = output_to_const(ctx, outputs[0]).unwrap();
+            let rd = output_to_reg(ctx, outputs[0]);
+            lower_constant(ctx, rd, value);
+        }
         Opcode::Iadd => {
             let rd = output_to_reg(ctx, outputs[0]);
             let rn = input_to_reg(ctx, inputs[0]);

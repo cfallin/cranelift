@@ -95,6 +95,9 @@ pub enum Inst {
     /// A 64-bit store.
     Store64 { rd: MachReg, mem: MemArg },
 
+    /// A MOVZ with a 16-bit immediate.
+    MovZ { rd: MachReg, imm: MovZConst },
+
     /// An unconditional branch.
     Jump { dest: Ebb },
     /// A machine call instruction.
@@ -342,6 +345,37 @@ impl UImm12Scaled {
         } else {
             None
         }
+    }
+}
+
+/// A 16-bit immediate for a MOVZ instruction, with a {0,16,32,48}-bit shift.
+#[derive(Clone, Copy, Debug)]
+pub struct MovZConst {
+    bits: u16,
+    shift: u8,  // shifted 16*shift bits to the left.
+}
+
+impl MovZConst {
+    /// Construct a MovZConst from an arbitrary 64-bit constant if possible.
+    pub fn maybe_from_u64(value: u64) -> Option<MovZConst> {
+        let mask0 = 0x0000_0000_0000_ffffu64;
+        let mask1 = 0x0000_0000_ffff_0000u64;
+        let mask2 = 0x0000_ffff_0000_0000u64;
+        let mask3 = 0xffff_0000_0000_0000u64;
+
+        if value == (value & mask0) {
+            return Some(MovZConst { bits: (value & mask0) as u16, shift: 0 });
+        }
+        if value == (value & mask1) {
+            return Some(MovZConst { bits: ((value >> 16) & mask0) as u16, shift: 1 });
+        }
+        if value == (value & mask2) {
+            return Some(MovZConst { bits: ((value >> 32) & mask0) as u16, shift: 2 });
+        }
+        if value == (value & mask3) {
+            return Some(MovZConst { bits: ((value >> 48) & mask0) as u16, shift: 3 });
+        }
+        None
     }
 }
 
