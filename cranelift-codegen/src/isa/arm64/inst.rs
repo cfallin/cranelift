@@ -69,7 +69,7 @@ pub enum Inst {
         rd: MachReg,
         rn: MachReg,
         rm: MachReg,
-        extendop: ExtendOpAndAmt,
+        extendop: ExtendOp,
     },
     /// An unsigned (zero-extending) 8-bit load.
     ULoad8 { rd: MachReg, mem: MemArg },
@@ -226,17 +226,30 @@ impl ShiftOp {
 #[derive(Clone, Debug)]
 pub struct ShiftOpAndAmt {
     op: ShiftOp,
-    shift: usize,
+    shift: ShiftOpShiftImm,
+}
+
+/// A shift operator amount.
+#[derive(Clone, Copy, Debug)]
+pub struct ShiftOpShiftImm(u8);
+
+impl ShiftOpShiftImm {
+  /// Maximum shift for shifted-register operands.
+  pub const MAX_SHIFT: u64 = 7;
+
+    /// Create a new shiftop shift amount, if possible.
+  pub fn maybe_from_shift(shift: u64) -> Option<ShiftOpShiftImm> {
+      if shift <= Self::MAX_SHIFT {
+        Some(ShiftOpShiftImm(shift as u8))
+      } else {
+        None
+      }
+  }
 }
 
 impl ShiftOpAndAmt {
-    /// Maximum shift for shifted-register operands.
-    pub const MAX_SHIFT: usize = 7;
-
-    /// Create a new shiftop-with-amount.
-    pub fn new(op: ShiftOp, shift: usize) -> ShiftOpAndAmt {
-        assert!(shift <= Self::MAX_SHIFT);
-        ShiftOpAndAmt { op, shift }
+    pub fn new(op: ShiftOp, shift: ShiftOpShiftImm) -> ShiftOpAndAmt {
+      ShiftOpAndAmt { op, shift }
     }
 
     /// Get the shift op.
@@ -245,7 +258,7 @@ impl ShiftOpAndAmt {
     }
 
     /// Get the shift amount.
-    pub fn amt(&self) -> usize {
+    pub fn amt(&self) -> ShiftOpShiftImm {
         self.shift
     }
 }
@@ -276,34 +289,6 @@ impl ExtendOp {
             &ExtendOp::SXTW => 0b110,
             &ExtendOp::SXTX => 0b111,
         }
-    }
-}
-
-/// A register-extend operation paired with a shift amount, as accepted by many ALU instructions.
-#[derive(Clone, Debug)]
-pub struct ExtendOpAndAmt {
-    op: ExtendOp,
-    amt: usize,
-}
-
-impl ExtendOpAndAmt {
-    /// Maximum shift value.
-    pub const MAX_SHIFT: usize = 63;
-
-    /// Create a new extend-op-with-shift-amount.
-    pub fn new(op: ExtendOp, amt: usize) -> ExtendOpAndAmt {
-        assert!(amt <= Self::MAX_SHIFT);
-        ExtendOpAndAmt { op, amt }
-    }
-
-    /// Get the extend operator.
-    pub fn op(&self) -> ExtendOp {
-        self.op.clone()
-    }
-
-    /// Get the shift amount.
-    pub fn amt(&self) -> usize {
-        self.amt
     }
 }
 
