@@ -121,13 +121,13 @@ pub trait MachInst {
 }
 
 /// A map from virtual registers to physical registers.
-pub type MachLocations = Vec<RegUnit>;  // Indexed by virtual register number.
+pub type MachLocations = Vec<RegUnit>; // Indexed by virtual register number.
 
 /// A trait describing the ability to encode a MachInst into binary machine code.
-pub trait MachInstEncode<CS: CodeSink>: MachInst {
+pub trait MachInstEmit<CS: CodeSink> {
     /// Get the size of the instruction.
     fn size(&self) -> usize;
 
-    /// Encode the instruction.
-    fn encode(&self, cs: &mut CS);
+    /// Emit the instruction.
+    fn emit(&self, cs: &mut CS);
 }

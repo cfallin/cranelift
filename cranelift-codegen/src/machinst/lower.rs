@@ -6,11 +6,14 @@ use crate::binemit::CodeSink;
 use crate::entity::SecondaryMap;
 use crate::ir::{Ebb, Function, Inst, InstructionData, Type, Value, ValueDef};
 use crate::isa::registers::{RegClass, RegUnit};
-use crate::machinst::{MachInstRegConstraints, MachInstRegs, MachLocations, MachReg};
+use crate::machinst::{
+    MachInst, MachInstEmit, MachInstRegConstraints, MachInstRegs, MachLocations, MachReg,
+};
 use crate::num_uses::NumUses;
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;
+use std::ops::Range;
 
 /// A context that machine-specific lowering code can use to emit lowered instructions. This is the
 /// view of the machine-independent per-function lowering context that is seen by the machine
@@ -48,7 +51,7 @@ pub trait LowerCtx<I> {
 
 /// A context that the rest of the compiler can use to interface with the lowered code. THis is the
 /// view of the lowering context seen by the register allocator and code emitter.
-pub trait Lowered {
+pub trait Lowered<CS: CodeSink> {
     /// An index of (reference to) a single lowered machine instruction.
     type LoweredInsn: Copy + std::fmt::Debug + Eq;
 
@@ -73,10 +76,10 @@ pub trait Lowered {
     fn is_move(&self, machinst: Self::LoweredInsn) -> Option<(MachReg, MachReg)>;
 
     /// What is the size of a machine instruction?
-    fn code_size(&self, machinst: Self::LoweredInsn) -> usize;
+    fn size(&self, machinst: Self::LoweredInsn) -> usize;
 
     /// Emit code for a machine instruction.
-    fn emit(&self, machinst: Self::LoweredInsn, sink: &mut dyn CodeSink);
+    fn emit(&self, machinst: Self::LoweredInsn, sink: &mut CS);
 }
 
 /// A machine backend.
@@ -266,5 +269,53 @@ impl<'a, I> LowerCtx<I> for Lower<'a, I> {
     }
 }
 
-// TODO: impl RegAllocView for Lower.
-// - iterate over insns (CFG? domtree?)
+impl<'a, I, CS> Lowered<CS> for Lower<'a, I>
+where
+    CS: CodeSink,
+    I: MachInst + MachInstEmit<CS>,
+{
+    // We refer to machine instructions within a single IR instruction's sequence with a simple
+    // index.
+    type LoweredInsn = u32;
+    type LoweredInsnRange = Range<u32>;
+
+    /// Get the machine instructions for a given IR instruction.
+    fn insns(&self, ir_inst: Inst) -> Range<u32> {
+        let (start, end) = self.inst_indices[ir_inst];
+        (start..end)
+    }
+
+    /// Get the registers in a given machine instruction. The returned type is a vector of
+    /// (MachReg, MachRegMode) tuples.
+    fn regs(&self, machinst: Self::LoweredInsn) -> MachInstRegs {
+        self.insts[machinst as usize].regs()
+    }
+
+    /// Get the register constraints for a given machine instruction.
+    fn reg_constraints(&self, machinst: Self::LoweredInsn) -> MachInstRegConstraints {
+        self.insts[machinst as usize].reg_constraints()
+    }
+
+    /// Map virtregs to physical regs in all lowered insns. This also implicitly removes all
+    /// regalloc-moves with identical source and dest registers.
+    fn map_virtregs(&mut self, locs: &MachLocations) {
+        for inst in &mut self.insts {
+            inst.map_virtregs(locs);
+        }
+    }
+
+    /// Is the given machine instruction a simple move?
+    fn is_move(&self, machinst: Self::LoweredInsn) -> Option<(MachReg, MachReg)> {
+        self.insts[machinst as usize].is_move()
+    }
+
+    /// What is the size of a machine instruction?
+    fn size(&self, machinst: Self::LoweredInsn) -> usize {
+        self.insts[machinst as usize].size()
+    }
+
+    /// Emit code for a machine instruction.
+    fn emit(&self, machinst: Self::LoweredInsn, sink: &mut CS) {
+        self.insts[machinst as usize].emit(sink);
+    }
+}

@@ -1,5 +1,6 @@
 //! This module defines arm64-specific machine instruction types.
 
+use crate::binemit::CodeSink;
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
 use crate::isa::arm64::registers::*;
@@ -557,7 +558,6 @@ impl MachInst for Inst {
     }
 
     fn reg_constraints(&self) -> MachInstRegConstraints {
-        // TODO
         SmallVec::new()
     }
 
@@ -735,5 +735,15 @@ impl MachInst for Inst {
             }
             _ => {}
         }
+    }
+}
+
+impl<CS: CodeSink> MachInstEmit<CS> for Inst {
+    fn size(&self) -> usize {
+        4 // RISC!
+    }
+
+    fn emit(&self, sink: &mut CS) {
+        // TODO
     }
 }
