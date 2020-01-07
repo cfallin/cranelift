@@ -116,10 +116,7 @@ pub enum Inst {
     /// A conditional branch on nonzero.
     CondBrNZ { dest: Ebb, rt: MachReg },
     /// A conditional branch based on machine flags.
-    CondBr {
-        dest: Ebb,
-        cond: Cond,
-    },
+    CondBr { dest: Ebb, cond: Cond },
 
     /// Virtual instruction: a move for regalloc.
     RegallocMove { dst: MachReg, src: MachReg },
@@ -237,22 +234,22 @@ pub struct ShiftOpAndAmt {
 pub struct ShiftOpShiftImm(u8);
 
 impl ShiftOpShiftImm {
-  /// Maximum shift for shifted-register operands.
-  pub const MAX_SHIFT: u64 = 7;
+    /// Maximum shift for shifted-register operands.
+    pub const MAX_SHIFT: u64 = 7;
 
     /// Create a new shiftop shift amount, if possible.
-  pub fn maybe_from_shift(shift: u64) -> Option<ShiftOpShiftImm> {
-      if shift <= Self::MAX_SHIFT {
-        Some(ShiftOpShiftImm(shift as u8))
-      } else {
-        None
-      }
-  }
+    pub fn maybe_from_shift(shift: u64) -> Option<ShiftOpShiftImm> {
+        if shift <= Self::MAX_SHIFT {
+            Some(ShiftOpShiftImm(shift as u8))
+        } else {
+            None
+        }
+    }
 }
 
 impl ShiftOpAndAmt {
     pub fn new(op: ShiftOp, shift: ShiftOpShiftImm) -> ShiftOpAndAmt {
-      ShiftOpAndAmt { op, shift }
+        ShiftOpAndAmt { op, shift }
     }
 
     /// Get the shift op.
@@ -352,7 +349,7 @@ impl UImm12Scaled {
 #[derive(Clone, Copy, Debug)]
 pub struct MovZConst {
     bits: u16,
-    shift: u8,  // shifted 16*shift bits to the left.
+    shift: u8, // shifted 16*shift bits to the left.
 }
 
 impl MovZConst {
@@ -364,16 +361,28 @@ impl MovZConst {
         let mask3 = 0xffff_0000_0000_0000u64;
 
         if value == (value & mask0) {
-            return Some(MovZConst { bits: (value & mask0) as u16, shift: 0 });
+            return Some(MovZConst {
+                bits: (value & mask0) as u16,
+                shift: 0,
+            });
         }
         if value == (value & mask1) {
-            return Some(MovZConst { bits: ((value >> 16) & mask0) as u16, shift: 1 });
+            return Some(MovZConst {
+                bits: ((value >> 16) & mask0) as u16,
+                shift: 1,
+            });
         }
         if value == (value & mask2) {
-            return Some(MovZConst { bits: ((value >> 32) & mask0) as u16, shift: 2 });
+            return Some(MovZConst {
+                bits: ((value >> 32) & mask0) as u16,
+                shift: 2,
+            });
         }
         if value == (value & mask3) {
-            return Some(MovZConst { bits: ((value >> 48) & mask0) as u16, shift: 3 });
+            return Some(MovZConst {
+                bits: ((value >> 48) & mask0) as u16,
+                shift: 3,
+            });
         }
         None
     }
@@ -467,14 +476,238 @@ pub fn u64_constant(bits: u64) -> ConstantData {
     ConstantData::from(&data[..])
 }
 
+fn memarg_regs(memarg: &MemArg, regs: &mut MachInstRegs) {
+    match memarg {
+        &MemArg::Base(reg) | &MemArg::BaseSImm9(reg, ..) | &MemArg::BaseUImm12Scaled(reg, ..) => {
+            regs.push((reg.clone(), MachRegMode::Use));
+        }
+        &MemArg::BasePlusReg(r1, r2) | &MemArg::BasePlusRegScaled(r1, r2, ..) => {
+            regs.push((r1.clone(), MachRegMode::Use));
+            regs.push((r2.clone(), MachRegMode::Use));
+        }
+        &MemArg::Label(..) => {}
+    }
+}
+
 impl MachInst for Inst {
     fn regs(&self) -> MachInstRegs {
-        // TODO: return all regs in the insn args (including the MemArg).
+        let mut ret = SmallVec::new();
+        match self {
+            &Inst::AluRRR { rd, rn, rm, .. } => {
+                ret.push((rd.clone(), MachRegMode::Def));
+                ret.push((rn.clone(), MachRegMode::Use));
+                ret.push((rm.clone(), MachRegMode::Use));
+            }
+            &Inst::AluRRImm12 { rd, rn, .. } => {
+                ret.push((rd.clone(), MachRegMode::Def));
+                ret.push((rn.clone(), MachRegMode::Use));
+            }
+            &Inst::AluRRImmLogic { rd, rn, .. } => {
+                ret.push((rd.clone(), MachRegMode::Def));
+                ret.push((rn.clone(), MachRegMode::Use));
+            }
+            &Inst::AluRRImmShift { rd, rn, .. } => {
+                ret.push((rd.clone(), MachRegMode::Def));
+                ret.push((rn.clone(), MachRegMode::Use));
+            }
+            &Inst::AluRRRShift { rd, rn, rm, .. } => {
+                ret.push((rd.clone(), MachRegMode::Def));
+                ret.push((rn.clone(), MachRegMode::Use));
+                ret.push((rm.clone(), MachRegMode::Use));
+            }
+            &Inst::AluRRRExtend { rd, rn, rm, .. } => {
+                ret.push((rd.clone(), MachRegMode::Def));
+                ret.push((rn.clone(), MachRegMode::Use));
+                ret.push((rm.clone(), MachRegMode::Use));
+            }
+            &Inst::ULoad8 { rd, ref mem, .. }
+            | &Inst::SLoad8 { rd, ref mem, .. }
+            | &Inst::ULoad16 { rd, ref mem, .. }
+            | &Inst::SLoad16 { rd, ref mem, .. }
+            | &Inst::ULoad32 { rd, ref mem, .. }
+            | &Inst::SLoad32 { rd, ref mem, .. }
+            | &Inst::ULoad64 { rd, ref mem, .. } => {
+                ret.push((rd.clone(), MachRegMode::Def));
+                memarg_regs(mem, &mut ret);
+            }
+            &Inst::Store8 { rd, ref mem, .. }
+            | &Inst::Store16 { rd, ref mem, .. }
+            | &Inst::Store32 { rd, ref mem, .. }
+            | &Inst::Store64 { rd, ref mem, .. } => {
+                ret.push((rd.clone(), MachRegMode::Use));
+                memarg_regs(mem, &mut ret);
+            }
+            &Inst::MovZ { rd, .. } => {
+                ret.push((rd.clone(), MachRegMode::Def));
+            }
+            &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => {}
+            &Inst::JumpInd { rn, .. } | &Inst::CallInd { rn, .. } => {
+                ret.push((rn.clone(), MachRegMode::Use));
+            }
+            &Inst::CondBrZ { rt, .. } | &Inst::CondBrNZ { rt, .. } => {
+                ret.push((rt.clone(), MachRegMode::Use));
+            }
+            &Inst::CondBr { .. } => {}
+            &Inst::RegallocMove { dst, src, .. } => {
+                ret.push((dst.clone(), MachRegMode::Def));
+                ret.push((src.clone(), MachRegMode::Use));
+            }
+        }
+        ret
+    }
+
+    fn reg_constraints(&self) -> MachInstRegConstraints {
+        // TODO
         SmallVec::new()
     }
 
     fn map_virtregs(&mut self, locs: &MachLocations) {
-        // TODO.
+        let map = |r| match r {
+            MachReg::Virtual(num) => MachReg::Allocated(locs[num]),
+            _ => r.clone(),
+        };
+        let mapmem = |mem| match mem {
+            &MemArg::Base(reg) => MemArg::Base(map(reg)),
+            &MemArg::BaseSImm9(reg, simm9) => MemArg::BaseSImm9(map(reg), simm9),
+            &MemArg::BaseUImm12Scaled(reg, uimm12) => MemArg::BaseUImm12Scaled(map(reg), uimm12),
+            &MemArg::BasePlusReg(r1, r2) => MemArg::BasePlusReg(map(r1), map(r2)),
+            &MemArg::BasePlusRegScaled(r1, r2, ty) => {
+                MemArg::BasePlusRegScaled(map(r1), map(r2), ty)
+            }
+            &MemArg::Label(ref l) => MemArg::Label(l.clone()),
+        };
+
+        let newval = match self {
+            &mut Inst::AluRRR { alu_op, rd, rn, rm } => Inst::AluRRR {
+                alu_op,
+                rd: map(rd),
+                rn: map(rn),
+                rm: map(rm),
+            },
+            &mut Inst::AluRRImm12 {
+                alu_op,
+                rd,
+                rn,
+                ref imm12,
+            } => Inst::AluRRImm12 {
+                alu_op,
+                rd: map(rd),
+                rn: map(rn),
+                imm12: imm12.clone(),
+            },
+            &mut Inst::AluRRImmLogic {
+                alu_op,
+                rd,
+                rn,
+                ref imml,
+            } => Inst::AluRRImmLogic {
+                alu_op,
+                rd: map(rd),
+                rn: map(rn),
+                imml: imml.clone(),
+            },
+            &mut Inst::AluRRImmShift {
+                alu_op,
+                rd,
+                rn,
+                ref immshift,
+            } => Inst::AluRRImmShift {
+                alu_op,
+                rd: map(rd),
+                rn: map(rn),
+                immshift: immshift.clone(),
+            },
+            &mut Inst::AluRRRShift {
+                alu_op,
+                rd,
+                rn,
+                rm,
+                ref shiftop,
+            } => Inst::AluRRRShift {
+                alu_op,
+                rd: map(rd),
+                rn: map(rn),
+                rm: map(rm),
+                shiftop: shiftop.clone(),
+            },
+            &mut Inst::AluRRRExtend {
+                alu_op,
+                rd,
+                rn,
+                rm,
+                ref extendop,
+            } => Inst::AluRRRExtend {
+                alu_op,
+                rd: map(rd),
+                rn: map(rn),
+                rm: map(rm),
+                extendop: extendop.clone(),
+            },
+            &mut Inst::ULoad8 { rd, ref mem } => Inst::ULoad8 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::SLoad8 { rd, ref mem } => Inst::SLoad8 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::ULoad16 { rd, ref mem } => Inst::ULoad16 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::SLoad16 { rd, ref mem } => Inst::SLoad16 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::ULoad32 { rd, ref mem } => Inst::ULoad32 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::SLoad32 { rd, ref mem } => Inst::SLoad32 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::ULoad64 { rd, ref mem } => Inst::ULoad64 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::Store8 { rd, ref mem } => Inst::Store8 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::Store16 { rd, ref mem } => Inst::Store16 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::Store32 { rd, ref mem } => Inst::Store32 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::Store64 { rd, ref mem } => Inst::Store64 {
+                rd: map(rd),
+                mem: mapmem(mem),
+            },
+            &mut Inst::MovZ { rd, ref imm } => Inst::MovZ {
+                rd: map(rd),
+                imm: imm.clone(),
+            },
+            &mut Inst::Jump { dest } => Inst::Jump { dest },
+            &mut Inst::Call { dest } => Inst::Call { dest },
+            &mut Inst::Ret {} => Inst::Ret {},
+            &mut Inst::JumpInd { rn } => Inst::JumpInd { rn: map(rn) },
+            &mut Inst::CallInd { rn } => Inst::CallInd { rn: map(rn) },
+            &mut Inst::CondBrZ { rt, dest } => Inst::CondBrZ { rt: map(rt), dest },
+            &mut Inst::CondBrNZ { rt, dest } => Inst::CondBrNZ { rt: map(rt), dest },
+            &mut Inst::CondBr { dest, ref cond } => Inst::CondBr {
+                dest,
+                cond: cond.clone(),
+            },
+            &mut Inst::RegallocMove { dst, src } => Inst::RegallocMove {
+                dst: map(dst),
+                src: map(src),
+            },
+        };
+        *self = newval;
     }
 
     fn is_move(&self) -> Option<(MachReg, MachReg)> {

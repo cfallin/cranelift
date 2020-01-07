@@ -64,32 +64,6 @@ impl MachRegConstraint {
     }
 }
 
-/// A set of constraints on virtual registers, typically held at the Function level to be used by
-/// regalloc.
-#[derive(Clone, Debug)]
-pub struct MachRegConstraints {
-    constraints: Vec<(Value, MachRegConstraint)>,
-}
-
-impl MachRegConstraints {
-    /// Create a new set of register constraints.
-    pub fn new() -> MachRegConstraints {
-        MachRegConstraints {
-            constraints: Vec::new(),
-        }
-    }
-
-    /// Add a constraint to a register.
-    pub fn add(&mut self, value: Value, constraint: MachRegConstraint) {
-        self.constraints.push((value, constraint));
-    }
-
-    /// Return a list of all constraints with their associated registers.
-    pub fn constraints(&self) -> &[(Value, MachRegConstraint)] {
-        &self.constraints[..]
-    }
-}
-
 /// A register reference in a machine instruction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MachReg {
@@ -124,11 +98,18 @@ pub enum MachRegMode {
 /// A list of MachRegs used/def'd by a MachInst.
 pub type MachInstRegs = SmallVec<[(MachReg, MachRegMode); 4]>;
 
+/// A list of MachRegs with associated constraints.
+pub type MachInstRegConstraints = SmallVec<[(MachReg, MachRegConstraint); 4]>;
+
 /// A machine instruction.
 pub trait MachInst {
     /// Return the registers referenced by this machine instruction along with the modes of
     /// reference (use, def, modify).
     fn regs(&self) -> MachInstRegs;
+
+    /// Return the constraints, if any, on registers in this instruction.
+    fn reg_constraints(&self) -> MachInstRegConstraints;
+
     /// Map virtual registers to physical registers using the given virt->phys map.
     fn map_virtregs(&mut self, locs: &MachLocations);
 

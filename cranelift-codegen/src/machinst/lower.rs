@@ -2,12 +2,12 @@
 //! instructions with virtual registers, with lookup tables as built by the backend. This is
 //! *almost* the final machine code, except for register allocation.
 
+use crate::binemit::CodeSink;
 use crate::entity::SecondaryMap;
 use crate::ir::{Ebb, Function, Inst, InstructionData, Type, Value, ValueDef};
 use crate::isa::registers::{RegClass, RegUnit};
-use crate::machinst::{MachReg, MachInstRegs, MachLocations};
+use crate::machinst::{MachInstRegConstraints, MachInstRegs, MachLocations, MachReg};
 use crate::num_uses::NumUses;
-use crate::binemit::CodeSink;
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;
@@ -53,13 +53,17 @@ pub trait Lowered {
     type LoweredInsn: Copy + std::fmt::Debug + Eq;
 
     /// An iterator over lowered machine instructions for a single IR instruction.
-    type LoweredInsnRange: Iterator<Item=Self::LoweredInsn>;
+    type LoweredInsnRange: Iterator<Item = Self::LoweredInsn>;
 
     /// Get the machine instructions for a given IR instruction.
     fn insns(&self, ir_inst: Inst) -> Self::LoweredInsnRange;
 
-    /// Get the registers in a given machine instruction.
+    /// Get the registers in a given machine instruction. The returned type is a vector of
+    /// (MachReg, MachRegMode) tuples.
     fn regs(&self, machinst: Self::LoweredInsn) -> MachInstRegs;
+
+    /// Get the register constraints for a given machine instruction.
+    fn reg_constraints(&self, machinst: Self::LoweredInsn) -> MachInstRegConstraints;
 
     /// Map virtregs to physical regs in all lowered insns. This also implicitly removes all
     /// regalloc-moves with identical source and dest registers.
