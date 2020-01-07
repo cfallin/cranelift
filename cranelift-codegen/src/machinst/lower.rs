@@ -5,13 +5,16 @@
 use crate::entity::SecondaryMap;
 use crate::ir::{Ebb, Function, Inst, InstructionData, Type, Value, ValueDef};
 use crate::isa::registers::{RegClass, RegUnit};
-use crate::machinst::MachReg;
+use crate::machinst::{MachReg, MachInstRegs, MachLocations};
 use crate::num_uses::NumUses;
+use crate::binemit::CodeSink;
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;
 
-/// A context that machine-specific lowering code can use to emit lowered instructions.
+/// A context that machine-specific lowering code can use to emit lowered instructions. This is the
+/// view of the machine-independent per-function lowering context that is seen by the machine
+/// backend.
 pub trait LowerCtx<I> {
     /// Get the instdata for a given IR instruction.
     fn data(&self, ir_inst: Inst) -> &InstructionData;
@@ -43,8 +46,36 @@ pub trait LowerCtx<I> {
     fn ebb_param(&self, ebb: Ebb, idx: usize) -> MachReg;
 }
 
-/// A backend's lowering logic, to be driven by the machine-independent portion of instruction
-/// lowering.
+/// A context that the rest of the compiler can use to interface with the lowered code. THis is the
+/// view of the lowering context seen by the register allocator and code emitter.
+pub trait Lowered {
+    /// An index of (reference to) a single lowered machine instruction.
+    type LoweredInsn: Copy + std::fmt::Debug + Eq;
+
+    /// An iterator over lowered machine instructions for a single IR instruction.
+    type LoweredInsnRange: Iterator<Item=Self::LoweredInsn>;
+
+    /// Get the machine instructions for a given IR instruction.
+    fn insns(&self, ir_inst: Inst) -> Self::LoweredInsnRange;
+
+    /// Get the registers in a given machine instruction.
+    fn regs(&self, machinst: Self::LoweredInsn) -> MachInstRegs;
+
+    /// Map virtregs to physical regs in all lowered insns. This also implicitly removes all
+    /// regalloc-moves with identical source and dest registers.
+    fn map_virtregs(&mut self, locs: &MachLocations);
+
+    /// Is the given machine instruction a simple move?
+    fn is_move(&self, machinst: Self::LoweredInsn) -> Option<(MachReg, MachReg)>;
+
+    /// What is the size of a machine instruction?
+    fn code_size(&self, machinst: Self::LoweredInsn) -> usize;
+
+    /// Emit code for a machine instruction.
+    fn emit(&self, machinst: Self::LoweredInsn, sink: &mut dyn CodeSink);
+}
+
+/// A machine backend.
 pub trait LowerBackend {
     /// The machine instruction type.
     type MInst;

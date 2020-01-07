@@ -19,6 +19,8 @@ pub enum ALUOp {
     Sub64,
     Orr32,
     Orr64,
+    SubS32,
+    SubS64,
 }
 
 /// Instruction formats.
@@ -113,11 +115,9 @@ pub enum Inst {
     CondBrZ { dest: Ebb, rt: MachReg },
     /// A conditional branch on nonzero.
     CondBrNZ { dest: Ebb, rt: MachReg },
-    /// A compare / conditional branch sequence.
-    CmpCondBr {
+    /// A conditional branch based on machine flags.
+    CondBr {
         dest: Ebb,
-        rn: MachReg,
-        rm: MachReg,
         cond: Cond,
     },
 

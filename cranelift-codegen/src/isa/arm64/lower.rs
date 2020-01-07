@@ -1,5 +1,6 @@
 //! Lowering rules for ARM64.
 
+use crate::ir::condcodes::IntCC;
 use crate::ir::types::*;
 use crate::ir::Inst as IRInst;
 use crate::ir::{Ebb, InstructionData, Opcode, Type};
@@ -365,6 +366,23 @@ fn lower_constant<'a>(ctx: Ctx<'a>, rd: MachReg, value: u64) {
     }
 }
 
+fn lower_condcode(cc: IntCC) -> Cond {
+    match cc {
+        IntCC::Equal => Cond::Eq,
+        IntCC::NotEqual => Cond::Ne,
+        IntCC::SignedGreaterThanOrEqual => Cond::Ge,
+        IntCC::SignedGreaterThan => Cond::Gt,
+        IntCC::SignedLessThanOrEqual => Cond::Le,
+        IntCC::SignedLessThan => Cond::Lt,
+        IntCC::UnsignedGreaterThanOrEqual => Cond::Hs,
+        IntCC::UnsignedGreaterThan => Cond::Hi,
+        IntCC::UnsignedLessThanOrEqual => Cond::Ls,
+        IntCC::UnsignedLessThan => Cond::Lo,
+        IntCC::Overflow => Cond::Vs,
+        IntCC::NotOverflow => Cond::Vc,
+    }
+}
+
 /// Actually codegen an instruction's results into registers.
 fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
     let op = ctx.data(insn).opcode();
@@ -489,15 +507,31 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
         Opcode::Brz => {
             let rt = input_to_reg(ctx, inputs[0]);
             let dest = branch_target(ctx.data(insn)).unwrap();
+            // TODO: split crit edge and put moves on edge?
+            lower_ebb_param_moves(ctx, insn);
             ctx.emit(Inst::CondBrZ { dest, rt });
         }
         Opcode::Brnz => {
             let rt = input_to_reg(ctx, inputs[0]);
             let dest = branch_target(ctx.data(insn)).unwrap();
+            // TODO: split crit edge and put moves on edge?
+            lower_ebb_param_moves(ctx, insn);
             ctx.emit(Inst::CondBrNZ { dest, rt });
         }
+        Opcode::BrIcmp => {
+            let rn = input_to_reg(ctx, inputs[0]);
+            let rm = input_to_reg(ctx, inputs[1]);
+            let dest = branch_target(ctx.data(insn)).unwrap();
+            lower_ebb_param_moves(ctx, insn);
+            let ty = ctx.input_ty(insn, 0);
+            let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
+            let rd = MachReg::zero();
+            ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
+            let cond = lower_condcode(inst_condcode(ctx.data(insn)).unwrap());
+            ctx.emit(Inst::CondBr { dest, cond });
+        }
 
-        // TODO: BrIcmp, Brif/icmp, Brff/icmp, jump tables, call, ret
+        // TODO: Brif/icmp, Brff/icmp, jump tables, call, ret
 
         // TODO: cmp
         // TODO: more alu ops
@@ -538,6 +572,19 @@ fn ldst_offset(data: &InstructionData) -> Option<i32> {
         | &InstructionData::Store { offset, .. }
         | &InstructionData::StackStore { offset, .. }
         | &InstructionData::StoreComplex { offset, .. } => Some(offset.into()),
+        _ => None,
+    }
+}
+
+fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
+    match data {
+        &InstructionData::IntCond { cond, .. }
+        | &InstructionData::BranchIcmp { cond, .. }
+        | &InstructionData::IntCompare { cond, .. }
+        | &InstructionData::IntCondTrap { cond, .. }
+        | &InstructionData::BranchInt { cond, .. }
+        | &InstructionData::IntSelect { cond, .. }
+        | &InstructionData::IntCompareImm { cond, .. } => Some(cond),
         _ => None,
     }
 }
