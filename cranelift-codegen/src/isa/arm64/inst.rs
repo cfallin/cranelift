@@ -4,7 +4,7 @@ use crate::binemit::CodeSink;
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
 use crate::isa::arm64::registers::*;
-use crate::isa::registers::RegClass;
+use crate::isa::registers::{RegClass, RegUnit};
 use crate::machinst::*;
 
 use smallvec::SmallVec;
@@ -162,6 +162,11 @@ impl Imm12 {
         } else {
             0b00
         }
+    }
+
+    /// Bits for 12-bit "imm" field in e.g. AddI.
+    pub fn imm_bits(&self) -> u16 {
+        self.bits as u16
     }
 }
 
@@ -738,12 +743,102 @@ impl MachInst for Inst {
     }
 }
 
+fn regunit_to_gpr(ru: RegUnit) -> u8 {
+    let bank = &GPR.info.banks[GPR.index as usize];
+    assert!(ru >= bank.first_unit);
+    assert!(ru < bank.first_unit + bank.units);
+    return (ru - bank.first_unit) as u8;
+}
+
+fn machreg_to_gpr(m: MachReg) -> u32 {
+    match m {
+        MachReg::Allocated(ru) => regunit_to_gpr(ru) as u32,
+        MachReg::Zero => 31,
+        _ => panic!("Non-allocated register at binemit time!"),
+    }
+}
+
+fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: MachReg, rn: MachReg, rm: MachReg) -> u32 {
+    ((bits_31_21 as u32) << 21)
+        | ((bits_15_10 as u32) << 10)
+        | machreg_to_gpr(rd)
+        | (machreg_to_gpr(rn) << 5)
+        | (machreg_to_gpr(rm) << 16)
+}
+
+fn enc_arith_rr_imm12(bits_31_24: u8, immshift: u8, imm12: u16, rn: MachReg, rd: MachReg) -> u32 {
+    ((bits_31_24 as u32) << 24)
+        | ((immshift as u32) << 22)
+        | ((imm12 as u32) << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd)
+}
+
 impl<CS: CodeSink> MachInstEmit<CS> for Inst {
     fn size(&self) -> usize {
         4 // RISC!
     }
 
     fn emit(&self, sink: &mut CS) {
-        // TODO
+        match self {
+            &Inst::AluRRR { alu_op, rd, rn, rm } => {
+                let top11 = match alu_op {
+                    ALUOp::Add32 => 0b00001011_001,
+                    ALUOp::Add64 => 0b10001011_001,
+                    ALUOp::Sub32 => 0b01001011_001,
+                    ALUOp::Sub64 => 0b11001011_001,
+                    ALUOp::Orr32 => 0b00101010_000,
+                    ALUOp::Orr64 => 0b10101010_000,
+                    ALUOp::SubS32 => 0b01101011_001,
+                    ALUOp::SubS64 => 0b11101011_001,
+                    _ => unimplemented!(),
+                };
+                sink.put4(enc_arith_rrr(top11, 0b000_000, rd, rn, rm));
+            }
+            &Inst::AluRRImm12 {
+                alu_op,
+                rd,
+                rn,
+                ref imm12,
+            } => {
+                let top8 = match alu_op {
+                    ALUOp::Add32 => 0b000_10001,
+                    ALUOp::Add64 => 0b100_10001,
+                    ALUOp::Sub32 => 0b010_10001,
+                    ALUOp::Sub64 => 0b010_10001,
+                    _ => unimplemented!(),
+                };
+                sink.put4(enc_arith_rr_imm12(
+                    top8,
+                    imm12.shift_bits(),
+                    imm12.imm_bits(),
+                    rn,
+                    rd,
+                ));
+            }
+            &Inst::AluRRImmLogic { rd, rn, .. } => unimplemented!(),
+            &Inst::AluRRImmShift { rd, rn, .. } => unimplemented!(),
+            &Inst::AluRRRShift { rd, rn, rm, .. } => unimplemented!(),
+            &Inst::AluRRRExtend { rd, rn, rm, .. } => unimplemented!(),
+            &Inst::ULoad8 { rd, ref mem, .. }
+            | &Inst::SLoad8 { rd, ref mem, .. }
+            | &Inst::ULoad16 { rd, ref mem, .. }
+            | &Inst::SLoad16 { rd, ref mem, .. }
+            | &Inst::ULoad32 { rd, ref mem, .. }
+            | &Inst::SLoad32 { rd, ref mem, .. }
+            | &Inst::ULoad64 { rd, ref mem, .. } => unimplemented!(),
+            &Inst::Store8 { rd, ref mem, .. }
+            | &Inst::Store16 { rd, ref mem, .. }
+            | &Inst::Store32 { rd, ref mem, .. }
+            | &Inst::Store64 { rd, ref mem, .. } => unimplemented!(),
+            &Inst::MovZ { rd, .. } => unimplemented!(),
+            &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => unimplemented!(),
+            &Inst::JumpInd { rn, .. } | &Inst::CallInd { rn, .. } => unimplemented!(),
+            &Inst::CondBrZ { rt, .. } | &Inst::CondBrNZ { rt, .. } => unimplemented!(),
+            &Inst::CondBr { .. } => unimplemented!(),
+            &Inst::RegallocMove { dst, src, .. } => {
+                panic!("RegallocMove reached binemit!");
+            }
+        }
     }
 }
