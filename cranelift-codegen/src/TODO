@@ -1,20 +1,18 @@
 TODO:
 
-- Rebuild lowering in more direct form, without pattern system (materialize a
-  value in a particular context instead).
+- ImmLogic: implement the algorithm to determine whether an immediate can be
+  encoded as a logical immediate.
 
-- Integrate old regalloc for now. Fit into Cranelift IR's CFG. Abstract the
-  use/def interface and spill/fill insertion.
+- Add opcodes to lowering. ALU, loads/stores, control flow.
 
-- ABI integration.
-  - register constraints at call to force parameters into registers and return
-    value out of register?
+- Binary emission
+  - Straight-line code
+  - Relocs and control flow
+  - Constant pool?
 
-- Prologue/epilogue integration.
-  - standard FP-save boilerplate
-  - stackframe setup: spill slots + used callee-saves
+- Integration with regalloc once minira is ready.
 
-- Fill out the patterns.
-  - definitions of insns in meta/src/shared/instructions.rs.
+- Prologue and epilogue generation
 
-- Encoding backend.
+- Integrate back into toplevel API: fork the compilation pipeline after
+  machine-independent ops.

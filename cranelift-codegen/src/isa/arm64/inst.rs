@@ -20,6 +20,8 @@ pub enum ALUOp {
     Sub64,
     Orr32,
     Orr64,
+    And32,
+    And64,
     SubS32,
     SubS64,
 }
@@ -186,6 +188,11 @@ impl ImmLogic {
     pub fn maybe_from_u64(val: u64) -> Option<ImmLogic> {
         // TODO: implement.
         None
+    }
+
+    /// Returns bits ready for encoding: (N:1, R:6, S:6)
+    pub fn enc_bits(&self) -> u16 {
+        ((self.N as u16) << 12) | ((self.R as u16) << 6) | (self.S as u16)
     }
 }
 
@@ -774,6 +781,13 @@ fn enc_arith_rr_imm12(bits_31_24: u8, immshift: u8, imm12: u16, rn: MachReg, rd:
         | machreg_to_gpr(rd)
 }
 
+fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: MachReg, rd: MachReg) -> u32 {
+    ((bits_31_23 as u32) << 23)
+        | ((imm_bits as u32) << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd)
+}
+
 impl<CS: CodeSink> MachInstEmit<CS> for Inst {
     fn size(&self) -> usize {
         4 // RISC!
@@ -816,7 +830,21 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     rd,
                 ));
             }
-            &Inst::AluRRImmLogic { rd, rn, .. } => unimplemented!(),
+            &Inst::AluRRImmLogic {
+                alu_op,
+                rd,
+                rn,
+                ref imml,
+            } => {
+                let top9 = match alu_op {
+                    ALUOp::Orr32 => 0b001_100100,
+                    ALUOp::Orr64 => 0b101_100100,
+                    ALUOp::And32 => 0b000_100100,
+                    ALUOp::And64 => 0b100_100100,
+                    _ => unimplemented!(),
+                };
+                sink.put4(enc_arith_rr_imml(top9, imml.enc_bits(), rn, rd));
+            }
             &Inst::AluRRImmShift { rd, rn, .. } => unimplemented!(),
             &Inst::AluRRRShift { rd, rn, rm, .. } => unimplemented!(),
             &Inst::AluRRRExtend { rd, rn, rm, .. } => unimplemented!(),
