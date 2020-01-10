@@ -25,6 +25,17 @@
 //! case is that no defs/uses change; the "exceptions" list should in the common case be very
 //! short or empty, leading to less memory overhead.)
 
+/* TODO:
+
+   - Top level compilation pipeline with new MachInst / VCode stuff:
+
+     - Split critical edges
+     - Machine-specific lowering
+     - Regalloc (minira)
+     - Binemit
+
+ */
+
 use crate::binemit::CodeSink;
 use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;
