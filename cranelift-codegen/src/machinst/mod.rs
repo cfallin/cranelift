@@ -44,6 +44,8 @@ pub mod lower;
 pub use lower::*;
 pub mod vcode;
 pub use vcode::*;
+pub mod branch_splitting;
+pub use branch_splitting::*;
 
 /// A constraint on a virtual register in a machine instruction.
 #[derive(Clone, Debug)]
