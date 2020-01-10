@@ -56,7 +56,7 @@ pub type BlockIndex = u32;
 /// A function in "VCode" (virtualized-register code) form, after lowering.
 /// This is essentially a standard CFG of basic blocks, where each basic block
 /// consists of lowered instructions produced by the machine-specific backend.
-pub struct VCode<I: VCodeInst> {
+pub struct VCode<I: MachInst> {
     /// Lowered machine instructions in order corresponding to the original IR.
     insts: Vec<I>,
 
@@ -86,7 +86,7 @@ pub struct VCode<I: VCodeInst> {
 /// block, in reverse order. Finally, when we're done with a basic block, we
 /// reverse the whole block's vec of instructions again, and concatenate onto
 /// the VCode's insts.
-pub struct VCodeBuilder<I: VCodeInst> {
+pub struct VCodeBuilder<I: MachInst> {
     /// In-progress VCode.
     vcode: VCode<I>,
 
@@ -101,33 +101,7 @@ pub struct VCodeBuilder<I: VCodeInst> {
     succ_start: usize,
 }
 
-/// Interface implemented by machine-dependent instruction type to allow the
-/// VCode builder to inspect branches.
-pub trait VCodeInst {
-    /// Is this a terminator (branch or ret)? If so, return its type
-    /// (ret/uncond/cond) and target if applicable.
-    fn is_term(&self) -> VCodeTerm;
-}
-
-/// Describes a block terminator (not call) in the vcode. Because
-/// this models machine code fairly directly (modulo the virtual registers), we
-/// do not have a two-target conditional branch. Rather, the conditional form
-/// falls through if not taken. A conditional branch should always be followed
-/// by an unconditional branch; branches to the next block will be elided
-/// (to allow fallthrough instead).
-#[derive(Clone, Debug)]
-pub enum VCodeTerm {
-    /// Not a terminator.
-    None,
-    /// A return instruction.
-    Ret,
-    /// An unconditional branch to another block.
-    Uncond(BlockIndex),
-    /// A conditional branch to one of two other blocks.
-    Cond(BlockIndex, BlockIndex),
-}
-
-impl<I: VCodeInst> VCodeBuilder<I> {
+impl<I: MachInst> VCodeBuilder<I> {
     /// Create a new VCodeBuilder.
     pub fn new() -> VCodeBuilder<I> {
         VCodeBuilder {
@@ -170,11 +144,11 @@ impl<I: VCodeInst> VCodeBuilder<I> {
     /// Push an instruction for the current BB and current IR inst within the BB.
     pub fn push(&mut self, insn: I) {
         match insn.is_term() {
-            VCodeTerm::None | VCodeTerm::Ret => {}
-            VCodeTerm::Uncond(target) => {
+            MachTerminator::None | MachTerminator::Ret => {}
+            MachTerminator::Uncond(target) => {
                 self.vcode.block_succs.push(target);
             }
-            VCodeTerm::Cond(true_branch, false_branch) => {
+            MachTerminator::Cond(true_branch, false_branch) => {
                 self.vcode.block_succs.push(true_branch);
                 self.vcode.block_succs.push(false_branch);
             }
@@ -190,7 +164,7 @@ impl<I: VCodeInst> VCodeBuilder<I> {
     }
 }
 
-impl<I: VCodeInst> VCode<I> {
+impl<I: MachInst> VCode<I> {
     /// New empty VCode.
     fn new() -> VCode<I> {
         VCode {

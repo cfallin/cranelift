@@ -109,8 +109,6 @@ pub enum Inst {
     Call { dest: FuncRef },
     /// A machine return instruction.
     Ret {},
-    /// A machine indirect-branch instruction.
-    JumpInd { rn: MachReg },
     /// A machine indirect-call instruction.
     CallInd { rn: MachReg },
 
@@ -554,7 +552,7 @@ impl MachInst for Inst {
                 ret.push((rd.clone(), MachRegMode::Def));
             }
             &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => {}
-            &Inst::JumpInd { rn, .. } | &Inst::CallInd { rn, .. } => {
+            &Inst::CallInd { rn, .. } => {
                 ret.push((rn.clone(), MachRegMode::Use));
             }
             &Inst::CondBrZ { rt, .. } | &Inst::CondBrNZ { rt, .. } => {
@@ -706,7 +704,6 @@ impl MachInst for Inst {
             &mut Inst::Jump { dest } => Inst::Jump { dest },
             &mut Inst::Call { dest } => Inst::Call { dest },
             &mut Inst::Ret {} => Inst::Ret {},
-            &mut Inst::JumpInd { rn } => Inst::JumpInd { rn: map(rn) },
             &mut Inst::CallInd { rn } => Inst::CallInd { rn: map(rn) },
             &mut Inst::CondBrZ { rt, dest } => Inst::CondBrZ { rt: map(rt), dest },
             &mut Inst::CondBrNZ { rt, dest } => Inst::CondBrNZ { rt: map(rt), dest },
@@ -745,7 +742,17 @@ impl MachInst for Inst {
                     },
                 );
             }
+            // TODO: convert virtual branch forms into actual branches
             _ => {}
+        }
+    }
+
+    fn is_term(&self) -> MachTerminator {
+        match self {
+            // TODO: insts in terms of machine BB indices (vcode::BlockIndex)
+            // TODO: virtual two-dest condbr form that finalizes into two
+            // insns (or one, if fallthrough)
+            _ => MachTerminator::None,
         }
     }
 }
@@ -861,7 +868,7 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             | &Inst::Store64 { rd, ref mem, .. } => unimplemented!(),
             &Inst::MovZ { rd, .. } => unimplemented!(),
             &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => unimplemented!(),
-            &Inst::JumpInd { rn, .. } | &Inst::CallInd { rn, .. } => unimplemented!(),
+            &Inst::CallInd { rn, .. } => unimplemented!(),
             &Inst::CondBrZ { rt, .. } | &Inst::CondBrNZ { rt, .. } => unimplemented!(),
             &Inst::CondBr { .. } => unimplemented!(),
             &Inst::RegallocMove { dst, src, .. } => {

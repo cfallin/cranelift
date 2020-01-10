@@ -1,5 +1,10 @@
 TODO:
 
+- Work out the branch-target story for MachInsts
+  - initially, encode intraprocedural targets in terms of vcode BBs
+  - initially, use virtual two-target conditional forms
+  - then, resolve in `finalize` given block ordering
+
 - Sketch regalloc `Function` trait, and implement it for VCode.
 
 - Build top-level compilation pipeline. Invoke branch-splitting; lowering;

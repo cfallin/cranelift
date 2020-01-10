@@ -27,14 +27,14 @@
 
 /* TODO:
 
-   - Top level compilation pipeline with new MachInst / VCode stuff:
+  - Top level compilation pipeline with new MachInst / VCode stuff:
 
-     - Split critical edges
-     - Machine-specific lowering
-     - Regalloc (minira)
-     - Binemit
+    - Split critical edges
+    - Machine-specific lowering
+    - Regalloc (minira)
+    - Binemit
 
- */
+*/
 
 use crate::binemit::CodeSink;
 use crate::entity::EntityRef;
@@ -57,6 +57,8 @@ pub mod vcode;
 pub use vcode::*;
 pub mod branch_splitting;
 pub use branch_splitting::*;
+pub mod compile;
+pub use compile::*;
 
 /// A constraint on a virtual register in a machine instruction.
 #[derive(Clone, Debug)]
@@ -133,6 +135,28 @@ pub trait MachInst {
 
     /// Finalize this instruction: convert any virtual instruction into a real one.
     fn finalize(&mut self);
+
+    /// Is this a terminator (branch or ret)? If so, return its type
+    /// (ret/uncond/cond) and target if applicable.
+    fn is_term(&self) -> MachTerminator;
+}
+
+/// Describes a block terminator (not call) in the vcode. Because MachInsts /
+/// vcode model machine code fairly directly (modulo the virtual registers), we
+/// do not have a two-target conditional branch. Rather, the conditional form
+/// falls through if not taken. A conditional branch should always be followed
+/// by an unconditional branch; branches to the next block will be elided (to
+/// allow fallthrough instead).
+#[derive(Clone, Debug)]
+pub enum MachTerminator {
+    /// Not a terminator.
+    None,
+    /// A return instruction.
+    Ret,
+    /// An unconditional branch to another block.
+    Uncond(BlockIndex),
+    /// A conditional branch to one of two other blocks.
+    Cond(BlockIndex, BlockIndex),
 }
 
 /// A map from virtual registers to physical registers.

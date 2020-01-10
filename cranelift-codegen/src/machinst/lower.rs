@@ -8,7 +8,7 @@ use crate::ir::{Ebb, Function, Inst, InstructionData, Type, Value, ValueDef};
 use crate::isa::registers::{RegClass, RegUnit};
 use crate::machinst::{
     MachInst, MachInstEmit, MachInstRegConstraints, MachInstRegs, MachLocations, MachReg, VCode,
-    VCodeBuilder, VCodeInst,
+    VCodeBuilder,
 };
 use crate::num_uses::NumUses;
 
@@ -53,7 +53,7 @@ pub trait LowerCtx<I> {
 /// A machine backend.
 pub trait LowerBackend {
     /// The machine instruction type.
-    type MInst;
+    type MInst: MachInst;
 
     /// Lower a single instruction. Instructions are lowered in reverse order.
     fn lower(&mut self, ctx: &mut dyn LowerCtx<Self::MInst>, inst: Inst);
@@ -61,7 +61,7 @@ pub trait LowerBackend {
 
 /// Machine-independent lowering driver / machine-instruction container. Maintains a correspondence
 /// from original Inst to MachInsts.
-pub struct Lower<'a, I: VCodeInst> {
+pub struct Lower<'a, I: MachInst> {
     // The function to lower.
     f: &'a Function,
 
@@ -92,7 +92,7 @@ fn alloc_vreg(value_regs: &mut SecondaryMap<Value, MachReg>, value: Value, next_
     }
 }
 
-impl<'a, I: VCodeInst> Lower<'a, I> {
+impl<'a, I: MachInst> Lower<'a, I> {
     /// Prepare a new lowering context for the given IR function.
     pub fn new(f: &'a Function) -> Lower<'a, I> {
         let num_uses = NumUses::compute(f).take_uses();
@@ -124,7 +124,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
     }
 
     /// Lower the function.
-    pub fn lower(&mut self, backend: &mut dyn LowerBackend<MInst = I>) {
+    pub fn lower<B: LowerBackend<MInst = I>>(mut self, backend: &mut B) -> VCode<I> {
         // Work backward (postorder for EBBs, reverse through each EBB), skipping insns with
         // zero uses.
         let ebbs: SmallVec<[Ebb; 16]> = self.f.layout.ebbs().collect();
@@ -132,13 +132,15 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             for inst in self.f.layout.ebb_insts(ebb).rev() {
                 if self.num_uses[inst] > 0 {
                     self.start_inst(inst);
-                    backend.lower(self, inst);
+                    backend.lower(&mut self, inst);
                     self.end_inst();
                     self.vcode.end_ir_inst();
                 }
             }
             self.vcode.end_bb();
         }
+
+        self.vcode.build()
     }
 
     fn start_inst(&mut self, inst: Inst) {
@@ -150,7 +152,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
     }
 }
 
-impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
+impl<'a, I: MachInst> LowerCtx<I> for Lower<'a, I> {
     /// Get the instdata for a given IR instruction.
     fn data(&self, ir_inst: Inst) -> &InstructionData {
         &self.f.dfg[ir_inst]
