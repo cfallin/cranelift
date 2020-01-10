@@ -148,7 +148,7 @@ impl<I: VCodeInst> VCodeBuilder<I> {
 
     /// End the current basic block. Must be called after emitting vcode insts
     /// for IR insts and prior to ending the function (building the VCode).
-    fn end_bb(&mut self) {
+    pub fn end_bb(&mut self) {
         assert!(self.ir_inst_insns.is_empty());
         let block_num = self.vcode.block_ranges.len() as BlockIndex;
         // Push the instructions.
@@ -168,7 +168,7 @@ impl<I: VCodeInst> VCodeBuilder<I> {
     }
 
     /// Push an instruction for the current BB and current IR inst within the BB.
-    fn push(&mut self, insn: I) {
+    pub fn push(&mut self, insn: I) {
         match insn.is_term() {
             VCodeTerm::None | VCodeTerm::Ret => {}
             VCodeTerm::Uncond(target) => {
@@ -183,7 +183,7 @@ impl<I: VCodeInst> VCodeBuilder<I> {
     }
 
     /// Build the final VCode.
-    fn build(self) -> VCode<I> {
+    pub fn build(self) -> VCode<I> {
         assert!(self.ir_inst_insns.is_empty());
         assert!(self.bb_insns.is_empty());
         self.vcode

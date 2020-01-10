@@ -7,7 +7,8 @@ use crate::entity::SecondaryMap;
 use crate::ir::{Ebb, Function, Inst, InstructionData, Type, Value, ValueDef};
 use crate::isa::registers::{RegClass, RegUnit};
 use crate::machinst::{
-    MachInst, MachInstEmit, MachInstRegConstraints, MachInstRegs, MachLocations, MachReg,
+    MachInst, MachInstEmit, MachInstRegConstraints, MachInstRegs, MachLocations, MachReg, VCode,
+    VCodeBuilder, VCodeInst,
 };
 use crate::num_uses::NumUses;
 
@@ -49,39 +50,6 @@ pub trait LowerCtx<I> {
     fn ebb_param(&self, ebb: Ebb, idx: usize) -> MachReg;
 }
 
-/// A context that the rest of the compiler can use to interface with the lowered code. THis is the
-/// view of the lowering context seen by the register allocator and code emitter.
-pub trait Lowered<CS: CodeSink> {
-    /// An index of (reference to) a single lowered machine instruction.
-    type LoweredInsn: Copy + std::fmt::Debug + Eq;
-
-    /// An iterator over lowered machine instructions for a single IR instruction.
-    type LoweredInsnRange: Iterator<Item = Self::LoweredInsn>;
-
-    /// Get the machine instructions for a given IR instruction.
-    fn insns(&self, ir_inst: Inst) -> Self::LoweredInsnRange;
-
-    /// Get the registers in a given machine instruction. The returned type is a vector of
-    /// (MachReg, MachRegMode) tuples.
-    fn regs(&self, machinst: Self::LoweredInsn) -> MachInstRegs;
-
-    /// Get the register constraints for a given machine instruction.
-    fn reg_constraints(&self, machinst: Self::LoweredInsn) -> MachInstRegConstraints;
-
-    /// Map virtregs to physical regs in all lowered insns. This also implicitly removes all
-    /// regalloc-moves with identical source and dest registers.
-    fn map_virtregs(&mut self, locs: &MachLocations);
-
-    /// Is the given machine instruction a simple move?
-    fn is_move(&self, machinst: Self::LoweredInsn) -> Option<(MachReg, MachReg)>;
-
-    /// What is the size of a machine instruction?
-    fn size(&self, machinst: Self::LoweredInsn) -> usize;
-
-    /// Emit code for a machine instruction.
-    fn emit(&self, machinst: Self::LoweredInsn, sink: &mut CS);
-}
-
 /// A machine backend.
 pub trait LowerBackend {
     /// The machine instruction type.
@@ -93,19 +61,15 @@ pub trait LowerBackend {
 
 /// Machine-independent lowering driver / machine-instruction container. Maintains a correspondence
 /// from original Inst to MachInsts.
-pub struct Lower<'a, I> {
+pub struct Lower<'a, I: VCodeInst> {
     // The function to lower.
     f: &'a Function,
 
-    // Lowered machine instructions. In arbitrary order; map from original IR program order using
-    // `inst_indices` below.
-    insts: Vec<I>,
+    // Lowered machine instructions.
+    vcode: VCodeBuilder<I>,
 
     // Number of active uses (minus `dec_use()` calls by backend) of each instruction.
     num_uses: SecondaryMap<Inst, u32>,
-
-    // Range of indices in `insts` corresponding to a given Cranelift instruction:
-    inst_indices: SecondaryMap<Inst, (u32, u32)>,
 
     // Mapping from `Value` (SSA value in IR) to virtual register.
     value_regs: SecondaryMap<Value, MachReg>,
@@ -128,7 +92,7 @@ fn alloc_vreg(value_regs: &mut SecondaryMap<Value, MachReg>, value: Value, next_
     }
 }
 
-impl<'a, I> Lower<'a, I> {
+impl<'a, I: VCodeInst> Lower<'a, I> {
     /// Prepare a new lowering context for the given IR function.
     pub fn new(f: &'a Function) -> Lower<'a, I> {
         let num_uses = NumUses::compute(f).take_uses();
@@ -151,9 +115,8 @@ impl<'a, I> Lower<'a, I> {
 
         Lower {
             f,
-            insts: vec![],
+            vcode: VCodeBuilder::new(),
             num_uses,
-            inst_indices: SecondaryMap::with_default((0, 0)),
             value_regs,
             next_vreg,
             cur_inst: None,
@@ -171,15 +134,15 @@ impl<'a, I> Lower<'a, I> {
                     self.start_inst(inst);
                     backend.lower(self, inst);
                     self.end_inst();
+                    self.vcode.end_ir_inst();
                 }
             }
+            self.vcode.end_bb();
         }
     }
 
     fn start_inst(&mut self, inst: Inst) {
         self.cur_inst = Some(inst);
-        let l = self.insts.len() as u32;
-        self.inst_indices[inst] = (l, l);
     }
 
     fn end_inst(&mut self) {
@@ -187,7 +150,7 @@ impl<'a, I> Lower<'a, I> {
     }
 }
 
-impl<'a, I> LowerCtx<I> for Lower<'a, I> {
+impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     /// Get the instdata for a given IR instruction.
     fn data(&self, ir_inst: Inst) -> &InstructionData {
         &self.f.dfg[ir_inst]
@@ -200,10 +163,7 @@ impl<'a, I> LowerCtx<I> for Lower<'a, I> {
 
     /// Emit a machine instruction.
     fn emit(&mut self, mach_inst: I) {
-        let cur_inst = self.cur_inst.clone().unwrap();
-        self.insts.push(mach_inst);
-        // Bump the end of the range.
-        self.inst_indices[cur_inst].1 = self.insts.len() as u32;
+        self.vcode.push(mach_inst);
     }
 
     /// Reduce the use-count of an IR instruction. Use this when, e.g., isel incorporates the
@@ -266,56 +226,5 @@ impl<'a, I> LowerCtx<I> for Lower<'a, I> {
     fn ebb_param(&self, ebb: Ebb, idx: usize) -> MachReg {
         let val = self.f.dfg.ebb_params(ebb)[idx];
         self.value_regs[val]
-    }
-}
-
-impl<'a, I, CS> Lowered<CS> for Lower<'a, I>
-where
-    CS: CodeSink,
-    I: MachInst + MachInstEmit<CS>,
-{
-    // We refer to machine instructions within a single IR instruction's sequence with a simple
-    // index.
-    type LoweredInsn = u32;
-    type LoweredInsnRange = Range<u32>;
-
-    /// Get the machine instructions for a given IR instruction.
-    fn insns(&self, ir_inst: Inst) -> Range<u32> {
-        let (start, end) = self.inst_indices[ir_inst];
-        (start..end)
-    }
-
-    /// Get the registers in a given machine instruction. The returned type is a vector of
-    /// (MachReg, MachRegMode) tuples.
-    fn regs(&self, machinst: Self::LoweredInsn) -> MachInstRegs {
-        self.insts[machinst as usize].regs()
-    }
-
-    /// Get the register constraints for a given machine instruction.
-    fn reg_constraints(&self, machinst: Self::LoweredInsn) -> MachInstRegConstraints {
-        self.insts[machinst as usize].reg_constraints()
-    }
-
-    /// Map virtregs to physical regs in all lowered insns. This also implicitly removes all
-    /// regalloc-moves with identical source and dest registers.
-    fn map_virtregs(&mut self, locs: &MachLocations) {
-        for inst in &mut self.insts {
-            inst.map_virtregs(locs);
-        }
-    }
-
-    /// Is the given machine instruction a simple move?
-    fn is_move(&self, machinst: Self::LoweredInsn) -> Option<(MachReg, MachReg)> {
-        self.insts[machinst as usize].is_move()
-    }
-
-    /// What is the size of a machine instruction?
-    fn size(&self, machinst: Self::LoweredInsn) -> usize {
-        self.insts[machinst as usize].size()
-    }
-
-    /// Emit code for a machine instruction.
-    fn emit(&self, machinst: Self::LoweredInsn, sink: &mut CS) {
-        self.insts[machinst as usize].emit(sink);
     }
 }
