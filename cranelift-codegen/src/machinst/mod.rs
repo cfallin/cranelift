@@ -42,6 +42,8 @@ use std::hash::Hash;
 
 pub mod lower;
 pub use lower::*;
+pub mod vcode;
+pub use vcode::*;
 
 /// A constraint on a virtual register in a machine instruction.
 #[derive(Clone, Debug)]

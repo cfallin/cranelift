@@ -1,5 +1,11 @@
 TODO:
 
+- Critical-edge splitting, prior to lowering.
+
+- use VCode in lowering context.
+
+- Sketch regalloc `Function` trait, and implement it for VCode.
+
 - ImmLogic: implement the algorithm to determine whether an immediate can be
   encoded as a logical immediate.
 
