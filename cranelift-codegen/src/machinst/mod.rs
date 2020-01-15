@@ -41,13 +41,14 @@ use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;
 use crate::ir::ValueLocations;
 use crate::ir::{DataFlowGraph, Inst, Opcode, Type, Value};
-use crate::isa::registers::{RegClass, RegClassMask};
 use crate::isa::RegUnit;
 use crate::HashMap;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::iter::Sum;
+use minira::interface::Map as RegallocMap;
+use minira::interface::{RealReg, Reg, RegClass, SpillSlot, VirtualReg};
 use smallvec::SmallVec;
 use std::hash::Hash;
 
@@ -60,50 +61,9 @@ pub use branch_splitting::*;
 pub mod compile;
 pub use compile::*;
 
-/// A constraint on a virtual register in a machine instruction.
-#[derive(Clone, Debug)]
-pub enum MachRegConstraint {
-    /// Any register in one of the given register classes.
-    RegClass(RegClassMask),
-    /// A particular, fixed register.
-    FixedReg(RegUnit),
-}
-
-impl MachRegConstraint {
-    /// Create a machine-register constraint that chooses a register from a single register class
-    /// (or its subclasses).
-    pub fn from_class(rc: RegClass) -> MachRegConstraint {
-        MachRegConstraint::RegClass(rc.subclasses)
-    }
-    /// Create a machine-register constraint that chooses a fixed register.
-    pub fn from_fixed(ru: RegUnit) -> MachRegConstraint {
-        MachRegConstraint::FixedReg(ru)
-    }
-}
-
-/// A register reference in a machine instruction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MachReg {
-    /// Undefined. Used as a placeholder.
-    Undefined,
-    /// A virtual register.
-    Virtual(usize),
-    /// An allocated physical register.
-    Allocated(RegUnit),
-    /// The zero register.
-    Zero,
-}
-
-impl MachReg {
-    /// Get the zero register.
-    pub fn zero() -> MachReg {
-        MachReg::Zero
-    }
-}
-
 /// The mode in which a register is used or defined.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MachRegMode {
+pub enum RegMode {
     /// Read (used) by the instruction.
     Use,
     /// Written (defined) by the instruction.
@@ -112,26 +72,25 @@ pub enum MachRegMode {
     Modify,
 }
 
-/// A list of MachRegs used/def'd by a MachInst.
-pub type MachInstRegs = SmallVec<[(MachReg, MachRegMode); 4]>;
-
-/// A list of MachRegs with associated constraints.
-pub type MachInstRegConstraints = SmallVec<[(MachReg, MachRegConstraint); 4]>;
+/// A list of Regs used/def'd by a MachInst.
+pub type MachInstRegs = SmallVec<[(Reg, RegMode); 4]>;
 
 /// A machine instruction.
-pub trait MachInst {
+pub trait MachInst: Clone {
     /// Return the registers referenced by this machine instruction along with the modes of
     /// reference (use, def, modify).
     fn regs(&self) -> MachInstRegs;
 
-    /// Return the constraints, if any, on registers in this instruction.
-    fn reg_constraints(&self) -> MachInstRegConstraints;
-
-    /// Map virtual registers to physical registers using the given virt->phys map.
-    fn map_virtregs(&mut self, locs: &MachLocations);
+    /// Map virtual registers to physical registers using the given virt->phys
+    /// maps corresponding to the program points prior to, and after, this instruction.
+    fn map_regs(
+        &mut self,
+        pre_map: &RegallocMap<VirtualReg, RealReg>,
+        post_map: &RegallocMap<VirtualReg, RealReg>,
+    );
 
     /// If this is a simple move, return the (source, destination) tuple of registers.
-    fn is_move(&self) -> Option<(MachReg, MachReg)>;
+    fn is_move(&self) -> Option<(Reg, Reg)>;
 
     /// Finalize this instruction: convert any virtual instruction into a real one.
     fn finalize(&mut self);
@@ -139,6 +98,26 @@ pub trait MachInst {
     /// Is this a terminator (branch or ret)? If so, return its type
     /// (ret/uncond/cond) and target if applicable.
     fn is_term(&self) -> MachTerminator;
+
+    /// Get the spill-slot size.
+    fn get_spillslot_size(rc: RegClass) -> u32;
+
+    /// Generate a spill.
+    fn gen_spill(to_slot: SpillSlot, from_reg: RealReg) -> Self;
+
+    /// Generate a reload (fill).
+    fn gen_reload(to_reg: RealReg, from_slot: SpillSlot) -> Self;
+
+    /// Generate a move.
+    fn gen_move(to_reg: RealReg, from_reg: RealReg) -> Self;
+
+    /// Possibly operate on a value directly in a spill-slot rather than a
+    /// register. Useful if the machine has register-memory instruction forms
+    /// (e.g., add directly from or directly to memory), like x86.
+    fn maybe_direct_reload(&self, reg: VirtualReg, slot: SpillSlot) -> Option<Self>;
+
+    /// Determine a register class to store the given CraneLift type.
+    fn rc_for_type(ty: Type) -> RegClass;
 }
 
 /// Describes a block terminator (not call) in the vcode. Because MachInsts /

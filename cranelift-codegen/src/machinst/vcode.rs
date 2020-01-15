@@ -44,6 +44,10 @@
 use crate::ir;
 use crate::machinst::*;
 
+use minira::interface::Function as RegallocFunction;
+use minira::interface::Set as RegallocSet;
+use minira::interface::{mkBlockIx, mkInstIx, BlockIx, InstIx, InstRegUses, MyRange, RegClass};
+
 use alloc::vec::Vec;
 use smallvec::SmallVec;
 use std::ops::Index;
@@ -59,6 +63,9 @@ pub type BlockIndex = u32;
 pub struct VCode<I: MachInst> {
     /// Lowered machine instructions in order corresponding to the original IR.
     insts: Vec<I>,
+
+    /// Entry block.
+    entry: BlockIndex,
 
     /// Block instruction indices.
     block_ranges: Vec<(InsnIndex, InsnIndex)>,
@@ -112,6 +119,11 @@ impl<I: MachInst> VCodeBuilder<I> {
         }
     }
 
+    /// Set the current block as the entry block.
+    pub fn set_entry(&mut self, block: BlockIndex) {
+        self.vcode.entry = block;
+    }
+
     /// End the current IR instruction. Must be called after pushing any
     /// instructions and prior to ending the basic block.
     pub fn end_ir_inst(&mut self) {
@@ -122,7 +134,7 @@ impl<I: MachInst> VCodeBuilder<I> {
 
     /// End the current basic block. Must be called after emitting vcode insts
     /// for IR insts and prior to ending the function (building the VCode).
-    pub fn end_bb(&mut self) {
+    pub fn end_bb(&mut self) -> BlockIndex {
         assert!(self.ir_inst_insns.is_empty());
         let block_num = self.vcode.block_ranges.len() as BlockIndex;
         // Push the instructions.
@@ -139,6 +151,8 @@ impl<I: MachInst> VCodeBuilder<I> {
             .block_succ_range
             .push((self.succ_start, succ_end));
         self.succ_start = succ_end;
+
+        block_num
     }
 
     /// Push an instruction for the current BB and current IR inst within the BB.
@@ -169,6 +183,7 @@ impl<I: MachInst> VCode<I> {
     fn new() -> VCode<I> {
         VCode {
             insts: vec![],
+            entry: 0,
             block_ranges: vec![],
             block_succ_range: vec![],
             block_succs: vec![],
@@ -176,4 +191,92 @@ impl<I: MachInst> VCode<I> {
     }
 }
 
-// TODO: implementation of regalloc::Function.
+impl<I: MachInst> RegallocFunction for VCode<I> {
+    type Inst = I;
+
+    fn insns(&self) -> &[I] {
+        &self.insts[..]
+    }
+
+    fn insns_mut(&mut self) -> &mut [I] {
+        &mut self.insts[..]
+    }
+
+    fn get_insn(&self, insn: InstIx) -> &I {
+        &self.insts[insn.get() as usize]
+    }
+
+    fn get_insn_mut(&mut self, insn: InstIx) -> &mut I {
+        &mut self.insts[insn.get() as usize]
+    }
+
+    fn blocks(&self) -> MyRange<BlockIx> {
+        MyRange::new(mkBlockIx(0), self.block_ranges.len())
+    }
+
+    fn entry_block(&self) -> BlockIx {
+        mkBlockIx(self.entry)
+    }
+
+    fn block_insns(&self, block: BlockIx) -> MyRange<InstIx> {
+        let (start, end) = self.block_ranges[block.get() as usize];
+        MyRange::new(mkInstIx(start), (end - start) as usize)
+    }
+
+    fn block_succs(&self, block: BlockIx) -> Vec<BlockIx> {
+        let (start, end) = self.block_succ_range[block.get() as usize];
+        self.block_succs[start..end].iter().cloned().map(mkBlockIx).collect()
+    }
+
+    fn get_regs(&self, insn: &I) -> InstRegUses {
+        let mut used = RegallocSet::empty();
+        let mut defined = RegallocSet::empty();
+        let mut modified = RegallocSet::empty();
+
+        for (reg, regmode) in insn.regs().into_iter() {
+            match regmode {
+                RegMode::Use => used.insert(reg),
+                RegMode::Def => defined.insert(reg),
+                RegMode::Modify => modified.insert(reg),
+            }
+        }
+
+        InstRegUses {
+            used,
+            defined,
+            modified,
+        }
+    }
+
+    fn map_regs(
+        insn: &mut I,
+        pre_map: &RegallocMap<VirtualReg, RealReg>,
+        post_map: &RegallocMap<VirtualReg, RealReg>,
+    ) {
+        insn.map_regs(pre_map, post_map);
+    }
+
+    fn is_move(&self, insn: &I) -> Option<(Reg, Reg)> {
+        insn.is_move()
+    }
+
+    fn get_spillslot_size(&self, regclass: RegClass) -> u32 {
+        I::get_spillslot_size(regclass)
+    }
+
+    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg) -> I {
+        I::gen_spill(to_slot, from_reg)
+    }
+
+    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot) -> I {
+        I::gen_reload(to_reg, from_slot)
+    }
+
+    fn gen_move(&self, to_reg: RealReg, from_reg: RealReg) -> I {
+        I::gen_move(to_reg, from_reg)
+    }
+
+    fn maybe_direct_reload(&self, insn: &I, reg: VirtualReg, slot: SpillSlot) -> Option<I> {
+        insn.maybe_direct_reload(reg, slot)
+    }
+}

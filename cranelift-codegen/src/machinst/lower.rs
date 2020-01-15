@@ -5,12 +5,11 @@
 use crate::binemit::CodeSink;
 use crate::entity::SecondaryMap;
 use crate::ir::{Ebb, Function, Inst, InstructionData, Type, Value, ValueDef};
-use crate::isa::registers::{RegClass, RegUnit};
-use crate::machinst::{
-    MachInst, MachInstEmit, MachInstRegConstraints, MachInstRegs, MachLocations, MachReg, VCode,
-    VCodeBuilder,
-};
+use crate::isa::registers::RegUnit;
+use crate::machinst::{MachInst, MachInstEmit, MachInstRegs, VCode, VCodeBuilder};
 use crate::num_uses::NumUses;
+
+use minira::interface::{mkVirtualReg, RealReg, Reg, RegClass, VirtualReg};
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;
@@ -33,9 +32,9 @@ pub trait LowerCtx<I> {
     /// given IR instruction
     fn input_inst(&self, ir_inst: Inst, idx: usize) -> Option<(Inst, usize)>;
     /// Get the `idx`th input to the given IR instruction as a virtual register.
-    fn input(&self, ir_inst: Inst, idx: usize) -> MachReg;
+    fn input(&self, ir_inst: Inst, idx: usize) -> Reg;
     /// Get the `idx`th output of the given IR instruction as a virtual register.
-    fn output(&self, ir_inst: Inst, idx: usize) -> MachReg;
+    fn output(&self, ir_inst: Inst, idx: usize) -> Reg;
     /// Get the number of inputs to the given IR instruction.
     fn num_inputs(&self, ir_inst: Inst) -> usize;
     /// Get the number of outputs to the given IR instruction.
@@ -45,9 +44,9 @@ pub trait LowerCtx<I> {
     /// Get the type for an instruction's output.
     fn output_ty(&self, ir_inst: Inst, idx: usize) -> Type;
     /// Get a new temp.
-    fn tmp(&mut self, rc: RegClass) -> MachReg;
+    fn tmp(&mut self, rc: RegClass) -> Reg;
     /// Get the register for an EBB param.
-    fn ebb_param(&self, ebb: Ebb, idx: usize) -> MachReg;
+    fn ebb_param(&self, ebb: Ebb, idx: usize) -> Reg;
 }
 
 /// A machine backend.
@@ -72,23 +71,25 @@ pub struct Lower<'a, I: MachInst> {
     num_uses: SecondaryMap<Inst, u32>,
 
     // Mapping from `Value` (SSA value in IR) to virtual register.
-    value_regs: SecondaryMap<Value, MachReg>,
+    value_regs: SecondaryMap<Value, Reg>,
 
     // Next virtual register number to allocate.
-    next_vreg: usize,
+    next_vreg: u32,
 
     // Current IR instruction which we are lowering.
     cur_inst: Option<Inst>,
 }
 
-fn alloc_vreg(value_regs: &mut SecondaryMap<Value, MachReg>, value: Value, next_vreg: &mut usize) {
-    match value_regs[value] {
-        MachReg::Undefined => {
-            let v = *next_vreg;
-            *next_vreg += 1;
-            value_regs[value] = MachReg::Virtual(v);
-        }
-        _ => {}
+fn alloc_vreg(
+    value_regs: &mut SecondaryMap<Value, Reg>,
+    regclass: RegClass,
+    value: Value,
+    next_vreg: &mut u32,
+) {
+    if value_regs.get(value).is_none() {
+        let v = *next_vreg;
+        *next_vreg += 1;
+        value_regs[value] = mkVirtualReg(regclass, v);
     }
 }
 
@@ -97,18 +98,42 @@ impl<'a, I: MachInst> Lower<'a, I> {
     pub fn new(f: &'a Function) -> Lower<'a, I> {
         let num_uses = NumUses::compute(f).take_uses();
 
-        let mut next_vreg = 0;
-        let mut value_regs = SecondaryMap::with_default(MachReg::Undefined);
+        let mut next_vreg: u32 = 1;
+
+        // Default register should never be seen, but the `value_regs` map needs a default and we
+        // don't want to push `Option` everywhere. All values will be assigned registers by the
+        // loops over EBB parameters and instruction results below.
+        //
+        // We do not use vreg 0 so that we can detect any unassigned register that leaks through.
+        let default_register = mkVirtualReg(RegClass::I32, 0);
+        let mut value_regs = SecondaryMap::with_default(default_register);
+
+        // Assign a vreg to each value.
         for ebb in f.layout.ebbs() {
             for param in f.dfg.ebb_params(ebb) {
-                alloc_vreg(&mut value_regs, *param, &mut next_vreg);
+                alloc_vreg(
+                    &mut value_regs,
+                    I::rc_for_type(f.dfg.value_type(*param)),
+                    *param,
+                    &mut next_vreg,
+                );
             }
             for inst in f.layout.ebb_insts(ebb) {
                 for arg in f.dfg.inst_args(inst) {
-                    alloc_vreg(&mut value_regs, *arg, &mut next_vreg);
+                    alloc_vreg(
+                        &mut value_regs,
+                        I::rc_for_type(f.dfg.value_type(*arg)),
+                        *arg,
+                        &mut next_vreg,
+                    );
                 }
                 for result in f.dfg.inst_results(inst) {
-                    alloc_vreg(&mut value_regs, *result, &mut next_vreg);
+                    alloc_vreg(
+                        &mut value_regs,
+                        I::rc_for_type(f.dfg.value_type(*result)),
+                        *result,
+                        &mut next_vreg,
+                    );
                 }
             }
         }
@@ -137,7 +162,10 @@ impl<'a, I: MachInst> Lower<'a, I> {
                     self.vcode.end_ir_inst();
                 }
             }
-            self.vcode.end_bb();
+            let bb = self.vcode.end_bb();
+            if Some(ebb) == self.f.layout.entry_block() {
+                self.vcode.set_entry(bb);
+            }
         }
 
         self.vcode.build()
@@ -186,22 +214,22 @@ impl<'a, I: MachInst> LowerCtx<I> for Lower<'a, I> {
     }
 
     /// Get the `idx`th input to the given IR instruction as a virtual register.
-    fn input(&self, ir_inst: Inst, idx: usize) -> MachReg {
+    fn input(&self, ir_inst: Inst, idx: usize) -> Reg {
         let val = self.f.dfg.inst_args(ir_inst)[idx];
         self.value_regs[val]
     }
 
     /// Get the `idx`th output of the given IR instruction as a virtual register.
-    fn output(&self, ir_inst: Inst, idx: usize) -> MachReg {
+    fn output(&self, ir_inst: Inst, idx: usize) -> Reg {
         let val = self.f.dfg.inst_results(ir_inst)[idx];
         self.value_regs[val]
     }
 
     /// Get a new temp.
-    fn tmp(&mut self, rc: RegClass) -> MachReg {
+    fn tmp(&mut self, rc: RegClass) -> Reg {
         let v = self.next_vreg;
         self.next_vreg += 1;
-        MachReg::Virtual(v)
+        mkVirtualReg(rc, v)
     }
 
     /// Get the number of inputs for the given IR instruction.
@@ -225,7 +253,7 @@ impl<'a, I: MachInst> LowerCtx<I> for Lower<'a, I> {
     }
 
     /// Get the register for an EBB param.
-    fn ebb_param(&self, ebb: Ebb, idx: usize) -> MachReg {
+    fn ebb_param(&self, ebb: Ebb, idx: usize) -> Reg {
         let val = self.f.dfg.ebb_params(ebb)[idx];
         self.value_regs[val]
     }

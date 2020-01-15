@@ -10,6 +10,8 @@ use crate::machinst::*;
 use crate::isa::arm64::inst::*;
 use crate::isa::arm64::registers::*;
 
+use minira::interface::{mkRealReg, mkVirtualReg, RealReg, Reg, RegClass, VirtualReg};
+
 use smallvec::SmallVec;
 
 pub struct Arm64LowerBackend {}
@@ -32,9 +34,9 @@ fn is_alu_op(op: Opcode, ctrl_typevar: Type) -> bool {
 /// lowered into one of these options; the register form is the fallback.
 #[derive(Clone, Debug)]
 enum ResultRSE {
-    Reg(MachReg),
-    RegShift(MachReg, ShiftOpAndAmt),
-    RegExtend(MachReg, ExtendOp),
+    Reg(Reg),
+    RegShift(Reg, ShiftOpAndAmt),
+    RegExtend(Reg, ExtendOp),
 }
 
 /// A lowering result: register, register-shift, register-extend, or 12-bit immediate form.
@@ -42,9 +44,9 @@ enum ResultRSE {
 /// fallback.
 #[derive(Clone, Debug)]
 enum ResultRSEImm12 {
-    Reg(MachReg),
-    RegShift(MachReg, ShiftOpAndAmt),
-    RegExtend(MachReg, ExtendOp),
+    Reg(Reg),
+    RegShift(Reg, ShiftOpAndAmt),
+    RegExtend(Reg, ExtendOp),
     Imm12(Imm12),
 }
 
@@ -63,9 +65,9 @@ impl ResultRSEImm12 {
 /// fallback.
 #[derive(Clone, Debug)]
 enum ResultRSEImmLogic {
-    Reg(MachReg),
-    RegShift(MachReg, ShiftOpAndAmt),
-    RegExtend(MachReg, ExtendOp),
+    Reg(Reg),
+    RegShift(Reg, ShiftOpAndAmt),
+    RegExtend(Reg, ExtendOp),
     ImmLogic(ImmLogic),
 }
 
@@ -98,7 +100,7 @@ struct InsnInput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InsnInputSource {
     Output(InsnOutput),
-    Reg(MachReg),
+    Reg(Reg),
 }
 
 impl InsnInputSource {
@@ -161,12 +163,12 @@ fn output_to_shiftimm<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Option<ShiftOpShiftI
 }
 
 /// Lower an instruction input to a reg.
-fn input_to_reg<'a>(ctx: Ctx<'a>, input: InsnInput) -> MachReg {
+fn input_to_reg<'a>(ctx: Ctx<'a>, input: InsnInput) -> Reg {
     ctx.input(input.insn, input.input)
 }
 
 /// Lower an instruction output to a reg.
-fn output_to_reg<'a>(ctx: Ctx<'a>, out: InsnOutput) -> MachReg {
+fn output_to_reg<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Reg {
     ctx.output(out.insn, out.output)
 }
 
@@ -265,7 +267,7 @@ fn input_to_rse_immlogic<'a>(ctx: Ctx<'a>, input: InsnInput) -> ResultRSEImmLogi
     }
 }
 
-fn alu_inst_imm12(op: ALUOp, rd: MachReg, rn: MachReg, rm: ResultRSEImm12) -> Inst {
+fn alu_inst_imm12(op: ALUOp, rd: Reg, rn: Reg, rm: ResultRSEImm12) -> Inst {
     match rm {
         ResultRSEImm12::Imm12(imm12) => Inst::AluRRImm12 {
             alu_op: op,
@@ -317,7 +319,7 @@ fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset:
     }
 
     // Otherwise, generate add instructions.
-    let addr = ctx.tmp(GPR);
+    let addr = ctx.tmp(RegClass::I64);
 
     // Get the const into a reg.
     lower_constant(ctx, addr.clone(), offset as u64);
@@ -336,13 +338,13 @@ fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset:
     MemArg::Base(addr)
 }
 
-fn lower_constant<'a>(ctx: Ctx<'a>, rd: MachReg, value: u64) {
+fn lower_constant<'a>(ctx: Ctx<'a>, rd: Reg, value: u64) {
     if let Some(imm12) = Imm12::maybe_from_u64(value) {
         // 12-bit immediate (shifted by 0 or 12 bits) in ADDI using zero register
         ctx.emit(Inst::AluRRImm12 {
             alu_op: ALUOp::Add64,
             rd,
-            rn: MachReg::zero(),
+            rn: zero_reg(),
             imm12,
         });
     } else if let Some(imml) = ImmLogic::maybe_from_u64(value) {
@@ -350,7 +352,7 @@ fn lower_constant<'a>(ctx: Ctx<'a>, rd: MachReg, value: u64) {
         ctx.emit(Inst::AluRRImmLogic {
             alu_op: ALUOp::Orr64,
             rd,
-            rn: MachReg::zero(),
+            rn: zero_reg(),
             imml,
         });
     } else if let Some(imm) = MovZConst::maybe_from_u64(value) {
@@ -525,7 +527,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
             lower_ebb_param_moves(ctx, insn);
             let ty = ctx.input_ty(insn, 0);
             let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
-            let rd = MachReg::zero();
+            let rd = zero_reg();
             ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
             let cond = lower_condcode(inst_condcode(ctx.data(insn)).unwrap());
             ctx.emit(Inst::CondBr { dest, cond });

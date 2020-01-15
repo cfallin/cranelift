@@ -2,13 +2,86 @@
 
 use crate::binemit::CodeSink;
 use crate::ir::constant::{ConstantData, ConstantOffset};
+use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
 use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
 use crate::isa::arm64::registers::*;
-use crate::isa::registers::{RegClass, RegUnit};
 use crate::machinst::*;
+
+use minira::interface::Map as RegallocMap;
+use minira::interface::{
+    mkRealReg, mkVirtualReg, RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg,
+    NUM_REG_CLASSES,
+};
 
 use smallvec::SmallVec;
 use std::mem;
+
+// ------------- registers ----------------
+
+/// Get a reference to the zero-register.
+pub fn zero_reg() -> Reg {
+    mkRealReg(
+        RegClass::I64,
+        /* enc = */ 31,
+        /* index = */ 32 + 31,
+    )
+}
+
+/// Get a reference to the stack-pointer register.
+fn stack_reg() -> Reg {
+    // XSP (stack) and XZR (zero) are the same register, in different contexts.
+    zero_reg()
+}
+
+/// Create the register universe for ARM64.
+pub fn get_reg_universe() -> RealRegUniverse {
+    let mut regs = vec![];
+    let mut allocable_by_class = [None; NUM_REG_CLASSES];
+
+    // Numbering Scheme: we put V-regs first, then X-regs, so that X31 (the
+    // zero register or stack pointer, depending on context) is excluded from
+    // the contiguous range of allocatable registers.
+
+    let v_reg_base = 0u8; // in contiguous real-register index space
+    let v_reg_count = 32u8;
+    let v_reg_last = v_reg_base + v_reg_count - 1;
+    for i in 0u8..v_reg_count {
+        let reg = mkRealReg(
+            RegClass::V128,
+            /* enc = */ i,
+            /* index = */ v_reg_base + i,
+        )
+        .to_real_reg();
+        let name = format!("v{}", i);
+        regs.push((reg, name));
+    }
+
+    let x_reg_base = 32u8; // in contiguous real-register index space
+    let x_reg_count = 31u8;
+    let x_reg_last = x_reg_base + x_reg_count - 1;
+    for i in 0u8..x_reg_count {
+        let reg = mkRealReg(
+            RegClass::I64,
+            /* enc = */ i,
+            /* index = */ x_reg_base + i,
+        )
+        .to_real_reg();
+        let name = format!("x{}", i);
+        regs.push((reg, name));
+    }
+
+    allocable_by_class[RegClass::I64.rc_to_usize()] =
+        Some((x_reg_base as usize, x_reg_last as usize));
+    allocable_by_class[RegClass::V128.rc_to_usize()] =
+        Some((v_reg_base as usize, v_reg_last as usize));
+
+    let allocable = regs.len();
+    RealRegUniverse {
+        regs,
+        allocable,
+        allocable_by_class,
+    }
+}
 
 /// An ALU operation. This can be paired with several instruction formats below (see `Inst`) in any
 /// combination.
@@ -32,76 +105,76 @@ pub enum Inst {
     /// An ALU operation with two register sources and a register destination.
     AluRRR {
         alu_op: ALUOp,
-        rd: MachReg,
-        rn: MachReg,
-        rm: MachReg,
+        rd: Reg,
+        rn: Reg,
+        rm: Reg,
     },
     /// An ALU operation with a register source and an immediate-12 source, and a register
     /// destination.
     AluRRImm12 {
         alu_op: ALUOp,
-        rd: MachReg,
-        rn: MachReg,
+        rd: Reg,
+        rn: Reg,
         imm12: Imm12,
     },
     /// An ALU operation with a register source and an immediate-logic source, and a register destination.
     AluRRImmLogic {
         alu_op: ALUOp,
-        rd: MachReg,
-        rn: MachReg,
+        rd: Reg,
+        rn: Reg,
         imml: ImmLogic,
     },
     /// An ALU operation with a register source and an immediate-shiftamt source, and a register destination.
     AluRRImmShift {
         alu_op: ALUOp,
-        rd: MachReg,
-        rn: MachReg,
+        rd: Reg,
+        rn: Reg,
         immshift: ImmShift,
     },
     /// An ALU operation with two register sources, one of which can be shifted, and a register
     /// destination.
     AluRRRShift {
         alu_op: ALUOp,
-        rd: MachReg,
-        rn: MachReg,
-        rm: MachReg,
+        rd: Reg,
+        rn: Reg,
+        rm: Reg,
         shiftop: ShiftOpAndAmt,
     },
     /// An ALU operation with two register sources, one of which can be {zero,sign}-extended and
     /// shifted, and a register destination.
     AluRRRExtend {
         alu_op: ALUOp,
-        rd: MachReg,
-        rn: MachReg,
-        rm: MachReg,
+        rd: Reg,
+        rn: Reg,
+        rm: Reg,
         extendop: ExtendOp,
     },
     /// An unsigned (zero-extending) 8-bit load.
-    ULoad8 { rd: MachReg, mem: MemArg },
+    ULoad8 { rd: Reg, mem: MemArg },
     /// A signed (sign-extending) 8-bit load.
-    SLoad8 { rd: MachReg, mem: MemArg },
+    SLoad8 { rd: Reg, mem: MemArg },
     /// An unsigned (zero-extending) 16-bit load.
-    ULoad16 { rd: MachReg, mem: MemArg },
+    ULoad16 { rd: Reg, mem: MemArg },
     /// A signed (sign-extending) 16-bit load.
-    SLoad16 { rd: MachReg, mem: MemArg },
+    SLoad16 { rd: Reg, mem: MemArg },
     /// An unsigned (zero-extending) 32-bit load.
-    ULoad32 { rd: MachReg, mem: MemArg },
+    ULoad32 { rd: Reg, mem: MemArg },
     /// A signed (sign-extending) 32-bit load.
-    SLoad32 { rd: MachReg, mem: MemArg },
+    SLoad32 { rd: Reg, mem: MemArg },
     /// A 64-bit load.
-    ULoad64 { rd: MachReg, mem: MemArg },
+    ULoad64 { rd: Reg, mem: MemArg },
 
     /// An 8-bit store.
-    Store8 { rd: MachReg, mem: MemArg },
+    Store8 { rd: Reg, mem: MemArg },
     /// A 16-bit store.
-    Store16 { rd: MachReg, mem: MemArg },
+    Store16 { rd: Reg, mem: MemArg },
     /// A 32-bit store.
-    Store32 { rd: MachReg, mem: MemArg },
+    Store32 { rd: Reg, mem: MemArg },
     /// A 64-bit store.
-    Store64 { rd: MachReg, mem: MemArg },
+    Store64 { rd: Reg, mem: MemArg },
 
     /// A MOVZ with a 16-bit immediate.
-    MovZ { rd: MachReg, imm: MovZConst },
+    MovZ { rd: Reg, imm: MovZConst },
 
     /// An unconditional branch.
     Jump { dest: Ebb },
@@ -110,17 +183,17 @@ pub enum Inst {
     /// A machine return instruction.
     Ret {},
     /// A machine indirect-call instruction.
-    CallInd { rn: MachReg },
+    CallInd { rn: Reg },
 
     /// A conditional branch on zero.
-    CondBrZ { dest: Ebb, rt: MachReg },
+    CondBrZ { dest: Ebb, rt: Reg },
     /// A conditional branch on nonzero.
-    CondBrNZ { dest: Ebb, rt: MachReg },
+    CondBrNZ { dest: Ebb, rt: Reg },
     /// A conditional branch based on machine flags.
     CondBr { dest: Ebb, cond: Cond },
 
     /// Virtual instruction: a move for regalloc.
-    RegallocMove { dst: MachReg, src: MachReg },
+    RegallocMove { dst: Reg, src: Reg },
 }
 
 /// A shifted immediate value in 'imm12' format: supports 12 bits, shifted left by 0 or 12 places.
@@ -306,11 +379,11 @@ impl ExtendOp {
 /// A memory argument to load/store, encapsulating the possible addressing modes.
 #[derive(Clone, Debug)]
 pub enum MemArg {
-    Base(MachReg),
-    BaseSImm9(MachReg, SImm9),
-    BaseUImm12Scaled(MachReg, UImm12Scaled),
-    BasePlusReg(MachReg, MachReg),
-    BasePlusRegScaled(MachReg, MachReg, Type),
+    Base(Reg),
+    BaseSImm9(Reg, SImm9),
+    BaseUImm12Scaled(Reg, UImm12Scaled),
+    BasePlusReg(Reg, Reg),
+    BasePlusRegScaled(Reg, Reg, Type),
     Label(MemLabel),
     // TODO: use pre-indexed and post-indexed modes
 }
@@ -401,12 +474,12 @@ impl MovZConst {
 
 impl MemArg {
     /// Memory reference using an address in a register.
-    pub fn reg(reg: MachReg) -> MemArg {
+    pub fn reg(reg: Reg) -> MemArg {
         MemArg::Base(reg)
     }
 
     /// Memory reference using an address in a register and an offset, if possible.
-    pub fn reg_maybe_offset(reg: MachReg, offset: i64, value_type: Type) -> Option<MemArg> {
+    pub fn reg_maybe_offset(reg: Reg, offset: i64, value_type: Type) -> Option<MemArg> {
         if offset == 0 {
             Some(MemArg::Base(reg))
         } else if let Some(simm9) = SImm9::maybe_from_i64(offset) {
@@ -419,13 +492,25 @@ impl MemArg {
     }
 
     /// Memory reference using the sum of two registers as an address.
-    pub fn reg_reg(reg1: MachReg, reg2: MachReg) -> MemArg {
+    pub fn reg_reg(reg1: Reg, reg2: Reg) -> MemArg {
         MemArg::BasePlusReg(reg1, reg2)
     }
 
     /// Memory reference to a label: a global function or value, or data in the constant pool.
     pub fn label(label: MemLabel) -> MemArg {
         MemArg::Label(label)
+    }
+
+    pub const MAX_STACKSLOT: u32 = 0xfff;
+
+    /// Memory reference to a stack slot relative to the frame pointer.
+    /// `off` is the Nth slot up from SP, i.e., `[sp, #8*off]`.
+    /// `off` can be up to `MemArg::MAX_STACKSLOT`.
+    pub fn stackslot(off: u32) -> MemArg {
+        assert!(off <= MemArg::MAX_STACKSLOT);
+        let uimm12 = UImm12Scaled::maybe_from_i64((8 * off) as i64, I64);
+        assert!(uimm12.is_some());
+        MemArg::BaseUImm12Scaled(stack_reg(), uimm12.unwrap())
     }
 }
 
@@ -490,11 +575,11 @@ pub fn u64_constant(bits: u64) -> ConstantData {
 fn memarg_regs(memarg: &MemArg, regs: &mut MachInstRegs) {
     match memarg {
         &MemArg::Base(reg) | &MemArg::BaseSImm9(reg, ..) | &MemArg::BaseUImm12Scaled(reg, ..) => {
-            regs.push((reg.clone(), MachRegMode::Use));
+            regs.push((reg.clone(), RegMode::Use));
         }
         &MemArg::BasePlusReg(r1, r2) | &MemArg::BasePlusRegScaled(r1, r2, ..) => {
-            regs.push((r1.clone(), MachRegMode::Use));
-            regs.push((r2.clone(), MachRegMode::Use));
+            regs.push((r1.clone(), RegMode::Use));
+            regs.push((r2.clone(), RegMode::Use));
         }
         &MemArg::Label(..) => {}
     }
@@ -505,31 +590,31 @@ impl MachInst for Inst {
         let mut ret = SmallVec::new();
         match self {
             &Inst::AluRRR { rd, rn, rm, .. } => {
-                ret.push((rd.clone(), MachRegMode::Def));
-                ret.push((rn.clone(), MachRegMode::Use));
-                ret.push((rm.clone(), MachRegMode::Use));
+                ret.push((rd.clone(), RegMode::Def));
+                ret.push((rn.clone(), RegMode::Use));
+                ret.push((rm.clone(), RegMode::Use));
             }
             &Inst::AluRRImm12 { rd, rn, .. } => {
-                ret.push((rd.clone(), MachRegMode::Def));
-                ret.push((rn.clone(), MachRegMode::Use));
+                ret.push((rd.clone(), RegMode::Def));
+                ret.push((rn.clone(), RegMode::Use));
             }
             &Inst::AluRRImmLogic { rd, rn, .. } => {
-                ret.push((rd.clone(), MachRegMode::Def));
-                ret.push((rn.clone(), MachRegMode::Use));
+                ret.push((rd.clone(), RegMode::Def));
+                ret.push((rn.clone(), RegMode::Use));
             }
             &Inst::AluRRImmShift { rd, rn, .. } => {
-                ret.push((rd.clone(), MachRegMode::Def));
-                ret.push((rn.clone(), MachRegMode::Use));
+                ret.push((rd.clone(), RegMode::Def));
+                ret.push((rn.clone(), RegMode::Use));
             }
             &Inst::AluRRRShift { rd, rn, rm, .. } => {
-                ret.push((rd.clone(), MachRegMode::Def));
-                ret.push((rn.clone(), MachRegMode::Use));
-                ret.push((rm.clone(), MachRegMode::Use));
+                ret.push((rd.clone(), RegMode::Def));
+                ret.push((rn.clone(), RegMode::Use));
+                ret.push((rm.clone(), RegMode::Use));
             }
             &Inst::AluRRRExtend { rd, rn, rm, .. } => {
-                ret.push((rd.clone(), MachRegMode::Def));
-                ret.push((rn.clone(), MachRegMode::Use));
-                ret.push((rm.clone(), MachRegMode::Use));
+                ret.push((rd.clone(), RegMode::Def));
+                ret.push((rn.clone(), RegMode::Use));
+                ret.push((rm.clone(), RegMode::Use));
             }
             &Inst::ULoad8 { rd, ref mem, .. }
             | &Inst::SLoad8 { rd, ref mem, .. }
@@ -538,61 +623,77 @@ impl MachInst for Inst {
             | &Inst::ULoad32 { rd, ref mem, .. }
             | &Inst::SLoad32 { rd, ref mem, .. }
             | &Inst::ULoad64 { rd, ref mem, .. } => {
-                ret.push((rd.clone(), MachRegMode::Def));
+                ret.push((rd.clone(), RegMode::Def));
                 memarg_regs(mem, &mut ret);
             }
             &Inst::Store8 { rd, ref mem, .. }
             | &Inst::Store16 { rd, ref mem, .. }
             | &Inst::Store32 { rd, ref mem, .. }
             | &Inst::Store64 { rd, ref mem, .. } => {
-                ret.push((rd.clone(), MachRegMode::Use));
+                ret.push((rd.clone(), RegMode::Use));
                 memarg_regs(mem, &mut ret);
             }
             &Inst::MovZ { rd, .. } => {
-                ret.push((rd.clone(), MachRegMode::Def));
+                ret.push((rd.clone(), RegMode::Def));
             }
             &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => {}
             &Inst::CallInd { rn, .. } => {
-                ret.push((rn.clone(), MachRegMode::Use));
+                ret.push((rn.clone(), RegMode::Use));
             }
             &Inst::CondBrZ { rt, .. } | &Inst::CondBrNZ { rt, .. } => {
-                ret.push((rt.clone(), MachRegMode::Use));
+                ret.push((rt.clone(), RegMode::Use));
             }
             &Inst::CondBr { .. } => {}
             &Inst::RegallocMove { dst, src, .. } => {
-                ret.push((dst.clone(), MachRegMode::Def));
-                ret.push((src.clone(), MachRegMode::Use));
+                ret.push((dst.clone(), RegMode::Def));
+                ret.push((src.clone(), RegMode::Use));
             }
         }
         ret
     }
 
-    fn reg_constraints(&self) -> MachInstRegConstraints {
-        SmallVec::new()
-    }
-
-    fn map_virtregs(&mut self, locs: &MachLocations) {
-        let map = |r| match r {
-            MachReg::Virtual(num) => MachReg::Allocated(locs[num]),
-            _ => r.clone(),
-        };
-        let mapmem = |mem| match mem {
-            &MemArg::Base(reg) => MemArg::Base(map(reg)),
-            &MemArg::BaseSImm9(reg, simm9) => MemArg::BaseSImm9(map(reg), simm9),
-            &MemArg::BaseUImm12Scaled(reg, uimm12) => MemArg::BaseUImm12Scaled(map(reg), uimm12),
-            &MemArg::BasePlusReg(r1, r2) => MemArg::BasePlusReg(map(r1), map(r2)),
-            &MemArg::BasePlusRegScaled(r1, r2, ty) => {
-                MemArg::BasePlusRegScaled(map(r1), map(r2), ty)
+    fn map_regs(
+        &mut self,
+        pre_map: &RegallocMap<VirtualReg, RealReg>,
+        post_map: &RegallocMap<VirtualReg, RealReg>,
+    ) {
+        fn map(m: &RegallocMap<VirtualReg, RealReg>, r: Reg) -> Reg {
+            if r.is_virtual() {
+                m.get(&r.to_virtual_reg()).cloned().unwrap().to_reg()
+            } else {
+                r
             }
-            &MemArg::Label(ref l) => MemArg::Label(l.clone()),
-        };
+        }
+
+        fn map_mem(u: &RegallocMap<VirtualReg, RealReg>, mem: &MemArg) -> MemArg {
+            // N.B.: we take only the pre-map here, but this is OK because the
+            // only addressing modes that update registers (pre/post-increment on
+            // ARM64, which we don't use yet but we may someday) both read and
+            // write registers, so they are "mods" rather than "defs", so must be
+            // the same in both the pre- and post-map.
+            match mem {
+                &MemArg::Base(reg) => MemArg::Base(map(u, reg)),
+                &MemArg::BaseSImm9(reg, simm9) => MemArg::BaseSImm9(map(u, reg), simm9),
+                &MemArg::BaseUImm12Scaled(reg, uimm12) => {
+                    MemArg::BaseUImm12Scaled(map(u, reg), uimm12)
+                }
+                &MemArg::BasePlusReg(r1, r2) => MemArg::BasePlusReg(map(u, r1), map(u, r2)),
+                &MemArg::BasePlusRegScaled(r1, r2, ty) => {
+                    MemArg::BasePlusRegScaled(map(u, r1), map(u, r2), ty)
+                }
+                &MemArg::Label(ref l) => MemArg::Label(l.clone()),
+            }
+        }
+
+        let u = pre_map; // For brevity below.
+        let d = post_map;
 
         let newval = match self {
             &mut Inst::AluRRR { alu_op, rd, rn, rm } => Inst::AluRRR {
                 alu_op,
-                rd: map(rd),
-                rn: map(rn),
-                rm: map(rm),
+                rd: map(d, rd),
+                rn: map(u, rn),
+                rm: map(u, rm),
             },
             &mut Inst::AluRRImm12 {
                 alu_op,
@@ -601,8 +702,8 @@ impl MachInst for Inst {
                 ref imm12,
             } => Inst::AluRRImm12 {
                 alu_op,
-                rd: map(rd),
-                rn: map(rn),
+                rd: map(d, rd),
+                rn: map(u, rn),
                 imm12: imm12.clone(),
             },
             &mut Inst::AluRRImmLogic {
@@ -612,8 +713,8 @@ impl MachInst for Inst {
                 ref imml,
             } => Inst::AluRRImmLogic {
                 alu_op,
-                rd: map(rd),
-                rn: map(rn),
+                rd: map(d, rd),
+                rn: map(u, rn),
                 imml: imml.clone(),
             },
             &mut Inst::AluRRImmShift {
@@ -623,8 +724,8 @@ impl MachInst for Inst {
                 ref immshift,
             } => Inst::AluRRImmShift {
                 alu_op,
-                rd: map(rd),
-                rn: map(rn),
+                rd: map(d, rd),
+                rn: map(u, rn),
                 immshift: immshift.clone(),
             },
             &mut Inst::AluRRRShift {
@@ -635,9 +736,9 @@ impl MachInst for Inst {
                 ref shiftop,
             } => Inst::AluRRRShift {
                 alu_op,
-                rd: map(rd),
-                rn: map(rn),
-                rm: map(rm),
+                rd: map(d, rd),
+                rn: map(u, rn),
+                rm: map(u, rm),
                 shiftop: shiftop.clone(),
             },
             &mut Inst::AluRRRExtend {
@@ -648,80 +749,86 @@ impl MachInst for Inst {
                 ref extendop,
             } => Inst::AluRRRExtend {
                 alu_op,
-                rd: map(rd),
-                rn: map(rn),
-                rm: map(rm),
+                rd: map(d, rd),
+                rn: map(u, rn),
+                rm: map(u, rm),
                 extendop: extendop.clone(),
             },
             &mut Inst::ULoad8 { rd, ref mem } => Inst::ULoad8 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(d, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::SLoad8 { rd, ref mem } => Inst::SLoad8 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(d, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::ULoad16 { rd, ref mem } => Inst::ULoad16 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(d, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::SLoad16 { rd, ref mem } => Inst::SLoad16 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(d, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::ULoad32 { rd, ref mem } => Inst::ULoad32 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(d, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::SLoad32 { rd, ref mem } => Inst::SLoad32 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(d, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::ULoad64 { rd, ref mem } => Inst::ULoad64 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(d, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::Store8 { rd, ref mem } => Inst::Store8 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(u, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::Store16 { rd, ref mem } => Inst::Store16 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(u, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::Store32 { rd, ref mem } => Inst::Store32 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(u, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::Store64 { rd, ref mem } => Inst::Store64 {
-                rd: map(rd),
-                mem: mapmem(mem),
+                rd: map(u, rd),
+                mem: map_mem(u, mem),
             },
             &mut Inst::MovZ { rd, ref imm } => Inst::MovZ {
-                rd: map(rd),
+                rd: map(d, rd),
                 imm: imm.clone(),
             },
             &mut Inst::Jump { dest } => Inst::Jump { dest },
             &mut Inst::Call { dest } => Inst::Call { dest },
             &mut Inst::Ret {} => Inst::Ret {},
-            &mut Inst::CallInd { rn } => Inst::CallInd { rn: map(rn) },
-            &mut Inst::CondBrZ { rt, dest } => Inst::CondBrZ { rt: map(rt), dest },
-            &mut Inst::CondBrNZ { rt, dest } => Inst::CondBrNZ { rt: map(rt), dest },
+            &mut Inst::CallInd { rn } => Inst::CallInd { rn: map(u, rn) },
+            &mut Inst::CondBrZ { rt, dest } => Inst::CondBrZ {
+                rt: map(u, rt),
+                dest,
+            },
+            &mut Inst::CondBrNZ { rt, dest } => Inst::CondBrNZ {
+                rt: map(u, rt),
+                dest,
+            },
             &mut Inst::CondBr { dest, ref cond } => Inst::CondBr {
                 dest,
                 cond: cond.clone(),
             },
             &mut Inst::RegallocMove { dst, src } => Inst::RegallocMove {
-                dst: map(dst),
-                src: map(src),
+                dst: map(d, dst),
+                src: map(u, src),
             },
         };
         *self = newval;
     }
 
-    fn is_move(&self) -> Option<(MachReg, MachReg)> {
+    fn is_move(&self) -> Option<(Reg, Reg)> {
         match self {
-            &Inst::RegallocMove { dst, src } => Some((src.clone(), dst.clone())),
+            &Inst::RegallocMove { dst, src } => Some((dst.clone(), src.clone())),
             _ => None,
         }
     }
@@ -731,7 +838,7 @@ impl MachInst for Inst {
             &mut Inst::RegallocMove { dst, src } => {
                 let rd = dst.clone();
                 let rn = src.clone();
-                let rm = MachReg::zero();
+                let rm = zero_reg();
                 mem::replace(
                     self,
                     Inst::AluRRR {
@@ -755,24 +862,67 @@ impl MachInst for Inst {
             _ => MachTerminator::None,
         }
     }
-}
 
-fn regunit_to_gpr(ru: RegUnit) -> u8 {
-    let bank = &GPR.info.banks[GPR.index as usize];
-    assert!(ru >= bank.first_unit);
-    assert!(ru < bank.first_unit + bank.units);
-    return (ru - bank.first_unit) as u8;
-}
+    fn get_spillslot_size(rc: RegClass) -> u32 {
+        // We allocate in terms of 8-byte slots.
+        match rc {
+            RegClass::I64 => 1,
+            RegClass::V128 => 2,
+            _ => panic!("Unexpected register class!"),
+        }
+    }
 
-fn machreg_to_gpr(m: MachReg) -> u32 {
-    match m {
-        MachReg::Allocated(ru) => regunit_to_gpr(ru) as u32,
-        MachReg::Zero => 31,
-        _ => panic!("Non-allocated register at binemit time!"),
+    fn gen_spill(to_slot: SpillSlot, from_reg: RealReg) -> Inst {
+        let mem = MemArg::stackslot(to_slot.get());
+        match from_reg.get_class() {
+            RegClass::I64 => Inst::Store64 {
+                rd: from_reg.to_reg(),
+                mem,
+            },
+            RegClass::V128 => unimplemented!(),
+            _ => panic!("Unexpected register class!"),
+        }
+    }
+
+    fn gen_reload(to_reg: RealReg, from_slot: SpillSlot) -> Inst {
+        let mem = MemArg::stackslot(from_slot.get());
+        match to_reg.get_class() {
+            RegClass::I64 => Inst::ULoad64 {
+                rd: to_reg.to_reg(),
+                mem,
+            },
+            RegClass::V128 => unimplemented!(),
+            _ => panic!("Unexpected register class!"),
+        }
+    }
+
+    fn gen_move(to_reg: RealReg, from_reg: RealReg) -> Inst {
+        Inst::RegallocMove {
+            dst: to_reg.to_reg(),
+            src: from_reg.to_reg(),
+        }
+    }
+
+    fn maybe_direct_reload(&self, reg: VirtualReg, slot: SpillSlot) -> Option<Inst> {
+        None
+    }
+
+    fn rc_for_type(ty: Type) -> RegClass {
+        match ty {
+            I8 | I16 | I32 | I64 | B1 | B8 | B16 | B32 | B64 => RegClass::I64,
+            F32 | F64 => RegClass::V128,
+            I128 | B128 => RegClass::V128,
+            _ => panic!("Unexpected SSA-value type!"),
+        }
     }
 }
 
-fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: MachReg, rn: MachReg, rm: MachReg) -> u32 {
+fn machreg_to_gpr(m: Reg) -> u32 {
+    assert!(m.is_real());
+    m.to_real_reg().get_hw_encoding() as u32
+}
+
+fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: Reg, rn: Reg, rm: Reg) -> u32 {
     ((bits_31_21 as u32) << 21)
         | ((bits_15_10 as u32) << 10)
         | machreg_to_gpr(rd)
@@ -780,7 +930,7 @@ fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: MachReg, rn: MachReg, rm: 
         | (machreg_to_gpr(rm) << 16)
 }
 
-fn enc_arith_rr_imm12(bits_31_24: u8, immshift: u8, imm12: u16, rn: MachReg, rd: MachReg) -> u32 {
+fn enc_arith_rr_imm12(bits_31_24: u8, immshift: u8, imm12: u16, rn: Reg, rd: Reg) -> u32 {
     ((bits_31_24 as u32) << 24)
         | ((immshift as u32) << 22)
         | ((imm12 as u32) << 10)
@@ -788,7 +938,7 @@ fn enc_arith_rr_imm12(bits_31_24: u8, immshift: u8, imm12: u16, rn: MachReg, rd:
         | machreg_to_gpr(rd)
 }
 
-fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: MachReg, rd: MachReg) -> u32 {
+fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: Reg) -> u32 {
     ((bits_31_23 as u32) << 23)
         | ((imm_bits as u32) << 10)
         | (machreg_to_gpr(rn) << 5)
