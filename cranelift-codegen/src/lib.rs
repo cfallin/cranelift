@@ -71,12 +71,12 @@ pub mod flowgraph;
 pub mod ir;
 pub mod isa;
 pub mod loop_analysis;
+pub mod machinst;
 pub mod print_errors;
 pub mod settings;
 pub mod timing;
 pub mod verifier;
 pub mod write;
-pub mod machinst;
 
 pub use crate::entity::packed_option;
 
