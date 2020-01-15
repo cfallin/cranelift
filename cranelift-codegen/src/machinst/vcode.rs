@@ -13,16 +13,16 @@
 //! vcode-with-real-regs can be used by the machine-dependent backend to emit
 //! machine code. So we have:
 //!
-//!        ir::Function                     VCode<arch_backend::Inst>
-//!     (SSA IR,              [lower]         (machine-specific instruction
-//!      machine-            ------------>     instances, referring mostly to
-//!      independent ops)                      virtual registers)
-//!
-//!                                                      |
-//!                                                      | [regalloc]
-//!                          [binemit]                   v
-//!       machine code      <----------      VCode<arch_backend::Inst>
-//!                                            (machine insts with real regs)
+//! |       ir::Function                     VCode<arch_backend::Inst>
+//! |    (SSA IR,              [lower]         (machine-specific instruction
+//! |     machine-            ------------>     instances, referring mostly to
+//! |     independent ops)                      virtual registers)
+//! |
+//! |                                                     |
+//! |                                                     | [regalloc]
+//! |                         [binemit]                   v
+//! |      machine code      <----------      VCode<arch_backend::Inst>
+//! |                                           (machine insts with real regs)
 //!
 //!
 //! VCode is structured with traditional basic blocks, and
