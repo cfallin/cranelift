@@ -47,8 +47,8 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::iter::Sum;
-use minira::interface::Map as RegallocMap;
-use minira::interface::{RealReg, Reg, RegClass, SpillSlot, VirtualReg};
+use minira::Map as RegallocMap;
+use minira::{RealReg, Reg, RegClass, SpillSlot, VirtualReg};
 use smallvec::SmallVec;
 use std::hash::Hash;
 

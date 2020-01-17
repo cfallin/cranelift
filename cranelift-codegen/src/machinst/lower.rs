@@ -9,7 +9,7 @@ use crate::isa::registers::RegUnit;
 use crate::machinst::{MachInst, MachInstEmit, MachInstRegs, VCode, VCodeBuilder};
 use crate::num_uses::NumUses;
 
-use minira::interface::{mkVirtualReg, RealReg, Reg, RegClass, VirtualReg};
+use minira::{mkVirtualReg, RealReg, Reg, RegClass, VirtualReg};
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;

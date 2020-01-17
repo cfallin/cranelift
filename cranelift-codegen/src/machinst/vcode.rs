@@ -44,9 +44,9 @@
 use crate::ir;
 use crate::machinst::*;
 
-use minira::interface::Function as RegallocFunction;
-use minira::interface::Set as RegallocSet;
-use minira::interface::{mkBlockIx, mkInstIx, BlockIx, InstIx, InstRegUses, MyRange, RegClass};
+use minira::Function as RegallocFunction;
+use minira::Set as RegallocSet;
+use minira::{mkBlockIx, mkInstIx, BlockIx, InstIx, InstRegUses, MyRange, RegClass};
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;
@@ -225,7 +225,11 @@ impl<I: MachInst> RegallocFunction for VCode<I> {
 
     fn block_succs(&self, block: BlockIx) -> Vec<BlockIx> {
         let (start, end) = self.block_succ_range[block.get() as usize];
-        self.block_succs[start..end].iter().cloned().map(mkBlockIx).collect()
+        self.block_succs[start..end]
+            .iter()
+            .cloned()
+            .map(mkBlockIx)
+            .collect()
     }
 
     fn get_regs(&self, insn: &I) -> InstRegUses {

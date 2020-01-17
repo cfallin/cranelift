@@ -7,8 +7,8 @@ use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
 use crate::isa::arm64::registers::*;
 use crate::machinst::*;
 
-use minira::interface::Map as RegallocMap;
-use minira::interface::{
+use minira::Map as RegallocMap;
+use minira::{
     mkRealReg, mkVirtualReg, RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg,
     NUM_REG_CLASSES,
 };
