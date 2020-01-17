@@ -1,28 +1,29 @@
 TODO:
 
-- Work out the branch-target story for MachInsts
-  - initially, encode intraprocedural targets in terms of vcode BBs
-  - initially, use virtual two-target conditional forms
-  - then, resolve in `finalize` given block ordering
+- Work out branch lowering, critical edge splits, and machine-independent handling of phis.
+  - Lowering driver should call separate entry points in backend for
+    non-terminator and terminator cases.
+  - Lowering driver should invoke separate "emit_move" and "emit_jump" hooks
+    provided by machine backend to lower phis and create split-edge blocks.
+    - Two-phase copy to handle "cyclic phis on self-backedge" case.
+  - Resolve the block order.
+  - Resolve abstract branches:
+    - Turn two-target form back into branch/fallthrough.
+    - Compute maximum size of all instructions, and block offsets.
+    - Given block offsets, allow each branch to use a smaller form. Compute final offsets.
+    - Resolve branch targets to concrete values.
 
-- Sketch regalloc `Function` trait, and implement it for VCode.
+- Finish top-level compilation pipeline
+  - Integration with regalloc (call minira)
+  - Prologue and epilogue generation
+  - Binary emission driver
+    - Constant pool handling? Alignment?
 
-- Build top-level compilation pipeline. Invoke branch-splitting; lowering;
-  placeholders for regalloc and code emission.
+- ISA completeness:
 
-- ImmLogic: implement the algorithm to determine whether an immediate can be
-  encoded as a logical immediate.
+  - ImmLogic: implement the algorithm to determine whether an immediate can be
+    encoded as a logical immediate.
 
-- Add opcodes to lowering. ALU, loads/stores, control flow.
+  - Add opcodes to lowering. ALU, loads/stores, control flow.
 
-- Binary emission
-  - Straight-line code
-  - Relocs and control flow
-  - Constant pool?
-
-- Integration with regalloc once minira is ready.
-
-- Prologue and epilogue generation
-
-- Integrate back into toplevel API: fork the compilation pipeline after
-  machine-independent ops.
+- Work out how to fit this into Cranelift public API.

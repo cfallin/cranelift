@@ -79,6 +79,8 @@ pub type MachInstRegs = SmallVec<[(Reg, RegMode); 4]>;
 pub trait MachInst: Clone {
     /// Return the registers referenced by this machine instruction along with the modes of
     /// reference (use, def, modify).
+    ///
+    /// TODO: rework this to return the minira InstRegUses directly.
     fn regs(&self) -> MachInstRegs;
 
     /// Map virtual registers to physical registers using the given virt->phys
