@@ -74,9 +74,12 @@ pub struct VCode<I: MachInst> {
     block_succ_range: Vec<(usize, usize)>,
 
     /// Block successor lists, concatenated into one Vec. The `block_succ_range`
-    //list of tuples above gives (start, end) ranges within this list that
-    //correspond to each basic block's successors.
+    /// list of tuples above gives (start, end) ranges within this list that
+    /// correspond to each basic block's successors.
     block_succs: Vec<BlockIndex>,
+
+    /// Block indices by Ebb.
+    block_by_ebb: SecondaryMap<ir::Ebb, BlockIndex>,
 }
 
 /// A builder for a VCode function body. This builder is designed for the
@@ -119,6 +122,20 @@ impl<I: MachInst> VCodeBuilder<I> {
         }
     }
 
+    /// Initialize the Ebb-to-BlockIndex map.
+    pub fn init_ebb_map(&mut self, blocks: &[ir::Ebb]) {
+      let mut bindex: BlockIndex = 0;
+      for ebb in blocks.iter() {
+        self.vcode.block_by_ebb[*ebb] = bindex;
+        bindex += 1;
+      }
+    }
+
+    /// Get the BlockIndex for an Ebb.
+    pub fn ebb_to_bindex(&self, ebb: ir::Ebb) -> BlockIndex {
+      self.vcode.block_by_ebb[ebb]
+    }
+
     /// Set the current block as the entry block.
     pub fn set_entry(&mut self, block: BlockIndex) {
         self.vcode.entry = block;
@@ -134,9 +151,10 @@ impl<I: MachInst> VCodeBuilder<I> {
 
     /// End the current basic block. Must be called after emitting vcode insts
     /// for IR insts and prior to ending the function (building the VCode).
-    pub fn end_bb(&mut self) -> BlockIndex {
+    pub fn end_bb(&mut self, ebb: ir::Ebb) -> BlockIndex {
         assert!(self.ir_inst_insns.is_empty());
         let block_num = self.vcode.block_ranges.len() as BlockIndex;
+        assert!(self.ebb_to_bindex(ebb) == block_num);
         // Push the instructions.
         let start_idx = self.vcode.insts.len() as InsnIndex;
         while let Some(i) = self.bb_insns.pop() {
@@ -187,6 +205,7 @@ impl<I: MachInst> VCode<I> {
             block_ranges: vec![],
             block_succ_range: vec![],
             block_succs: vec![],
+            block_by_ebb: SecondaryMap::with_default(0),
         }
     }
 }

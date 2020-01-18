@@ -498,33 +498,27 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
             });
         }
 
+        // TODO: move to lower_branch_group()
+        // TODO: Inst arm with two-arg form
         Opcode::Jump => {
-            lower_ebb_param_moves(ctx, insn);
             let dest = branch_target(ctx.data(insn)).unwrap();
             ctx.emit(Inst::Jump { dest });
         }
-        Opcode::Fallthrough => {
-            lower_ebb_param_moves(ctx, insn);
-        }
+        Opcode::Fallthrough => {}
         Opcode::Brz => {
             let rt = input_to_reg(ctx, inputs[0]);
             let dest = branch_target(ctx.data(insn)).unwrap();
-            // TODO: split crit edge and put moves on edge?
-            lower_ebb_param_moves(ctx, insn);
             ctx.emit(Inst::CondBrZ { dest, rt });
         }
         Opcode::Brnz => {
             let rt = input_to_reg(ctx, inputs[0]);
             let dest = branch_target(ctx.data(insn)).unwrap();
-            // TODO: split crit edge and put moves on edge?
-            lower_ebb_param_moves(ctx, insn);
             ctx.emit(Inst::CondBrNZ { dest, rt });
         }
         Opcode::BrIcmp => {
             let rn = input_to_reg(ctx, inputs[0]);
             let rm = input_to_reg(ctx, inputs[1]);
             let dest = branch_target(ctx.data(insn)).unwrap();
-            lower_ebb_param_moves(ctx, insn);
             let ty = ctx.input_ty(insn, 0);
             let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
             let rd = zero_reg();
@@ -591,21 +585,19 @@ fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
     }
 }
 
-fn lower_ebb_param_moves<'a>(ctx: Ctx<'a>, ir_inst: IRInst) {
-    assert!(ctx.data(ir_inst).opcode().is_branch());
-    let target = branch_target(ctx.data(ir_inst)).unwrap();
-
-    for i in 0..ctx.num_inputs(ir_inst) {
-        let src = ctx.input(ir_inst, i);
-        let dst = ctx.ebb_param(target, i);
-        ctx.emit(Inst::RegallocMove { dst, src });
-    }
-}
-
 impl LowerBackend for Arm64LowerBackend {
     type MInst = Inst;
 
-    fn lower(&mut self, ctx: &mut dyn LowerCtx<Inst>, ir_inst: IRInst) {
+    fn lower<C: LowerCtx<Inst>>(&mut self, ctx: &mut C, ir_inst: IRInst) {
         lower_insn_to_regs(ctx, ir_inst);
+    }
+
+    fn lower_branch_group<C: LowerCtx<Inst>>(
+        &mut self,
+        ctx: &mut C,
+        branches: &[IRInst],
+        targets: &[BlockIndex],
+    ) {
+        unimplemented!()
     }
 }

@@ -4,9 +4,9 @@
 
 use crate::binemit::CodeSink;
 use crate::entity::SecondaryMap;
-use crate::ir::{Ebb, Function, Inst, InstructionData, Type, Value, ValueDef};
+use crate::ir::{Ebb, Function, Inst, InstructionData, Opcode, Type, Value, ValueDef};
 use crate::isa::registers::RegUnit;
-use crate::machinst::{MachInst, MachInstEmit, MachInstRegs, VCode, VCodeBuilder};
+use crate::machinst::{BlockIndex, MachInst, MachInstEmit, MachInstRegs, VCode, VCodeBuilder};
 use crate::num_uses::NumUses;
 
 use minira::{mkVirtualReg, RealReg, Reg, RegClass, VirtualReg};
@@ -55,7 +55,18 @@ pub trait LowerBackend {
     type MInst: MachInst;
 
     /// Lower a single instruction. Instructions are lowered in reverse order.
-    fn lower(&mut self, ctx: &mut dyn LowerCtx<Self::MInst>, inst: Inst);
+    /// This function need not handle branches; those are always passed to
+    /// `lower_branch_group` below.
+    fn lower<C: LowerCtx<Self::MInst>>(&mut self, ctx: &mut C, inst: Inst);
+
+    /// Lower a block-terminating group of branches (which together can be seen as one
+    /// N-way branch), given a vcode BlockIndex for each target.
+    fn lower_branch_group<C: LowerCtx<Self::MInst>>(
+        &mut self,
+        ctx: &mut C,
+        insts: &[Inst],
+        targets: &[BlockIndex],
+    );
 }
 
 /// Machine-independent lowering driver / machine-instruction container. Maintains a correspondence
@@ -150,23 +161,66 @@ impl<'a, I: MachInst> Lower<'a, I> {
 
     /// Lower the function.
     pub fn lower<B: LowerBackend<MInst = I>>(mut self, backend: &mut B) -> VCode<I> {
-        // Work backward (postorder for EBBs, reverse through each EBB), skipping insns with
-        // zero uses.
-        let ebbs: SmallVec<[Ebb; 16]> = self.f.layout.ebbs().collect();
-        for ebb in ebbs.into_iter().rev() {
-            for inst in self.f.layout.ebb_insts(ebb).rev() {
-                if self.num_uses[inst] > 0 {
-                    self.start_inst(inst);
-                    backend.lower(&mut self, inst);
-                    self.end_inst();
-                    self.vcode.end_ir_inst();
+        // Work backward (reverse EBB order, reverse through each EBB), skipping insns with zero
+        // uses.
+        //
+        // TODO: handle edges. If any ebb params, then generate an ebb-param-move-block.
+        // TODO: handle phis by generating moves here.
+        let mut ebbs: SmallVec<[Ebb; 16]> = self.f.layout.ebbs().collect();
+        ebbs.reverse();
+        self.vcode.init_ebb_map(&ebbs[..]);
+        for ebb in ebbs.iter().rev() {
+            // Find the branches at the end first, and process those, if any.
+            let mut branches: SmallVec<[Inst; 2]> = SmallVec::new();
+            let mut targets: SmallVec<[BlockIndex; 2]> = SmallVec::new();
+            for inst in self.f.layout.ebb_insts(*ebb).rev() {
+                if self.f.dfg[inst].opcode().is_branch() {
+                    branches.push(inst);
+                    let instdata = &self.f.dfg[inst];
+                    let next_ebb = if instdata.opcode() == Opcode::Fallthrough {
+                        self.f.layout.next_ebb(*ebb).unwrap()
+                    } else {
+                        branch_target(instdata).unwrap()
+                    };
+                    let bindex = self.vcode.ebb_to_bindex(next_ebb);
+                    targets.push(bindex);
+                } else {
+                    // We've reached the end of the branches -- process all as a group, first.
+                    if branches.len() > 0 {
+                        backend.lower_branch_group(&mut self, &branches[..], &targets[..]);
+                        branches.clear();
+                        targets.clear();
+                    }
+
+                    // Of instructions that produce results, only lower instructions that have not
+                    // been marked as unused by all of their consumers.
+                    let num_results = self.f.dfg.inst_results(inst).len();
+                    let num_uses = self.num_uses[inst];
+                    if num_results == 0 || num_uses > 0 {
+                        self.start_inst(inst);
+                        backend.lower(&mut self, inst);
+                        self.end_inst();
+                        self.vcode.end_ir_inst();
+                    }
                 }
             }
-            let bb = self.vcode.end_bb();
-            if Some(ebb) == self.f.layout.entry_block() {
+
+            // There are possibly some branches left if the block contained only branches.
+            if branches.len() > 0 {
+                backend.lower_branch_group(&mut self, &branches[..], &targets[..]);
+                branches.clear();
+                targets.clear();
+            }
+
+            let bb = self.vcode.end_bb(*ebb);
+            if Some(*ebb) == self.f.layout.entry_block() {
                 self.vcode.set_entry(bb);
             }
         }
+
+        // TODO: compute block order. (Compute inline above with heuristics?)
+        // TODO: pass over instructions with fallthrough info. Finalize branches
+        // to machine instructions.
 
         self.vcode.build()
     }
@@ -256,5 +310,17 @@ impl<'a, I: MachInst> LowerCtx<I> for Lower<'a, I> {
     fn ebb_param(&self, ebb: Ebb, idx: usize) -> Reg {
         let val = self.f.dfg.ebb_params(ebb)[idx];
         self.value_regs[val]
+    }
+}
+
+fn branch_target(inst: &InstructionData) -> Option<Ebb> {
+    match inst {
+        &InstructionData::Jump { destination, .. }
+        | &InstructionData::Branch { destination, .. }
+        | &InstructionData::BranchInt { destination, .. }
+        | &InstructionData::BranchIcmp { destination, .. }
+        | &InstructionData::BranchFloat { destination, .. } => Some(destination),
+        &InstructionData::BranchTable { destination, .. } => unimplemented!(),
+        _ => None,
     }
 }

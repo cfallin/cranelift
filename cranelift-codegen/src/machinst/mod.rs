@@ -94,9 +94,6 @@ pub trait MachInst: Clone {
     /// If this is a simple move, return the (source, destination) tuple of registers.
     fn is_move(&self) -> Option<(Reg, Reg)>;
 
-    /// Finalize this instruction: convert any virtual instruction into a real one.
-    fn finalize(&mut self);
-
     /// Is this a terminator (branch or ret)? If so, return its type
     /// (ret/uncond/cond) and target if applicable.
     fn is_term(&self) -> MachTerminator;
@@ -120,6 +117,18 @@ pub trait MachInst: Clone {
 
     /// Determine a register class to store the given CraneLift type.
     fn rc_for_type(ty: Type) -> RegClass;
+
+    /// Generate a jump to another target. Used during lowering of
+    /// control flow.
+    fn gen_jump(target: BlockIndex) -> Self;
+
+    /// Finalize branches once the block order (fallthrough) is known.
+    fn with_fallthrough_block(&mut self, fallthrough_block: Option<BlockIndex>);
+
+    /// Update instruction once block offsets are known.  These offsets are
+    /// relative to the beginning of the function. `targets` is indexed by
+    /// BlockIndex.
+    fn with_block_offsets(&mut self, my_offset: usize, targets: &[usize]);
 }
 
 /// Describes a block terminator (not call) in the vcode. Because MachInsts /

@@ -191,9 +191,6 @@ pub enum Inst {
     CondBrNZ { dest: Ebb, rt: Reg },
     /// A conditional branch based on machine flags.
     CondBr { dest: Ebb, cond: Cond },
-
-    /// Virtual instruction: a move for regalloc.
-    RegallocMove { dst: Reg, src: Reg },
 }
 
 /// A shifted immediate value in 'imm12' format: supports 12 bits, shifted left by 0 or 12 places.
@@ -585,6 +582,18 @@ fn memarg_regs(memarg: &MemArg, regs: &mut MachInstRegs) {
     }
 }
 
+impl Inst {
+    /// Create a move instruction.
+    pub fn mov(to_reg: Reg, from_reg: Reg) -> Inst {
+        Inst::AluRRR {
+            alu_op: ALUOp::Add64,
+            rd: to_reg,
+            rm: from_reg,
+            rn: zero_reg(),
+        }
+    }
+}
+
 impl MachInst for Inst {
     fn regs(&self) -> MachInstRegs {
         let mut ret = SmallVec::new();
@@ -644,10 +653,6 @@ impl MachInst for Inst {
                 ret.push((rt.clone(), RegMode::Use));
             }
             &Inst::CondBr { .. } => {}
-            &Inst::RegallocMove { dst, src, .. } => {
-                ret.push((dst.clone(), RegMode::Def));
-                ret.push((src.clone(), RegMode::Use));
-            }
         }
         ret
     }
@@ -818,39 +823,16 @@ impl MachInst for Inst {
                 dest,
                 cond: cond.clone(),
             },
-            &mut Inst::RegallocMove { dst, src } => Inst::RegallocMove {
-                dst: map(d, dst),
-                src: map(u, src),
-            },
         };
         *self = newval;
     }
 
     fn is_move(&self) -> Option<(Reg, Reg)> {
         match self {
-            &Inst::RegallocMove { dst, src } => Some((dst.clone(), src.clone())),
-            _ => None,
-        }
-    }
-
-    fn finalize(&mut self) {
-        match self {
-            &mut Inst::RegallocMove { dst, src } => {
-                let rd = dst.clone();
-                let rn = src.clone();
-                let rm = zero_reg();
-                mem::replace(
-                    self,
-                    Inst::AluRRR {
-                        alu_op: ALUOp::Add64,
-                        rd,
-                        rn,
-                        rm,
-                    },
-                );
+            &Inst::AluRRR { alu_op, rd, rn, rm } if alu_op == ALUOp::Add64 && rm == zero_reg() => {
+                Some((rd, rm))
             }
-            // TODO: convert virtual branch forms into actual branches
-            _ => {}
+            _ => None,
         }
     }
 
@@ -897,10 +879,7 @@ impl MachInst for Inst {
     }
 
     fn gen_move(to_reg: RealReg, from_reg: RealReg) -> Inst {
-        Inst::RegallocMove {
-            dst: to_reg.to_reg(),
-            src: from_reg.to_reg(),
-        }
+        Inst::mov(to_reg.to_reg(), from_reg.to_reg())
     }
 
     fn maybe_direct_reload(&self, reg: VirtualReg, slot: SpillSlot) -> Option<Inst> {
@@ -914,6 +893,18 @@ impl MachInst for Inst {
             I128 | B128 => RegClass::V128,
             _ => panic!("Unexpected SSA-value type!"),
         }
+    }
+
+    fn gen_jump(blockindex: BlockIndex) -> Inst {
+        unimplemented!()
+    }
+
+    fn with_fallthrough_block(&mut self, fallthrough: Option<BlockIndex>) {
+        unimplemented!()
+    }
+
+    fn with_block_offsets(&mut self, my_offset: usize, targets: &[usize]) {
+        unimplemented!()
     }
 }
 
@@ -1021,9 +1012,6 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             &Inst::CallInd { rn, .. } => unimplemented!(),
             &Inst::CondBrZ { rt, .. } | &Inst::CondBrNZ { rt, .. } => unimplemented!(),
             &Inst::CondBr { .. } => unimplemented!(),
-            &Inst::RegallocMove { dst, src, .. } => {
-                panic!("RegallocMove reached binemit!");
-            }
         }
     }
 }
