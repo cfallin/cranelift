@@ -878,8 +878,8 @@ impl MachInst for Inst {
         }
     }
 
-    fn gen_move(to_reg: RealReg, from_reg: RealReg) -> Inst {
-        Inst::mov(to_reg.to_reg(), from_reg.to_reg())
+    fn gen_move(to_reg: Reg, from_reg: Reg) -> Inst {
+        Inst::mov(to_reg, from_reg)
     }
 
     fn maybe_direct_reload(&self, reg: VirtualReg, slot: SpillSlot) -> Option<Inst> {

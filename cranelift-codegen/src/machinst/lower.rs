@@ -163,27 +163,49 @@ impl<'a, I: MachInst> Lower<'a, I> {
     pub fn lower<B: LowerBackend<MInst = I>>(mut self, backend: &mut B) -> VCode<I> {
         // Work backward (reverse EBB order, reverse through each EBB), skipping insns with zero
         // uses.
-        //
-        // TODO: handle edges. If any ebb params, then generate an ebb-param-move-block.
-        // TODO: handle phis by generating moves here.
         let mut ebbs: SmallVec<[Ebb; 16]> = self.f.layout.ebbs().collect();
         ebbs.reverse();
-        self.vcode.init_ebb_map(&ebbs[..]);
-        for ebb in ebbs.iter().rev() {
-            // Find the branches at the end first, and process those, if any.
-            let mut branches: SmallVec<[Inst; 2]> = SmallVec::new();
-            let mut targets: SmallVec<[BlockIndex; 2]> = SmallVec::new();
-            for inst in self.f.layout.ebb_insts(*ebb).rev() {
+
+        // This records an Ebb-to-BlockIndex map so that branch targets can be resolved.
+        let mut next_bindex = self.vcode.init_ebb_map(&ebbs[..]);
+
+        // Allocate a separate BlockIndex for each control-flow instruction so that we can create
+        // the edge blocks later. Each entry for a control-flow inst is the edge block; the list
+        // has (cf-inst, edge block, orig block) tuples.
+        let mut edge_blocks_by_inst: SecondaryMap<Inst, Option<BlockIndex>> =
+            SecondaryMap::with_default(None);
+        let mut edge_blocks: Vec<(Inst, BlockIndex, Ebb)> = vec![];
+
+        for ebb in ebbs.iter() {
+            for inst in self.f.layout.ebb_insts(*ebb) {
                 if self.f.dfg[inst].opcode().is_branch() {
-                    branches.push(inst);
+                    // Find the original target.
                     let instdata = &self.f.dfg[inst];
                     let next_ebb = if instdata.opcode() == Opcode::Fallthrough {
                         self.f.layout.next_ebb(*ebb).unwrap()
                     } else {
                         branch_target(instdata).unwrap()
                     };
-                    let bindex = self.vcode.ebb_to_bindex(next_ebb);
-                    targets.push(bindex);
+
+                    // Allocate a new block number for the new target.
+                    let edge_block = next_bindex;
+                    next_bindex += 1;
+
+                    edge_blocks_by_inst[inst] = Some(edge_block);
+                    edge_blocks.push((inst, edge_block, next_ebb));
+                }
+            }
+        }
+
+        for ebb in ebbs.iter().rev() {
+            // Find the branches at the end first, and process those, if any.
+            let mut branches: SmallVec<[Inst; 2]> = SmallVec::new();
+            let mut targets: SmallVec<[BlockIndex; 2]> = SmallVec::new();
+            for inst in self.f.layout.ebb_insts(*ebb).rev() {
+                if edge_blocks_by_inst[inst].is_some() {
+                    let target = edge_blocks_by_inst[inst].clone().unwrap();
+                    branches.push(inst);
+                    targets.push(target);
                 } else {
                     // We've reached the end of the branches -- process all as a group, first.
                     if branches.len() > 0 {
@@ -212,10 +234,51 @@ impl<'a, I: MachInst> Lower<'a, I> {
                 targets.clear();
             }
 
-            let bb = self.vcode.end_bb(*ebb);
+            let bb = self.vcode.end_bb();
+            assert!(bb == self.vcode.ebb_to_bindex(*ebb));
             if Some(*ebb) == self.f.layout.entry_block() {
                 self.vcode.set_entry(bb);
             }
+        }
+
+        // Now create the edge blocks, with phi lowering (block parameter copies).
+        for (inst, edge_block, orig_block) in edge_blocks.into_iter() {
+            // Create a temporary for each block parameter.
+            let phi_classes: Vec<RegClass> = self
+                .f
+                .dfg
+                .ebb_params(orig_block)
+                .iter()
+                .map(|p| self.f.dfg.value_type(*p))
+                .map(I::rc_for_type)
+                .collect();
+            let phi_temps: Vec<Reg> = phi_classes.into_iter()
+                .map(|rc| self.tmp(rc))  // borrows `self` mutably.
+                .collect();
+
+            // Create all of the phi uses (reads) from jump args to temps.
+            for (i, arg) in self.f.dfg.inst_args(inst).iter().enumerate() {
+                let src_reg = self.value_regs[*arg];
+                let dst_reg = phi_temps[i];
+                self.vcode.push(I::gen_move(dst_reg, src_reg));
+            }
+
+            // Create all of the phi defs (writes) from temps to block params.
+            for (i, param) in self.f.dfg.ebb_params(orig_block).iter().enumerate() {
+                let src_reg = phi_temps[i];
+                let dst_reg = self.value_regs[*param];
+                self.vcode.push(I::gen_move(dst_reg, src_reg));
+            }
+
+            // Create the unconditional jump to the original target block.
+            self.vcode
+                .push(I::gen_jump(self.vcode.ebb_to_bindex(orig_block)));
+
+            // End the IR inst and block. (We lower this as if it were one IR instruction so that
+            // we can emit machine instructions in forward order.)
+            self.vcode.end_ir_inst();
+            let blocknum = self.vcode.end_bb();
+            assert!(blocknum == edge_block);
         }
 
         // TODO: compute block order. (Compute inline above with heuristics?)

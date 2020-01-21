@@ -122,18 +122,20 @@ impl<I: MachInst> VCodeBuilder<I> {
         }
     }
 
-    /// Initialize the Ebb-to-BlockIndex map.
-    pub fn init_ebb_map(&mut self, blocks: &[ir::Ebb]) {
-      let mut bindex: BlockIndex = 0;
-      for ebb in blocks.iter() {
-        self.vcode.block_by_ebb[*ebb] = bindex;
-        bindex += 1;
-      }
+    /// Initialize the Ebb-to-BlockIndex map. Returns the first free
+    /// BlockIndex.
+    pub fn init_ebb_map(&mut self, blocks: &[ir::Ebb]) -> BlockIndex {
+        let mut bindex: BlockIndex = 0;
+        for ebb in blocks.iter() {
+            self.vcode.block_by_ebb[*ebb] = bindex;
+            bindex += 1;
+        }
+        bindex
     }
 
     /// Get the BlockIndex for an Ebb.
     pub fn ebb_to_bindex(&self, ebb: ir::Ebb) -> BlockIndex {
-      self.vcode.block_by_ebb[ebb]
+        self.vcode.block_by_ebb[ebb]
     }
 
     /// Set the current block as the entry block.
@@ -151,10 +153,9 @@ impl<I: MachInst> VCodeBuilder<I> {
 
     /// End the current basic block. Must be called after emitting vcode insts
     /// for IR insts and prior to ending the function (building the VCode).
-    pub fn end_bb(&mut self, ebb: ir::Ebb) -> BlockIndex {
+    pub fn end_bb(&mut self) -> BlockIndex {
         assert!(self.ir_inst_insns.is_empty());
         let block_num = self.vcode.block_ranges.len() as BlockIndex;
-        assert!(self.ebb_to_bindex(ebb) == block_num);
         // Push the instructions.
         let start_idx = self.vcode.insts.len() as InsnIndex;
         while let Some(i) = self.bb_insns.pop() {
@@ -296,7 +297,7 @@ impl<I: MachInst> RegallocFunction for VCode<I> {
     }
 
     fn gen_move(&self, to_reg: RealReg, from_reg: RealReg) -> I {
-        I::gen_move(to_reg, from_reg)
+        I::gen_move(to_reg.to_reg(), from_reg.to_reg())
     }
 
     fn maybe_direct_reload(&self, insn: &I, reg: VirtualReg, slot: SpillSlot) -> Option<I> {

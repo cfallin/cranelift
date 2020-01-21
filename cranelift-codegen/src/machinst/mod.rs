@@ -108,7 +108,7 @@ pub trait MachInst: Clone {
     fn gen_reload(to_reg: RealReg, from_slot: SpillSlot) -> Self;
 
     /// Generate a move.
-    fn gen_move(to_reg: RealReg, from_reg: RealReg) -> Self;
+    fn gen_move(to_reg: Reg, from_reg: Reg) -> Self;
 
     /// Possibly operate on a value directly in a spill-slot rather than a
     /// register. Useful if the machine has register-memory instruction forms
