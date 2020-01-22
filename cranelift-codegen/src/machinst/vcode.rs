@@ -80,6 +80,12 @@ pub struct VCode<I: MachInst> {
 
     /// Block indices by Ebb.
     block_by_ebb: SecondaryMap<ir::Ebb, BlockIndex>,
+
+    /// Final block order.
+    block_final_order: Vec<BlockIndex>,
+
+    /// Final block offsets.
+    block_offsets: Vec<usize>,
 }
 
 /// A builder for a VCode function body. This builder is designed for the
@@ -207,6 +213,8 @@ impl<I: MachInst> VCode<I> {
             block_succ_range: vec![],
             block_succs: vec![],
             block_by_ebb: SecondaryMap::with_default(0),
+            block_final_order: vec![],
+            block_offsets: vec![],
         }
     }
 
@@ -214,6 +222,18 @@ impl<I: MachInst> VCode<I> {
     /// (self.num_blocks() - 1)`.
     pub fn num_blocks(&self) -> usize {
       self.block_ranges.len()
+    }
+
+    /// Get the total size of the code when emitted.
+    pub fn code_size(&self) -> usize {
+      // TODO: basic block alignment?
+      // TODO: size of any ConstantData?
+      self.insts.iter().map(|i| i.size()).sum()
+    }
+
+    /// Emit the instructions to the given sink.
+    pub fn emit<CS: CodeSink>(&self, cs: &mut CS) where I: MachInstEmit<CS> {
+      unimplemented!()
     }
 }
 

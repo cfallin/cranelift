@@ -1,47 +1,12 @@
 //! This module exposes the machine-specific backend definition pieces.
-//!
-//! Machine backends define two types, an `Op` (opcode) and `Arg` (instruction argument, meant to
-//! encapsulate, register, immediate, and memory references).
-//!
-//! Machine instructions (`MachInst` instances) are statically parameterized on these types for efficiency.
-//! They in turn are held by an implementation of the `MachInsts` trait that the `Function` holds
-//! by dynamic reference, in order to avoid parameterizing the entire IR world on machine backend.
-//!
-//! The `Function` requests a lowering of its IR (`ir::Inst`s) into machine-specific code, and the
-//! results are kept alongside the original IR, with a 1-to-N correspondence: each Cranelift IR
-//! instruction can correspond to N contiguous machine instructions. (N=0 is possible, if e.g. two
-//! IR instructions are fused into a single machine instruction: then the final value-producing
-//! instruction is the only one that has machine instructions.)
-//!
-//! To keep the interface with the register allocator simple, the control-flow and the register
-//! defs/uses of the Cranelift IR remain mostly canonical, even after lowering. There is one
-//! exception: because instruction lowering may require extra temps within a sequence of machine
-//! instructions (a Value that is def'd and use'd immediately), or may use a value from an earlier
-//! IR instruction if fusing instructions, we need to be able to add new args and results to
-//! Cranelift IR instructions. Rather than rewrite the instructions in place, or somehow alter
-//! their format, the `MachInsts` container keeps extra `Value` args and results for instructions
-//! as it goes. The register allocator queries this as well as the original instruction. (Why not
-//! just rewrite the whole list of defs/uses and make the regalloc ignore the originals? The common
-//! case is that no defs/uses change; the "exceptions" list should in the common case be very
-//! short or empty, leading to less memory overhead.)
 
-/* TODO:
-
-  - Top level compilation pipeline with new MachInst / VCode stuff:
-
-    - Split critical edges
-    - Machine-specific lowering
-    - Regalloc (minira)
-    - Binemit
-
-*/
-
-use crate::binemit::CodeSink;
+use crate::binemit::{CodeSink, MemoryCodeSink};
 use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;
 use crate::ir::ValueLocations;
-use crate::ir::{DataFlowGraph, Inst, Opcode, Type, Value};
+use crate::ir::{DataFlowGraph, Inst, Opcode, Type, Value, Function};
 use crate::isa::RegUnit;
+use crate::result::CodegenResult;
 use crate::HashMap;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -129,6 +94,9 @@ pub trait MachInst: Clone {
     /// relative to the beginning of the function. `targets` is indexed by
     /// BlockIndex.
     fn with_block_offsets(&mut self, my_offset: usize, targets: &[usize]);
+
+    /// Get the size of the instruction.
+    fn size(&self) -> usize;
 }
 
 /// Describes a block terminator (not call) in the vcode. Because MachInsts /
@@ -154,9 +122,13 @@ pub type MachLocations = Vec<RegUnit>; // Indexed by virtual register number.
 
 /// A trait describing the ability to encode a MachInst into binary machine code.
 pub trait MachInstEmit<CS: CodeSink> {
-    /// Get the size of the instruction.
-    fn size(&self) -> usize;
-
     /// Emit the instruction.
     fn emit(&self, cs: &mut CS);
+}
+
+/// Top-level machine backend trait, which wraps all monomorphized code and
+/// allows a virtual call from the machine-independent `Function::compile()`.
+pub trait MachBackend {
+  /// Compile the given function to a MemoryCodeSink. Consumes the function.
+  fn compile_function_to_memory(&mut self, func: Function) -> CodegenResult<Vec<u8>>;
 }

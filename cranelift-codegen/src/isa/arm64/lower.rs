@@ -8,13 +8,11 @@ use crate::machinst::lower::*;
 use crate::machinst::*;
 
 use crate::isa::arm64::inst::*;
-use crate::isa::arm64::registers::*;
+use crate::isa::arm64::Arm64Backend;
 
 use minira::{mkRealReg, mkVirtualReg, RealReg, Reg, RegClass, VirtualReg};
 
 use smallvec::SmallVec;
-
-pub struct Arm64LowerBackend {}
 
 fn op_to_aluop(op: Opcode, ty: Type) -> Option<ALUOp> {
     match (op, ty) {
@@ -554,7 +552,7 @@ fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
     }
 }
 
-impl LowerBackend for Arm64LowerBackend {
+impl LowerBackend for Arm64Backend {
     type MInst = Inst;
 
     fn lower<C: LowerCtx<Inst>>(&mut self, ctx: &mut C, ir_inst: IRInst) {

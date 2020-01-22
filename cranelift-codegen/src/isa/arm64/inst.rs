@@ -4,7 +4,6 @@ use crate::binemit::CodeSink;
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
 use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
-use crate::isa::arm64::registers::*;
 use crate::machinst::*;
 
 use minira::Map as RegallocMap;
@@ -1028,6 +1027,13 @@ impl MachInst for Inst {
             _ => {}
         }
     }
+
+    fn size(&self) -> usize {
+        match self {
+            &Inst::CondBrLoweredCompound { .. } => 8,
+            _ => 4, // RISC!
+        }
+    }
 }
 
 impl BranchTarget {
@@ -1081,13 +1087,6 @@ fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: Reg) -> u32 {
 }
 
 impl<CS: CodeSink> MachInstEmit<CS> for Inst {
-    fn size(&self) -> usize {
-        match self {
-            &Inst::CondBrLoweredCompound { .. } => 8,
-            _ => 4, // RISC!
-        }
-    }
-
     fn emit(&self, sink: &mut CS) {
         match self {
             &Inst::AluRRR { alu_op, rd, rn, rm } => {
