@@ -498,37 +498,6 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
             });
         }
 
-        // TODO: move to lower_branch_group()
-        // TODO: Inst arm with two-arg form
-        Opcode::Jump => {
-            let dest = branch_target(ctx.data(insn)).unwrap();
-            ctx.emit(Inst::Jump { dest });
-        }
-        Opcode::Fallthrough => {}
-        Opcode::Brz => {
-            let rt = input_to_reg(ctx, inputs[0]);
-            let dest = branch_target(ctx.data(insn)).unwrap();
-            ctx.emit(Inst::CondBrZ { dest, rt });
-        }
-        Opcode::Brnz => {
-            let rt = input_to_reg(ctx, inputs[0]);
-            let dest = branch_target(ctx.data(insn)).unwrap();
-            ctx.emit(Inst::CondBrNZ { dest, rt });
-        }
-        Opcode::BrIcmp => {
-            let rn = input_to_reg(ctx, inputs[0]);
-            let rm = input_to_reg(ctx, inputs[1]);
-            let dest = branch_target(ctx.data(insn)).unwrap();
-            let ty = ctx.input_ty(insn, 0);
-            let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
-            let rd = zero_reg();
-            ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
-            let cond = lower_condcode(inst_condcode(ctx.data(insn)).unwrap());
-            ctx.emit(Inst::CondBr { dest, cond });
-        }
-
-        // TODO: Brif/icmp, Brff/icmp, jump tables, call, ret
-
         // TODO: cmp
         // TODO: more alu ops
         _ => unimplemented!(),
@@ -597,7 +566,112 @@ impl LowerBackend for Arm64LowerBackend {
         ctx: &mut C,
         branches: &[IRInst],
         targets: &[BlockIndex],
+        fallthrough: Option<BlockIndex>,
     ) {
-        unimplemented!()
+        // A block should end with at most two branches. The first may be a
+        // conditional branch; a conditional branch can be followed only by an
+        // unconditional branch or fallthrough. Otherwise, if only one branch,
+        // it may be an unconditional branch, a fallthrough, a return, or a
+        // trap. These conditions are verified by `is_ebb_basic()` during the
+        // verifier pass.
+        assert!(branches.len() <= 2);
+
+        if branches.len() == 2 {
+            // Must be a conditional branch followed by an unconditional branch.
+            let op1 = ctx.data(branches[0]).opcode();
+            let op2 = ctx.data(branches[1]).opcode();
+
+            assert!(op2 == Opcode::Jump || op2 == Opcode::Fallthrough);
+            let taken = BranchTarget::Block(targets[0]);
+            let not_taken = match op2 {
+                Opcode::Jump => BranchTarget::Block(targets[1]),
+                Opcode::Fallthrough => BranchTarget::Block(fallthrough.unwrap()),
+                _ => unreachable!(),  // assert above.
+            };
+            match op1 {
+                Opcode::Brz | Opcode::Brnz => {
+                    let rt = input_to_reg(
+                        ctx,
+                        InsnInput {
+                            insn: branches[0],
+                            input: 0,
+                        },
+                    );
+                    let kind = match op1 {
+                        Opcode::Brz => CondBrKind::Zero(rt),
+                        Opcode::Brnz => CondBrKind::NotZero(rt),
+                        _ => unreachable!(),
+                    };
+                    ctx.emit(Inst::CondBr {
+                        taken,
+                        not_taken,
+                        kind,
+                    });
+                }
+                Opcode::BrIcmp => {
+                    let rn = input_to_reg(
+                        ctx,
+                        InsnInput {
+                            insn: branches[0],
+                            input: 0,
+                        },
+                    );
+                    let rm = input_to_reg(
+                        ctx,
+                        InsnInput {
+                            insn: branches[0],
+                            input: 1,
+                        },
+                    );
+                    let ty = ctx.input_ty(branches[0], 0);
+                    let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
+                    let rd = zero_reg();
+                    ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
+                    let cond = lower_condcode(inst_condcode(ctx.data(branches[0])).unwrap());
+                    ctx.emit(Inst::CondBr {
+                        taken,
+                        not_taken,
+                        kind: CondBrKind::Cond(cond),
+                    });
+                }
+
+                // TODO: Brif/icmp, Brff/icmp, jump tables, call, ret
+                _ => unimplemented!(),
+            }
+        } else {
+            assert!(branches.len() == 1);
+
+            // Must be an unconditional branch, fallthrough, return, or trap.
+            let op = ctx.data(branches[0]).opcode();
+            match op {
+                Opcode::Jump => {
+                    ctx.emit(Inst::Jump {
+                        dest: BranchTarget::Block(targets[0]),
+                    });
+                }
+                Opcode::Fallthrough => {
+                    ctx.emit(Inst::Jump {
+                        dest: BranchTarget::Block(targets[0]),
+                    });
+                }
+
+                Opcode::FallthroughReturn => {
+                    // What is this? The definition says it's a "special
+                    // instruction" meant to allow falling through into an
+                    // epilogue that will then return; that just sounds like a
+                    // normal fallthrough. TODO: Do we need to handle this
+                    // differently?
+                    unimplemented!();
+                }
+
+                Opcode::Return => {
+                    ctx.emit(Inst::Ret {});
+                }
+
+                Opcode::Trap => unimplemented!(),
+
+                _ => panic!("Unknown branch type!"),
+            }
+        }
     }
 }

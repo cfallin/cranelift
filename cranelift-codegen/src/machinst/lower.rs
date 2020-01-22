@@ -67,6 +67,7 @@ pub trait LowerBackend {
         ctx: &mut C,
         insts: &[Inst],
         targets: &[BlockIndex],
+        fallthrough: Option<BlockIndex>,
     );
 }
 
@@ -179,13 +180,16 @@ impl<'a, I: MachInst> Lower<'a, I> {
 
         for ebb in ebbs.iter() {
             for inst in self.f.layout.ebb_insts(*ebb) {
-                if self.f.dfg[inst].opcode().is_branch() {
+                let op = self.f.dfg[inst].opcode();
+                if op.is_branch() || op.is_terminator() {
                     // Find the original target.
                     let instdata = &self.f.dfg[inst];
-                    let next_ebb = if instdata.opcode() == Opcode::Fallthrough {
-                        self.f.layout.next_ebb(*ebb).unwrap()
-                    } else {
-                        branch_target(instdata).unwrap()
+                    let next_ebb = match op {
+                        Opcode::Fallthrough | Opcode::FallthroughReturn => {
+                            self.f.layout.next_ebb(*ebb).unwrap()
+                        }
+                        Opcode::Trap | Opcode::IndirectJumpTableBr => unimplemented!(),
+                        _ => branch_target(instdata).unwrap(),
                     };
 
                     // Allocate a new block number for the new target.
@@ -202,6 +206,7 @@ impl<'a, I: MachInst> Lower<'a, I> {
             // Find the branches at the end first, and process those, if any.
             let mut branches: SmallVec<[Inst; 2]> = SmallVec::new();
             let mut targets: SmallVec<[BlockIndex; 2]> = SmallVec::new();
+
             for inst in self.f.layout.ebb_insts(*ebb).rev() {
                 if edge_blocks_by_inst[inst].is_some() {
                     let target = edge_blocks_by_inst[inst].clone().unwrap();
@@ -210,7 +215,14 @@ impl<'a, I: MachInst> Lower<'a, I> {
                 } else {
                     // We've reached the end of the branches -- process all as a group, first.
                     if branches.len() > 0 {
-                        backend.lower_branch_group(&mut self, &branches[..], &targets[..]);
+                        let fallthrough = self.f.layout.next_ebb(*ebb);
+                        let fallthrough = fallthrough.map(|ebb| self.vcode.ebb_to_bindex(ebb));
+                        backend.lower_branch_group(
+                            &mut self,
+                            &branches[..],
+                            &targets[..],
+                            fallthrough,
+                        );
                         branches.clear();
                         targets.clear();
                     }
@@ -230,7 +242,9 @@ impl<'a, I: MachInst> Lower<'a, I> {
 
             // There are possibly some branches left if the block contained only branches.
             if branches.len() > 0 {
-                backend.lower_branch_group(&mut self, &branches[..], &targets[..]);
+                let fallthrough = self.f.layout.next_ebb(*ebb);
+                let fallthrough = fallthrough.map(|ebb| self.vcode.ebb_to_bindex(ebb));
+                backend.lower_branch_group(&mut self, &branches[..], &targets[..], fallthrough);
                 branches.clear();
                 targets.clear();
             }

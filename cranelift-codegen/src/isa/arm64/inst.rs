@@ -176,21 +176,55 @@ pub enum Inst {
     /// A MOVZ with a 16-bit immediate.
     MovZ { rd: Reg, imm: MovZConst },
 
-    /// An unconditional branch.
-    Jump { dest: Ebb },
     /// A machine call instruction.
     Call { dest: FuncRef },
-    /// A machine return instruction.
-    Ret {},
     /// A machine indirect-call instruction.
     CallInd { rn: Reg },
 
-    /// A conditional branch on zero.
-    CondBrZ { dest: Ebb, rt: Reg },
-    /// A conditional branch on nonzero.
-    CondBrNZ { dest: Ebb, rt: Reg },
-    /// A conditional branch based on machine flags.
-    CondBr { dest: Ebb, cond: Cond },
+    // ---- branches (exactly one must appear at end of BB) ----
+    /// A machine return instruction.
+    Ret {},
+    /// An unconditional branch.
+    Jump { dest: BranchTarget },
+
+    /// A conditional branch.
+    CondBr {
+        taken: BranchTarget,
+        not_taken: BranchTarget,
+        kind: CondBrKind,
+    },
+
+    /// Lowered conditional branch: contains the original instruction, and a
+    /// flag indicating whether to invert the taken-condition or not. Only one
+    /// BranchTarget is retained, and the other is implicitly the next
+    /// instruction, given the final basic-block layout.
+    CondBrLowered {
+        target: BranchTarget,
+        inverted: bool,
+        kind: CondBrKind,
+    },
+
+    /// As for `CondBrLowered`, but represents a condbr/uncond-br sequence (two
+    /// actual machine instructions). Needed when the final block layout implies
+    /// that both arms of a conditional branch are not the fallthrough block.
+    CondBrLoweredCompound {
+        taken: BranchTarget,
+        not_taken: BranchTarget,
+        kind: CondBrKind,
+    },
+}
+
+/// The kind of conditional branch: the common-case-optimized "reg-is-zero" /
+/// "reg-is-nonzero" variants, or the generic one that tests the machine
+/// condition codes.
+#[derive(Clone, Copy, Debug)]
+pub enum CondBrKind {
+    /// Condition: given register is zero.
+    Zero(Reg),
+    /// Condition: given register is nonzero.
+    NotZero(Reg),
+    /// Condition: the given condition-code test is true.
+    Cond(Cond),
 }
 
 /// A shifted immediate value in 'imm12' format: supports 12 bits, shifted left by 0 or 12 places.
@@ -523,7 +557,7 @@ pub enum MemLabel {
 }
 
 /// Condition for conditional branches.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Cond {
     Eq,
     Ne,
@@ -541,6 +575,18 @@ pub enum Cond {
     Le,
     Al,
     Nv,
+}
+
+/// A branch target. Either unresolved (basic-block index) or resolved (offset
+/// from end of current instruction).
+#[derive(Clone, Copy, Debug)]
+pub enum BranchTarget {
+    /// An unresolved reference to a BlockIndex, as passed into
+    /// `lower_branch_group()`.
+    Block(BlockIndex),
+    /// A resolved reference to another instruction, after
+    /// `Inst::with_block_offsets()`.
+    ResolvedOffset(isize),
 }
 
 /// Helper: get a ConstantData from a u32.
@@ -649,10 +695,14 @@ impl MachInst for Inst {
             &Inst::CallInd { rn, .. } => {
                 ret.push((rn.clone(), RegMode::Use));
             }
-            &Inst::CondBrZ { rt, .. } | &Inst::CondBrNZ { rt, .. } => {
-                ret.push((rt.clone(), RegMode::Use));
-            }
-            &Inst::CondBr { .. } => {}
+            &Inst::CondBr { ref kind, .. }
+            | &Inst::CondBrLowered { ref kind, .. }
+            | &Inst::CondBrLoweredCompound { ref kind, .. } => match kind {
+                CondBrKind::Zero(rt) | CondBrKind::NotZero(rt) => {
+                    ret.push((rt.clone(), RegMode::Use));
+                }
+                CondBrKind::Cond(_) => {}
+            },
         }
         ret
     }
@@ -687,6 +737,14 @@ impl MachInst for Inst {
                     MemArg::BasePlusRegScaled(map(u, r1), map(u, r2), ty)
                 }
                 &MemArg::Label(ref l) => MemArg::Label(l.clone()),
+            }
+        }
+
+        fn map_br(u: &RegallocMap<VirtualReg, RealReg>, br: &CondBrKind) -> CondBrKind {
+            match br {
+                &CondBrKind::Zero(reg) => CondBrKind::Zero(map(u, reg)),
+                &CondBrKind::NotZero(reg) => CondBrKind::NotZero(map(u, reg)),
+                &CondBrKind::Cond(c) => CondBrKind::Cond(c),
             }
         }
 
@@ -811,17 +869,32 @@ impl MachInst for Inst {
             &mut Inst::Call { dest } => Inst::Call { dest },
             &mut Inst::Ret {} => Inst::Ret {},
             &mut Inst::CallInd { rn } => Inst::CallInd { rn: map(u, rn) },
-            &mut Inst::CondBrZ { rt, dest } => Inst::CondBrZ {
-                rt: map(u, rt),
-                dest,
+            &mut Inst::CondBr {
+                taken,
+                not_taken,
+                kind,
+            } => Inst::CondBr {
+                taken,
+                not_taken,
+                kind: map_br(u, &kind),
             },
-            &mut Inst::CondBrNZ { rt, dest } => Inst::CondBrNZ {
-                rt: map(u, rt),
-                dest,
+            &mut Inst::CondBrLowered {
+                target,
+                inverted,
+                kind,
+            } => Inst::CondBrLowered {
+                target,
+                inverted,
+                kind: map_br(u, &kind),
             },
-            &mut Inst::CondBr { dest, ref cond } => Inst::CondBr {
-                dest,
-                cond: cond.clone(),
+            &mut Inst::CondBrLoweredCompound {
+                taken,
+                not_taken,
+                kind,
+            } => Inst::CondBrLoweredCompound {
+                taken,
+                not_taken,
+                kind: map_br(u, &kind),
             },
         };
         *self = newval;
@@ -838,9 +911,14 @@ impl MachInst for Inst {
 
     fn is_term(&self) -> MachTerminator {
         match self {
-            // TODO: insts in terms of machine BB indices (vcode::BlockIndex)
-            // TODO: virtual two-dest condbr form that finalizes into two
-            // insns (or one, if fallthrough)
+            &Inst::Ret {} => MachTerminator::Ret,
+            &Inst::Jump { dest } => MachTerminator::Uncond(dest.as_block_index().unwrap()),
+            &Inst::CondBr {
+                taken, not_taken, ..
+            } => MachTerminator::Cond(
+                taken.as_block_index().unwrap(),
+                not_taken.as_block_index().unwrap(),
+            ),
             _ => MachTerminator::None,
         }
     }
@@ -900,11 +978,77 @@ impl MachInst for Inst {
     }
 
     fn with_fallthrough_block(&mut self, fallthrough: Option<BlockIndex>) {
-        unimplemented!()
+        match self {
+            &mut Inst::CondBr {
+                taken,
+                not_taken,
+                kind,
+            } => {
+                if taken.as_block_index() == fallthrough {
+                    *self = Inst::CondBrLowered {
+                        target: not_taken,
+                        inverted: true,
+                        kind,
+                    };
+                } else if not_taken.as_block_index() == fallthrough {
+                    *self = Inst::CondBrLowered {
+                        target: taken,
+                        inverted: false,
+                        kind,
+                    };
+                } else {
+                    // We need a compound sequence (condbr / uncond-br).
+                    *self = Inst::CondBrLoweredCompound {
+                        taken,
+                        not_taken,
+                        kind,
+                    };
+                }
+            }
+            _ => {}
+        }
     }
 
     fn with_block_offsets(&mut self, my_offset: usize, targets: &[usize]) {
-        unimplemented!()
+        match self {
+            &mut Inst::CondBrLowered { ref mut target, .. } => {
+                target.lower(targets, my_offset);
+            }
+            &mut Inst::CondBrLoweredCompound {
+                ref mut taken,
+                ref mut not_taken,
+                ..
+            } => {
+                taken.lower(targets, my_offset);
+                not_taken.lower(targets, my_offset);
+            }
+            &mut Inst::Jump { ref mut dest } => {
+                dest.lower(targets, my_offset);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl BranchTarget {
+    fn lower(&mut self, targets: &[usize], my_offset: usize) {
+        match self {
+            &mut BranchTarget::Block(bix) => {
+                let bix = bix as usize;
+                assert!(bix < targets.len());
+                let block_offset_in_func = targets[bix];
+                let branch_offset = (block_offset_in_func as isize) - (my_offset as isize);
+                *self = BranchTarget::ResolvedOffset(branch_offset);
+            }
+            &mut BranchTarget::ResolvedOffset(..) => {}
+        }
+    }
+
+    fn as_block_index(&self) -> Option<BlockIndex> {
+        match self {
+            &BranchTarget::Block(bix) => Some(bix),
+            _ => None,
+        }
     }
 }
 
@@ -938,7 +1082,10 @@ fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: Reg) -> u32 {
 
 impl<CS: CodeSink> MachInstEmit<CS> for Inst {
     fn size(&self) -> usize {
-        4 // RISC!
+        match self {
+            &Inst::CondBrLoweredCompound { .. } => 8,
+            _ => 4, // RISC!
+        }
     }
 
     fn emit(&self, sink: &mut CS) {
@@ -1010,8 +1157,9 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             &Inst::MovZ { rd, .. } => unimplemented!(),
             &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => unimplemented!(),
             &Inst::CallInd { rn, .. } => unimplemented!(),
-            &Inst::CondBrZ { rt, .. } | &Inst::CondBrNZ { rt, .. } => unimplemented!(),
-            &Inst::CondBr { .. } => unimplemented!(),
+            &Inst::CondBr { .. } => panic!("Unlowered CondBr during binemit!"),
+            &Inst::CondBrLowered { .. } => unimplemented!(),
+            &Inst::CondBrLoweredCompound { .. } => unimplemented!(),
         }
     }
 }

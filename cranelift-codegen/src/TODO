@@ -1,9 +1,6 @@
 TODO:
 
 - Work out branch lowering, critical edge splits, and machine-independent handling of phis.
-  - isa/arm64: Resolve branch groups into virtual branch instructions.
-  - isa/arm64: Resolve abstract branches:
-    - Turn two-target form back into branch/fallthrough.
 
   - machinst/lower, isa/arm64: Compute instruction sizes and resolve block
     offsets and branch relos.
@@ -24,6 +21,8 @@ TODO:
     encoded as a logical immediate.
 
   - Add opcodes to lowering. ALU, loads/stores, control flow.
+
+  - 8/16-bit ops? Widening for legalization?
 
 - Work out how to fit this into Cranelift public API.
 
