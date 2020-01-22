@@ -209,6 +209,12 @@ impl<I: MachInst> VCode<I> {
             block_by_ebb: SecondaryMap::with_default(0),
         }
     }
+
+    /// Get the number of blocks. Block indices will be in the range `0 ..
+    /// (self.num_blocks() - 1)`.
+    pub fn num_blocks(&self) -> usize {
+      self.block_ranges.len()
+    }
 }
 
 impl<I: MachInst> RegallocFunction for VCode<I> {
