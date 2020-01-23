@@ -96,7 +96,7 @@ pub enum IsaBackend {
     /// An old-style `Builder`.
     Builder(Builder),
     /// A new-style `MachBackend`.
-    MachBackend(Box<MachBackend>),
+    MachBackend(Box<dyn MachBackend>),
 }
 
 impl IsaBackend {

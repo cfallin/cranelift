@@ -22,6 +22,7 @@
 
 use crate::constant_hash::{probe, simple_hash};
 use crate::isa::TargetIsa;
+use crate::machinst::MachBackend;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use core::fmt;
@@ -336,7 +337,8 @@ pub mod detail {
 // `cranelift-codegen/meta/src/shared/settings.rs`.
 include!(concat!(env!("OUT_DIR"), "/settings.rs"));
 
-/// Wrapper containing flags and optionally a `TargetIsa` trait object.
+/// Wrapper containing flags and optionally a `TargetIsa` trait object or a `MachBackend`
+/// trait object.
 ///
 /// A few passes need to access the flags but only optionally a target ISA. The `FlagsOrIsa`
 /// wrapper can be used to pass either, and extract the flags so they are always accessible.
@@ -347,11 +349,18 @@ pub struct FlagsOrIsa<'a> {
 
     /// The ISA may not be present.
     pub isa: Option<&'a dyn TargetIsa>,
+
+    /// The MachBackend may not be present.
+    pub backend: Option<&'a dyn MachBackend>,
 }
 
 impl<'a> From<&'a Flags> for FlagsOrIsa<'a> {
     fn from(flags: &'a Flags) -> FlagsOrIsa {
-        FlagsOrIsa { flags, isa: None }
+        FlagsOrIsa {
+            flags,
+            isa: None,
+            backend: None,
+        }
     }
 }
 
@@ -360,6 +369,17 @@ impl<'a> From<&'a dyn TargetIsa> for FlagsOrIsa<'a> {
         FlagsOrIsa {
             flags: isa.flags(),
             isa: Some(isa),
+            backend: None,
+        }
+    }
+}
+
+impl<'a> From<&'a dyn MachBackend> for FlagsOrIsa<'a> {
+    fn from(backend: &'a dyn MachBackend) -> FlagsOrIsa {
+        FlagsOrIsa {
+            flags: backend.flags(),
+            isa: None,
+            backend: Some(backend),
         }
     }
 }

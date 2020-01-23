@@ -1,6 +1,6 @@
 TODO:
 
-- Work out branch lowering, critical edge splits, and machine-independent handling of phis.
+- Binary emission
 
   - machinst/lower, isa/arm64: Compute instruction sizes and resolve block
     offsets and branch relos.
@@ -9,22 +9,26 @@ TODO:
     - Resolve branch targets to concrete values. (All machine instructions
       should have an enum with options: BlockIndex, usize.)
 
-- Finish top-level compilation pipeline
-  - Integration with regalloc (call minira)
-  - Prologue and epilogue generation
-  - Binary emission driver
-    - Constant pool handling? Alignment?
+  - top-level driver to emit to a sink, with relos.
+  - Constant pool?
+  - Basic-block alignment?
+  - Get to M0 with CLIF or WASM input and pretty-printing the VCode output
+
+- Function ABI:
+  - callee side
+    - Arguments and return values
+    - Prologue and epilogue generation
+  - caller side
+    - Clobbers, function args, etc.
 
 - ISA completeness:
-
   - ImmLogic: implement the algorithm to determine whether an immediate can be
     encoded as a logical immediate.
-
   - Add opcodes to lowering. ALU, loads/stores, control flow.
-
   - 8/16-bit ops? Widening for legalization?
 
 - Work out how to fit this into Cranelift public API.
+  - Currently a hack-job (two different APIs). Unify somehow.
 
 -------
 

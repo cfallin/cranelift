@@ -1,7 +1,9 @@
 //! Utility functions.
 
 use cranelift_codegen::isa;
+use cranelift_codegen::isa::IsaBackend;
 use cranelift_codegen::isa::TargetIsa;
+use cranelift_codegen::machinst::MachBackend;
 use cranelift_codegen::settings::{self, FlagsOrIsa};
 use cranelift_reader::{parse_options, Location};
 use std::fs::File;
@@ -43,6 +45,7 @@ pub fn read_to_end<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
 pub enum OwnedFlagsOrIsa {
     Flags(settings::Flags),
     Isa(Box<dyn TargetIsa>),
+    MachBackend(Box<dyn MachBackend>),
 }
 
 impl OwnedFlagsOrIsa {
@@ -51,6 +54,7 @@ impl OwnedFlagsOrIsa {
         match *self {
             Self::Flags(ref flags) => FlagsOrIsa::from(flags),
             Self::Isa(ref isa) => FlagsOrIsa::from(&**isa),
+            Self::MachBackend(ref backend) => FlagsOrIsa::from(&**backend),
         }
     }
 }
@@ -75,7 +79,7 @@ pub fn parse_sets_and_triple(
             Ok(triple) => triple,
             Err(parse_error) => return Err(parse_error.to_string()),
         };
-        let mut isa_builder = isa::lookup(triple).map_err(|err| match err {
+        let builder_or_backend = isa::lookup(triple).map_err(|err| match err {
             isa::LookupError::SupportDisabled => {
                 format!("support for triple '{}' is disabled", triple_name)
             }
@@ -83,14 +87,20 @@ pub fn parse_sets_and_triple(
                 "support for triple '{}' is not implemented yet",
                 triple_name
             ),
-        })?.as_builder();
-        // Apply the ISA-specific settings to `isa_builder`.
-        parse_options(words, &mut isa_builder, Location { line_number: 0 })
-            .map_err(|err| err.to_string())?;
+        })?;
 
-        Ok(OwnedFlagsOrIsa::Isa(
-            isa_builder.finish(settings::Flags::new(flag_builder)),
-        ))
+        match builder_or_backend {
+            IsaBackend::Builder(mut isa_builder) => {
+                // Apply the ISA-specific settings to `isa_builder`.
+                parse_options(words, &mut isa_builder, Location { line_number: 0 })
+                    .map_err(|err| err.to_string())?;
+
+                Ok(OwnedFlagsOrIsa::Isa(
+                    isa_builder.finish(settings::Flags::new(flag_builder)),
+                ))
+            }
+            IsaBackend::MachBackend(backend) => Ok(OwnedFlagsOrIsa::MachBackend(backend)),
+        }
     } else {
         Ok(OwnedFlagsOrIsa::Flags(settings::Flags::new(flag_builder)))
     }

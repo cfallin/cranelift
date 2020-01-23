@@ -34,6 +34,7 @@ impl<'a> Context<'a> {
         FlagsOrIsa {
             flags: self.flags,
             isa: self.isa,
+            backend: None,
         }
     }
 }

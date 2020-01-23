@@ -58,12 +58,12 @@ pub trait LowerBackend {
     /// Lower a single instruction. Instructions are lowered in reverse order.
     /// This function need not handle branches; those are always passed to
     /// `lower_branch_group` below.
-    fn lower<C: LowerCtx<Self::MInst>>(&mut self, ctx: &mut C, inst: Inst);
+    fn lower<C: LowerCtx<Self::MInst>>(&self, ctx: &mut C, inst: Inst);
 
     /// Lower a block-terminating group of branches (which together can be seen as one
     /// N-way branch), given a vcode BlockIndex for each target.
     fn lower_branch_group<C: LowerCtx<Self::MInst>>(
-        &mut self,
+        &self,
         ctx: &mut C,
         insts: &[Inst],
         targets: &[BlockIndex],
@@ -162,7 +162,7 @@ impl<'a, I: MachInst> Lower<'a, I> {
     }
 
     /// Lower the function.
-    pub fn lower<B: LowerBackend<MInst = I>>(mut self, backend: &mut B) -> VCode<I> {
+    pub fn lower<B: LowerBackend<MInst = I>>(mut self, backend: &B) -> VCode<I> {
         // Work backward (reverse EBB order, reverse through each EBB), skipping insns with zero
         // uses.
         let mut ebbs: SmallVec<[Ebb; 16]> = self.f.layout.ebbs().collect();

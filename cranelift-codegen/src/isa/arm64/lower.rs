@@ -555,12 +555,12 @@ fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
 impl LowerBackend for Arm64Backend {
     type MInst = Inst;
 
-    fn lower<C: LowerCtx<Inst>>(&mut self, ctx: &mut C, ir_inst: IRInst) {
+    fn lower<C: LowerCtx<Inst>>(&self, ctx: &mut C, ir_inst: IRInst) {
         lower_insn_to_regs(ctx, ir_inst);
     }
 
     fn lower_branch_group<C: LowerCtx<Inst>>(
-        &mut self,
+        &self,
         ctx: &mut C,
         branches: &[IRInst],
         targets: &[BlockIndex],
@@ -584,7 +584,7 @@ impl LowerBackend for Arm64Backend {
             let not_taken = match op2 {
                 Opcode::Jump => BranchTarget::Block(targets[1]),
                 Opcode::Fallthrough => BranchTarget::Block(fallthrough.unwrap()),
-                _ => unreachable!(),  // assert above.
+                _ => unreachable!(), // assert above.
             };
             match op1 {
                 Opcode::Brz | Opcode::Brnz => {

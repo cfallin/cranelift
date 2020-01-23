@@ -1,12 +1,13 @@
 //! This module exposes the machine-specific backend definition pieces.
 
-use crate::binemit::{CodeSink, MemoryCodeSink};
+use crate::binemit::{CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
 use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;
 use crate::ir::ValueLocations;
-use crate::ir::{DataFlowGraph, Inst, Opcode, Type, Value, Function};
+use crate::ir::{DataFlowGraph, Function, Inst, Opcode, Type, Value};
 use crate::isa::RegUnit;
 use crate::result::CodegenResult;
+use crate::settings::Flags;
 use crate::HashMap;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -129,6 +130,15 @@ pub trait MachInstEmit<CS: CodeSink> {
 /// Top-level machine backend trait, which wraps all monomorphized code and
 /// allows a virtual call from the machine-independent `Function::compile()`.
 pub trait MachBackend {
-  /// Compile the given function to a MemoryCodeSink. Consumes the function.
-  fn compile_function_to_memory(&mut self, func: Function) -> CodegenResult<Vec<u8>>;
+    /// Compile the given function to memory. Consumes the function.
+    fn compile_function_to_memory(
+        &self,
+        func: Function,
+        relocs: &mut dyn RelocSink,
+        traps: &mut dyn TrapSink,
+        stackmaps: &mut dyn StackmapSink,
+    ) -> CodegenResult<Vec<u8>>;
+
+    /// Return flags for this backend.
+    fn flags(&self) -> &Flags;
 }
