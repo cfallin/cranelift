@@ -31,7 +31,7 @@
 //! let shared_builder = settings::builder();
 //! let shared_flags = settings::Flags::new(shared_builder);
 //!
-//! match isa::lookup(triple!("riscv32")) {
+//! match isa::lookup(triple!("riscv32")).map(|b| b.as_builder()) {
 //!     Err(_) => {
 //!         // The RISC-V target ISA is not available.
 //!     }
@@ -58,6 +58,7 @@ use crate::binemit;
 use crate::flowgraph;
 use crate::ir;
 use crate::isa::enc_tables::Encodings;
+use crate::machinst::MachBackend;
 use crate::regalloc;
 use crate::result::CodegenResult;
 use crate::settings;
@@ -89,13 +90,34 @@ mod encoding;
 pub mod registers;
 mod stack;
 
+/// Represents a backend: either an old-style `Builder` for a `TargetIsa`, or a
+/// new `MachBackend`.
+pub enum IsaBackend {
+    /// An old-style `Builder`.
+    Builder(Builder),
+    /// A new-style `MachBackend`.
+    MachBackend(Box<MachBackend>),
+}
+
+impl IsaBackend {
+    /// Unwrap the backend into a Builder (old-style backend), panic'ing if it
+    /// was actually a MachBackend. Should be used only for
+    /// backward-compatibility in tests while we transition all backends over.
+    pub fn as_builder(self) -> Builder {
+        match self {
+            IsaBackend::Builder(b) => b,
+            _ => panic!("IsaBackend is not a Builder"),
+        }
+    }
+}
+
 /// Returns a builder that can create a corresponding `TargetIsa`
 /// or `Err(LookupError::SupportDisabled)` if not enabled.
 macro_rules! isa_builder {
     ($name: ident, $feature: tt, $triple: ident) => {{
         #[cfg(feature = $feature)]
         {
-            Ok($name::isa_builder($triple))
+            Ok(IsaBackend::Builder($name::isa_builder($triple)))
         }
         #[cfg(not(feature = $feature))]
         {
@@ -106,7 +128,7 @@ macro_rules! isa_builder {
 
 /// Look for an ISA for the given `triple`.
 /// Return a builder that can create a corresponding `TargetIsa`.
-pub fn lookup(triple: Triple) -> Result<Builder, LookupError> {
+pub fn lookup(triple: Triple) -> Result<IsaBackend, LookupError> {
     match triple.architecture {
         Architecture::Riscv32 | Architecture::Riscv64 => isa_builder!(riscv, "riscv", triple),
         Architecture::I386 | Architecture::I586 | Architecture::I686 | Architecture::X86_64 => {
@@ -114,14 +136,16 @@ pub fn lookup(triple: Triple) -> Result<Builder, LookupError> {
         }
         Architecture::Arm { .. } => isa_builder!(arm32, "arm32", triple),
         // ARM64 uses the new backend.
-        Architecture::Aarch64 { .. } => Err(LookupError::Unsupported),
+        Architecture::Aarch64 { .. } => Ok(IsaBackend::MachBackend(Box::new(
+            arm64::Arm64Backend::new(),
+        ))),
         _ => Err(LookupError::Unsupported),
     }
 }
 
 /// Look for a supported ISA with the given `name`.
 /// Return a builder that can create a corresponding `TargetIsa`.
-pub fn lookup_by_name(name: &str) -> Result<Builder, LookupError> {
+pub fn lookup_by_name(name: &str) -> Result<IsaBackend, LookupError> {
     use alloc::str::FromStr;
     lookup(triple!(name))
 }

@@ -950,7 +950,7 @@ impl<'a> Parser<'a> {
                 Err(isa::LookupError::Unsupported) => {
                     return warn!(loc, "unsupported target '{}'", targ);
                 }
-                Ok(b) => b,
+                Ok(b) => b.as_builder(),
             };
             specified_target = true;
 
@@ -1003,7 +1003,7 @@ impl<'a> Parser<'a> {
                         Ok(triple) => triple,
                         Err(err) => return err!(loc, err),
                     };
-                    let mut isa_builder = match isa::lookup(triple) {
+                    let mut isa_builder = match isa::lookup(triple).map(|b| b.as_builder()) {
                         Err(isa::LookupError::SupportDisabled) => {
                             continue;
                         }

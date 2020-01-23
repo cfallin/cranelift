@@ -83,7 +83,7 @@ pub fn parse_sets_and_triple(
                 "support for triple '{}' is not implemented yet",
                 triple_name
             ),
-        })?;
+        })?.as_builder();
         // Apply the ISA-specific settings to `isa_builder`.
         parse_options(words, &mut isa_builder, Location { line_number: 0 })
             .map_err(|err| err.to_string())?;

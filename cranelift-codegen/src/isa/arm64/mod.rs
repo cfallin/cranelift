@@ -12,7 +12,15 @@ use alloc::vec::Vec;
 mod inst;
 mod lower;
 
+/// An ARM64 backend.
 pub struct Arm64Backend {}
+
+impl Arm64Backend {
+    /// Create a new ARM64 backend.
+    pub fn new() -> Arm64Backend {
+        Arm64Backend {}
+    }
+}
 
 impl MachBackend for Arm64Backend {
     fn compile_function_to_memory(&mut self, mut func: Function) -> CodegenResult<Vec<u8>> {

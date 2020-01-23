@@ -155,6 +155,7 @@ mod tests {
         let shared_flags = settings::Flags::new(shared_builder);
         let isa = isa::lookup(triple!("riscv64"))
             .unwrap()
+            .as_builder()
             .finish(shared_flags);
 
         let mut func = Function::new();
@@ -206,6 +207,7 @@ mod tests {
         let shared_flags = settings::Flags::new(shared_builder);
         let isa = isa::lookup(triple!("riscv32"))
             .unwrap()
+            .as_builder()
             .finish(shared_flags);
 
         let mut func = Function::new();
@@ -262,7 +264,7 @@ mod tests {
 
         // Set the supports_m stting which in turn enables the use_m predicate that unlocks
         // encodings for imul.
-        let mut isa_builder = isa::lookup(triple!("riscv32")).unwrap();
+        let mut isa_builder = isa::lookup(triple!("riscv32")).unwrap().as_builder();
         isa_builder.enable("supports_m").unwrap();
 
         let isa = isa_builder.finish(shared_flags);

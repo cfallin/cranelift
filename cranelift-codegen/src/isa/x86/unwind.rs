@@ -285,6 +285,7 @@ mod tests {
     fn test_wrong_calling_convention() {
         let isa = lookup(triple!("x86_64"))
             .expect("expect x86 ISA")
+            .as_builder()
             .finish(Flags::new(builder()));
 
         let mut context = Context::for_function(create_function(CallConv::SystemV, None));
@@ -298,6 +299,7 @@ mod tests {
     fn test_small_alloc() {
         let isa = lookup(triple!("x86_64"))
             .expect("expect x86 ISA")
+            .as_builder()
             .finish(Flags::new(builder()));
 
         let mut context = Context::for_function(create_function(
@@ -362,6 +364,7 @@ mod tests {
     fn test_medium_alloc() {
         let isa = lookup(triple!("x86_64"))
             .expect("expect x86 ISA")
+            .as_builder()
             .finish(Flags::new(builder()));
 
         let mut context = Context::for_function(create_function(
@@ -426,6 +429,7 @@ mod tests {
     fn test_large_alloc() {
         let isa = lookup(triple!("x86_64"))
             .expect("expect x86 ISA")
+            .as_builder()
             .finish(Flags::new(builder()));
 
         let mut context = Context::for_function(create_function(
