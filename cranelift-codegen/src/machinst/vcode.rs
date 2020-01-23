@@ -46,10 +46,13 @@ use crate::machinst::*;
 
 use minira::Function as RegallocFunction;
 use minira::Set as RegallocSet;
-use minira::{mkBlockIx, mkInstIx, BlockIx, InstIx, InstRegUses, MyRange, RegClass};
+use minira::{
+    mkBlockIx, mkInstIx, BlockIx, InstIx, InstRegUses, MyRange, RegAllocResult, RegClass,
+};
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;
+use std::iter;
 use std::ops::Index;
 
 /// Index referring to an instruction in VCode.
@@ -80,12 +83,6 @@ pub struct VCode<I: MachInst> {
 
     /// Block indices by Ebb.
     block_by_ebb: SecondaryMap<ir::Ebb, BlockIndex>,
-
-    /// Final block order.
-    block_final_order: Vec<BlockIndex>,
-
-    /// Final block offsets.
-    block_offsets: Vec<usize>,
 }
 
 /// A builder for a VCode function body. This builder is designed for the
@@ -233,6 +230,15 @@ impl BlockRPO {
     }
 }
 
+fn block_ranges(indices: &[InstIx], len: usize) -> Vec<(usize, usize)> {
+    let v = indices
+        .iter()
+        .map(|iix| iix.get() as usize)
+        .chain(iter::once(len))
+        .collect::<Vec<usize>>();
+    v.windows(2).map(|p| (p[0], p[1])).collect()
+}
+
 impl<I: MachInst> VCode<I> {
     /// New empty VCode.
     fn new() -> VCode<I> {
@@ -243,8 +249,6 @@ impl<I: MachInst> VCode<I> {
             block_succ_range: vec![],
             block_succs: vec![],
             block_by_ebb: SecondaryMap::with_default(0),
-            block_final_order: vec![],
-            block_offsets: vec![],
         }
     }
 
@@ -261,10 +265,37 @@ impl<I: MachInst> VCode<I> {
     }
 
     /// Compute the final block order.
-    fn compute_final_block_order(&mut self) {
+    fn compute_final_block_order(&mut self) -> Vec<BlockIndex> {
         let mut rpo = BlockRPO::new(self);
         rpo.visit(self, self.entry);
-        self.block_final_order = rpo.rpo();
+        rpo.rpo()
+    }
+
+    /// Take the results of register allocation, with a sequence of
+    /// instructions including spliced fill/reload/move instructions, and replace
+    /// the VCode with them.
+    pub fn replace_insns_from_regalloc(&mut self, result: RegAllocResult<Self>) {
+        let final_block_order = self.compute_final_block_order();
+        // We want to move instructions over in final block order, using the new
+        // block-start map given by the regalloc.
+        let block_ranges: Vec<(usize, usize)> =
+            block_ranges(result.target_map.elems(), result.insns.len());
+        let mut final_insns = vec![];
+        let mut final_block_ranges: Vec<(InsnIndex, InsnIndex)> =
+            iter::repeat((0, 0)).take(self.num_blocks()).collect();
+
+        for block in final_block_order.into_iter() {
+            let (start, end) = block_ranges[block as usize].clone();
+            let final_start = final_insns.len() as InsnIndex;
+            for i in start..end {
+                final_insns.push(result.insns[i].clone());
+            }
+            let final_end = final_insns.len() as InsnIndex;
+            final_block_ranges[block as usize] = (final_start, final_end);
+        }
+
+        self.insts = final_insns;
+        self.block_ranges = final_block_ranges;
     }
 
     /// Get the total size of the code when emitted.

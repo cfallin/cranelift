@@ -18,7 +18,8 @@ pub fn compile<B: LowerBackend>(f: &mut Function, b: &B) -> VCode<B::MInst> {
     )
     .expect("register allocation");
 
-    // TODO: reorder vcode into final order and copy out final instruction sequence all at once.
+    // Reorder vcode into final order and copy out final instruction sequence all at once.
+    vcode.replace_insns_from_regalloc(result);
 
     // TODO: do final passes over code to (i) resolve fallthroughs, (ii) compute offsets, and (iii)
     // resolve branch targets. End result is VCode that has all registers and branch offsets
