@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::iter::Sum;
 use minira::Map as RegallocMap;
-use minira::{RealReg, Reg, RegClass, SpillSlot, VirtualReg};
+use minira::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg};
 use smallvec::SmallVec;
 use std::hash::Hash;
 
@@ -98,6 +98,9 @@ pub trait MachInst: Clone {
 
     /// Get the size of the instruction.
     fn size(&self) -> usize;
+
+    /// Get the register universe for this backend.
+    fn reg_universe() -> RealRegUniverse;
 }
 
 /// Describes a block terminator (not call) in the vcode. Because MachInsts /

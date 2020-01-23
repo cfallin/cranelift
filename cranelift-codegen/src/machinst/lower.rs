@@ -318,7 +318,7 @@ impl<'a, I: MachInst> Lower<'a, I> {
             let next_block = block_fallthrough[bix.get() as usize];
 
             for iix in vcode.block_insns(bix) {
-                let mut insn = &mut vcode.insns_mut()[iix.get() as usize];
+                let insn = &mut vcode.insns_mut()[iix.get() as usize];
                 insn.with_fallthrough_block(next_block);
             }
         }

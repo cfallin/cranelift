@@ -3,12 +3,26 @@
 use crate::ir::Function;
 use crate::machinst::*;
 
+use minira::{allocate_registers, RegAllocAlgorithm};
+
 /// Compile the given function down to VCode with allocated registers, ready
 /// for binary emission.
 pub fn compile<B: LowerBackend>(f: &mut Function, b: &B) -> VCode<B::MInst> {
     let mut vcode = Lower::new(f).lower(b);
 
-    // TODO: register-allocate.
+    // Perform register allocation.
+    let result = allocate_registers(
+        &mut vcode,
+        RegAllocAlgorithm::Backtracking,
+        &B::MInst::reg_universe(),
+    )
+    .expect("register allocation");
+
+    // TODO: reorder vcode into final order and copy out final instruction sequence all at once.
+
+    // TODO: do final passes over code to (i) resolve fallthroughs, (ii) compute offsets, and (iii)
+    // resolve branch targets. End result is VCode that has all registers and branch offsets
+    // resolved and instructions in machine order, ready for emission.
 
     vcode
 }

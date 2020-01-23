@@ -203,6 +203,36 @@ impl<I: MachInst> VCodeBuilder<I> {
     }
 }
 
+struct BlockRPO {
+    visited: Vec<bool>,
+    postorder: Vec<BlockIndex>,
+}
+
+impl BlockRPO {
+    fn new<I: MachInst>(vcode: &VCode<I>) -> BlockRPO {
+        BlockRPO {
+            visited: std::iter::repeat(false).take(vcode.num_blocks()).collect(),
+            postorder: vec![],
+        }
+    }
+
+    fn visit<I: MachInst>(&mut self, vcode: &VCode<I>, block: BlockIndex) {
+        self.visited[block as usize] = true;
+        for succ in vcode.succs(block) {
+            if !self.visited[*succ as usize] {
+                self.visit(vcode, *succ);
+            }
+        }
+        self.postorder.push(block);
+    }
+
+    fn rpo(self) -> Vec<BlockIndex> {
+        let mut rpo = self.postorder;
+        rpo.reverse();
+        rpo
+    }
+}
+
 impl<I: MachInst> VCode<I> {
     /// New empty VCode.
     fn new() -> VCode<I> {
@@ -221,19 +251,35 @@ impl<I: MachInst> VCode<I> {
     /// Get the number of blocks. Block indices will be in the range `0 ..
     /// (self.num_blocks() - 1)`.
     pub fn num_blocks(&self) -> usize {
-      self.block_ranges.len()
+        self.block_ranges.len()
+    }
+
+    /// Get the successors for a block.
+    pub fn succs(&self, block: BlockIndex) -> &[BlockIndex] {
+        let (start, end) = self.block_succ_range[block as usize];
+        &self.block_succs[start..end]
+    }
+
+    /// Compute the final block order.
+    fn compute_final_block_order(&mut self) {
+        let mut rpo = BlockRPO::new(self);
+        rpo.visit(self, self.entry);
+        self.block_final_order = rpo.rpo();
     }
 
     /// Get the total size of the code when emitted.
     pub fn code_size(&self) -> usize {
-      // TODO: basic block alignment?
-      // TODO: size of any ConstantData?
-      self.insts.iter().map(|i| i.size()).sum()
+        // TODO: basic block alignment?
+        // TODO: size of any ConstantData?
+        self.insts.iter().map(|i| i.size()).sum()
     }
 
     /// Emit the instructions to the given sink.
-    pub fn emit<CS: CodeSink>(&self, cs: &mut CS) where I: MachInstEmit<CS> {
-      unimplemented!()
+    pub fn emit<CS: CodeSink>(&self, cs: &mut CS)
+    where
+        I: MachInstEmit<CS>,
+    {
+        unimplemented!()
     }
 }
 

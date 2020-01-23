@@ -14,6 +14,7 @@ use minira::{
 
 use smallvec::SmallVec;
 use std::mem;
+use std::sync::Once;
 
 // ------------- registers ----------------
 
@@ -1033,6 +1034,10 @@ impl MachInst for Inst {
             &Inst::CondBrLoweredCompound { .. } => 8,
             _ => 4, // RISC!
         }
+    }
+
+    fn reg_universe() -> RealRegUniverse {
+        get_reg_universe()
     }
 }
 
