@@ -88,6 +88,13 @@ pub trait MachInst: Clone {
     /// control flow.
     fn gen_jump(target: BlockIndex) -> Self;
 
+    /// Generate a NOP. The `preferred_size` parameter allows the caller to
+    /// request a NOP of that size, or as close to it as possible. The machine
+    /// backend may return a NOP whose binary encoding is smaller than the
+    /// preferred size, but must not return a NOP that is larger. However,
+    /// the instruction must have a nonzero size.
+    fn gen_nop(preferred_size: usize) -> Self;
+
     /// Finalize branches once the block order (fallthrough) is known.
     fn with_fallthrough_block(&mut self, fallthrough_block: Option<BlockIndex>);
 

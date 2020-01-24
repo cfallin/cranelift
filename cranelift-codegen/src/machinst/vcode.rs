@@ -377,7 +377,25 @@ impl<I: MachInst> VCode<I> {
     where
         I: MachInstEmit<CS>,
     {
-        unimplemented!()
+        let mut offset = 0;
+        for block in &self.final_block_order {
+            let new_offset = I::align_basic_block(offset);
+            while new_offset > offset {
+                // Pad with NOPs up to the aligned block offset.
+                let nop = I::gen_nop(new_offset - offset);
+                nop.emit(cs);
+                offset += nop.size();
+            }
+            assert!(offset == new_offset);
+
+            let (start, end) = self.block_ranges[*block as usize].clone();
+            for iix in start..end {
+                self.insts[iix as usize].emit(cs);
+                offset += self.insts[iix as usize].size();
+            }
+        }
+
+        // TODO: constant pool at end of code? Or in rodata?
     }
 }
 

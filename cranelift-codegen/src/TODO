@@ -2,13 +2,6 @@ TODO:
 
 - Binary emission
 
-  - machinst/lower, isa/arm64: Compute instruction sizes and resolve block
-    offsets and branch relos.
-    - Compute maximum size of all instructions, and block offsets.
-    - Given block offsets, allow each branch to use a smaller form. Compute final offsets.
-    - Resolve branch targets to concrete values. (All machine instructions
-      should have an enum with options: BlockIndex, usize.)
-
   - top-level driver to emit to a sink, with relos.
   - Constant pool?
   - Basic-block alignment?

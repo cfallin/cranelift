@@ -102,8 +102,11 @@ pub enum ALUOp {
 /// Instruction formats.
 #[derive(Clone, Debug)]
 pub enum Inst {
-    /// A no-op.
+    /// A no-op of zero size.
     Nop,
+
+    /// A no-op that is one instruction large.
+    Nop4,
 
     /// An ALU operation with two register sources and a register destination.
     AluRRR {
@@ -706,7 +709,7 @@ impl MachInst for Inst {
                 }
                 CondBrKind::Cond(_) => {}
             },
-            &Inst::Nop => {}
+            &Inst::Nop | Inst::Nop4 => {}
         }
         ret
     }
@@ -901,6 +904,7 @@ impl MachInst for Inst {
                 kind: map_br(u, &kind),
             },
             &mut Inst::Nop => Inst::Nop,
+            &mut Inst::Nop4 => Inst::Nop4,
         };
         *self = newval;
     }
@@ -963,6 +967,12 @@ impl MachInst for Inst {
 
     fn gen_move(to_reg: Reg, from_reg: Reg) -> Inst {
         Inst::mov(to_reg, from_reg)
+    }
+
+    fn gen_nop(preferred_size: usize) -> Inst {
+        // We can't give a NOP (or any insn) < 4 bytes.
+        assert!(preferred_size >= 4);
+        Inst::Nop4
     }
 
     fn maybe_direct_reload(&self, reg: VirtualReg, slot: SpillSlot) -> Option<Inst> {
@@ -1179,6 +1189,9 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             &Inst::CondBrLowered { .. } => unimplemented!(),
             &Inst::CondBrLoweredCompound { .. } => unimplemented!(),
             &Inst::Nop => {}
+            &Inst::Nop4 => {
+                sink.put4(0xd503201f);
+            }
         }
     }
 }
