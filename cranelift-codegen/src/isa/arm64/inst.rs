@@ -102,6 +102,9 @@ pub enum ALUOp {
 /// Instruction formats.
 #[derive(Clone, Debug)]
 pub enum Inst {
+    /// A no-op.
+    Nop,
+
     /// An ALU operation with two register sources and a register destination.
     AluRRR {
         alu_op: ALUOp,
@@ -703,6 +706,7 @@ impl MachInst for Inst {
                 }
                 CondBrKind::Cond(_) => {}
             },
+            &Inst::Nop => {}
         }
         ret
     }
@@ -896,6 +900,7 @@ impl MachInst for Inst {
                 not_taken,
                 kind: map_br(u, &kind),
             },
+            &mut Inst::Nop => Inst::Nop,
         };
         *self = newval;
     }
@@ -1005,6 +1010,11 @@ impl MachInst for Inst {
                     };
                 }
             }
+            &mut Inst::Jump { dest } => {
+                if dest.as_block_index() == fallthrough {
+                    *self = Inst::Nop;
+                }
+            }
             _ => {}
         }
     }
@@ -1031,6 +1041,10 @@ impl MachInst for Inst {
 
     fn size(&self) -> usize {
         match self {
+            // These can result from branch finalization: nop from fallthrough,
+            // compound condbr if two non-fallthrough targets (open-coded
+            // sequence of two branches).
+            &Inst::Nop => 0,
             &Inst::CondBrLoweredCompound { .. } => 8,
             _ => 4, // RISC!
         }
@@ -1164,6 +1178,7 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             &Inst::CondBr { .. } => panic!("Unlowered CondBr during binemit!"),
             &Inst::CondBrLowered { .. } => unimplemented!(),
             &Inst::CondBrLoweredCompound { .. } => unimplemented!(),
+            &Inst::Nop => {}
         }
     }
 }

@@ -297,33 +297,8 @@ impl<'a, I: MachInst> Lower<'a, I> {
             assert!(blocknum == edge_block);
         }
 
-        // Now that we've emitted all instructions into the VCodeBuilder, let's build the VCode so
-        // that we can do some final fixups.
-        let mut vcode = self.vcode.build();
-
-        // Compute basic block order. TODO: use some more intelligent algorithm!
-        let num_blocks = vcode.num_blocks();
-        let block_order: Vec<BlockIndex> = (0..num_blocks).map(|i| i as u32).collect();
-        // Compute fallthrough block, indexed by block.
-        let mut block_fallthrough: Vec<Option<BlockIndex>> =
-            std::iter::repeat(None).take(num_blocks).collect();
-        for i in 0..(num_blocks - 1) {
-            let from = block_order[i];
-            let to = block_order[i + 1];
-            block_fallthrough[from as usize] = Some(to);
-        }
-
-        // Pass over VCode instructions and finalize.
-        for bix in vcode.blocks() {
-            let next_block = block_fallthrough[bix.get() as usize];
-
-            for iix in vcode.block_insns(bix) {
-                let insn = &mut vcode.insns_mut()[iix.get() as usize];
-                insn.with_fallthrough_block(next_block);
-            }
-        }
-
-        vcode
+        // Now that we've emitted all instructions into the VCodeBuilder, let's build the VCode.
+        self.vcode.build()
     }
 
     fn start_inst(&mut self, inst: Inst) {

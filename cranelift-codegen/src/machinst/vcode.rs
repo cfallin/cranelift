@@ -83,6 +83,16 @@ pub struct VCode<I: MachInst> {
 
     /// Block indices by Ebb.
     block_by_ebb: SecondaryMap<ir::Ebb, BlockIndex>,
+
+    /// Order of block IDs in final generated code.
+    final_block_order: Vec<BlockIndex>,
+
+    /// Final block offsets. Computed during branch finalization and used
+    /// during emission.
+    final_block_offsets: Vec<usize>,
+
+    /// Size of code, according for block layout / alignment.
+    code_size: usize,
 }
 
 /// A builder for a VCode function body. This builder is designed for the
@@ -249,6 +259,9 @@ impl<I: MachInst> VCode<I> {
             block_succ_range: vec![],
             block_succs: vec![],
             block_by_ebb: SecondaryMap::with_default(0),
+            final_block_order: vec![],
+            final_block_offsets: vec![],
+            code_size: 0,
         }
     }
 
@@ -275,7 +288,7 @@ impl<I: MachInst> VCode<I> {
     /// instructions including spliced fill/reload/move instructions, and replace
     /// the VCode with them.
     pub fn replace_insns_from_regalloc(&mut self, result: RegAllocResult<Self>) {
-        let final_block_order = self.compute_final_block_order();
+        self.final_block_order = self.compute_final_block_order();
         // We want to move instructions over in final block order, using the new
         // block-start map given by the regalloc.
         let block_ranges: Vec<(usize, usize)> =
@@ -284,25 +297,79 @@ impl<I: MachInst> VCode<I> {
         let mut final_block_ranges: Vec<(InsnIndex, InsnIndex)> =
             iter::repeat((0, 0)).take(self.num_blocks()).collect();
 
-        for block in final_block_order.into_iter() {
-            let (start, end) = block_ranges[block as usize].clone();
+        for block in &self.final_block_order {
+            let (start, end) = block_ranges[*block as usize].clone();
             let final_start = final_insns.len() as InsnIndex;
             for i in start..end {
                 final_insns.push(result.insns[i].clone());
             }
             let final_end = final_insns.len() as InsnIndex;
-            final_block_ranges[block as usize] = (final_start, final_end);
+            final_block_ranges[*block as usize] = (final_start, final_end);
         }
 
         self.insts = final_insns;
         self.block_ranges = final_block_ranges;
     }
 
+    /// Mutate branch instructions to (i) lower two-way condbrs to one-way,
+    /// depending on fallthrough; and (ii) use concrete offsets.
+    pub fn finalize_branches(&mut self) {
+        // Compute fallthrough block, indexed by block.
+        let num_blocks = self.num_blocks();
+        let mut block_fallthrough: Vec<Option<BlockIndex>> =
+            std::iter::repeat(None).take(num_blocks).collect();
+        for i in 0..(num_blocks - 1) {
+            let from = self.final_block_order[i];
+            let to = self.final_block_order[i + 1];
+            block_fallthrough[from as usize] = Some(to);
+        }
+
+        // Pass over VCode instructions and finalize two-way branches into
+        // one-way branches with fallthrough.
+        for block in 0..num_blocks {
+            let next_block = block_fallthrough[block];
+            let (start, end) = self.block_ranges[block].clone();
+
+            for iix in start..end {
+                let insn = &mut self.insts[iix as usize];
+                insn.with_fallthrough_block(next_block);
+            }
+        }
+
+        // Compute block offsets.
+        let mut offset = 0;
+        let mut block_offsets = vec![];
+        for block in &self.final_block_order {
+            offset = I::align_basic_block(offset);
+            block_offsets.push(offset);
+            let (start, end) = self.block_ranges[*block as usize].clone();
+            for iix in start..end {
+                offset += self.insts[iix as usize].size();
+            }
+        }
+
+        // Update branches with known block offsets. This looks like the
+        // traversal above, but (i) does not update block_offsets, rather uses
+        // it (so forward references are now possible), and (ii) mutates the
+        // instructions.
+        offset = 0;
+        for block in &self.final_block_order {
+            offset = I::align_basic_block(offset);
+            let (start, end) = self.block_ranges[*block as usize].clone();
+            for iix in start..end {
+                self.insts[iix as usize].with_block_offsets(offset, &block_offsets[..]);
+                offset += self.insts[iix as usize].size();
+            }
+        }
+
+        self.final_block_offsets = block_offsets;
+        self.code_size = offset;
+    }
+
     /// Get the total size of the code when emitted.
     pub fn code_size(&self) -> usize {
-        // TODO: basic block alignment?
         // TODO: size of any ConstantData?
-        self.insts.iter().map(|i| i.size()).sum()
+        self.code_size
     }
 
     /// Emit the instructions to the given sink.

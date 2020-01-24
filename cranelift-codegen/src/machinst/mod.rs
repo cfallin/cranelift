@@ -101,6 +101,12 @@ pub trait MachInst: Clone {
 
     /// Get the register universe for this backend.
     fn reg_universe() -> RealRegUniverse;
+
+    /// Align a basic block offset (from start of function).  By default, no
+    /// alignment occurs.
+    fn align_basic_block(offset: usize) -> usize {
+        offset
+    }
 }
 
 /// Describes a block terminator (not call) in the vcode. Because MachInsts /
