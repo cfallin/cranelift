@@ -11,6 +11,8 @@ pub fn compile<B: LowerBackend>(f: &mut Function, b: &B) -> VCode<B::MInst> {
     // This lowers the CL IR.
     let mut vcode = Lower::new(f).lower(b);
 
+    println!("vcode from lowering:\n{:?}", vcode);
+
     // Perform register allocation.
     let result = allocate_registers(
         &mut vcode,
@@ -26,10 +28,7 @@ pub fn compile<B: LowerBackend>(f: &mut Function, b: &B) -> VCode<B::MInst> {
     // Do final passes over code to finalize branches.
     vcode.finalize_branches();
 
-    // TODO: do final passes over code to (i) resolve fallthroughs, (ii)
-    // compute offsets, and (iii) resolve branch targets. End result is VCode
-    // that has all registers and branch offsets resolved and instructions in
-    // machine order, ready for emission.
+    println!("final VCode:\n{:?}", vcode);
 
     vcode
 }

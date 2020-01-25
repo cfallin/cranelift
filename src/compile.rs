@@ -91,10 +91,9 @@ fn handle_module(
                 .compile_function_to_memory(func, &mut relocs, &mut traps, &mut stackmaps)
                 .expect("Compilation error");
             println!("Machine code:");
-            for byte in code {
-                print!("{:02x}", byte);
+            for word in code.chunks(4) {
+                println!("{:02x}{:02x}{:02x}{:02x}", word[3], word[2], word[1], word[0]);
             }
-            println!("");
         }
     }
 

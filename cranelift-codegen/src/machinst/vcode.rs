@@ -52,6 +52,7 @@ use minira::{
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;
+use std::fmt;
 use std::iter;
 use std::ops::Index;
 
@@ -249,6 +250,14 @@ fn block_ranges(indices: &[InstIx], len: usize) -> Vec<(usize, usize)> {
     v.windows(2).map(|p| (p[0], p[1])).collect()
 }
 
+fn is_redundant_move<I: MachInst>(insn: &I) -> bool {
+    if let Some((to, from)) = insn.is_move() {
+        to == from
+    } else {
+        false
+    }
+}
+
 impl<I: MachInst> VCode<I> {
     /// New empty VCode.
     fn new() -> VCode<I> {
@@ -301,7 +310,11 @@ impl<I: MachInst> VCode<I> {
             let (start, end) = block_ranges[*block as usize].clone();
             let final_start = final_insns.len() as InsnIndex;
             for i in start..end {
-                final_insns.push(result.insns[i].clone());
+                let insn = &result.insns[i];
+                if is_redundant_move(insn) {
+                    continue;
+                }
+                final_insns.push(insn.clone());
             }
             let final_end = final_insns.len() as InsnIndex;
             final_block_ranges[*block as usize] = (final_start, final_end);
@@ -490,5 +503,29 @@ impl<I: MachInst> RegallocFunction for VCode<I> {
 
     fn maybe_direct_reload(&self, insn: &I, reg: VirtualReg, slot: SpillSlot) -> Option<I> {
         insn.maybe_direct_reload(reg, slot)
+    }
+}
+
+// N.B.: Debug impl assumes that VCode has already been through all compilation
+// passes, and so has a final block order and offsets.
+
+impl<I: MachInst> fmt::Debug for VCode<I> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "VCode {{")?;
+
+        for block in 0..self.num_blocks() {
+            writeln!(f, "Block {}:", block,)?;
+            for succ in self.succs(block as BlockIndex) {
+                writeln!(f, "    (successor: Block {})", succ)?;
+            }
+            let (start, end) = self.block_ranges[block].clone();
+            writeln!(f, "    (instruction range: {} .. {})", start, end)?;
+            for inst in start..end {
+                writeln!(f, "  Inst {}: {:?}", inst, self.insts[inst as usize])?;
+            }
+        }
+
+        writeln!(f, "}}")?;
+        Ok(())
     }
 }

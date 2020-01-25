@@ -18,19 +18,38 @@ use std::sync::Once;
 
 // ------------- registers ----------------
 
-/// Get a reference to the zero-register.
-pub fn zero_reg() -> Reg {
+/// Get a reference to an X-register (integer register).
+pub fn xreg(num: u8) -> Reg {
+    assert!(num < 32);
     mkRealReg(
         RegClass::I64,
-        /* enc = */ 31,
-        /* index = */ 32 + 31,
+        /* enc = */ num,
+        /* index = */ 32u8 + num,
     )
+}
+
+/// Get a reference to the zero-register.
+pub fn zero_reg() -> Reg {
+    xreg(31)
 }
 
 /// Get a reference to the stack-pointer register.
 fn stack_reg() -> Reg {
     // XSP (stack) and XZR (zero) are the same register, in different contexts.
     zero_reg()
+}
+
+fn for_all_real_regs<F: FnMut(Reg)>(f: &mut F) {
+    // V-regs
+    for i in 0..32 {
+        let reg = mkRealReg(RegClass::V128, i as u8, i as u8);
+        f(reg);
+    }
+    // X-regs, including zero reg.
+    for i in 0..32 {
+        let reg = mkRealReg(RegClass::I64, i as u8, (i + 32) as u8);
+        f(reg);
+    }
 }
 
 /// Create the register universe for ARM64.
@@ -107,6 +126,11 @@ pub enum Inst {
 
     /// A no-op that is one instruction large.
     Nop4,
+
+    /// ABI-defined liveins + zero reg. Ghost instruction that takes zero bytes.
+    /// This is a workaround; ideally, the register allocator should assume
+    /// virtual defs for every real register prior to the entrypoint.
+    LiveIns,
 
     /// An ALU operation with two register sources and a register destination.
     AluRRR {
@@ -710,6 +734,11 @@ impl MachInst for Inst {
                 CondBrKind::Cond(_) => {}
             },
             &Inst::Nop | Inst::Nop4 => {}
+            &Inst::LiveIns => {
+                for_all_real_regs(&mut |reg| {
+                    ret.push((reg, RegMode::Def));
+                });
+            }
         }
         ret
     }
@@ -905,13 +934,14 @@ impl MachInst for Inst {
             },
             &mut Inst::Nop => Inst::Nop,
             &mut Inst::Nop4 => Inst::Nop4,
+            &mut Inst::LiveIns => Inst::LiveIns,
         };
         *self = newval;
     }
 
     fn is_move(&self) -> Option<(Reg, Reg)> {
         match self {
-            &Inst::AluRRR { alu_op, rd, rn, rm } if alu_op == ALUOp::Add64 && rm == zero_reg() => {
+            &Inst::AluRRR { alu_op, rd, rn, rm } if alu_op == ALUOp::Add64 && rn == zero_reg() => {
                 Some((rd, rm))
             }
             _ => None,
@@ -1055,6 +1085,7 @@ impl MachInst for Inst {
             // compound condbr if two non-fallthrough targets (open-coded
             // sequence of two branches).
             &Inst::Nop => 0,
+            &Inst::LiveIns => 0,
             &Inst::CondBrLoweredCompound { .. } => 8,
             _ => 4, // RISC!
         }
@@ -1085,6 +1116,23 @@ impl BranchTarget {
             _ => None,
         }
     }
+
+    fn as_offset(&self) -> Option<isize> {
+        match self {
+            &BranchTarget::ResolvedOffset(off) => Some(off),
+            _ => None,
+        }
+    }
+
+    fn as_off26(&self) -> Option<u32> {
+        self.as_offset().and_then(|i| {
+            if (i < (1 << 26)) && (i >= -(1 << 26)) {
+                Some((i as u32) & ((1 << 26) - 1))
+            } else {
+                None
+            }
+        })
+    }
 }
 
 fn machreg_to_gpr(m: Reg) -> u32 {
@@ -1113,6 +1161,11 @@ fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: Reg) -> u32 {
         | ((imm_bits as u32) << 10)
         | (machreg_to_gpr(rn) << 5)
         | machreg_to_gpr(rd)
+}
+
+fn enc_jump26(off_26_0: u32) -> u32 {
+    assert!(off_26_0 < (1 << 26));
+    (0b000101u32 << 26) | off_26_0
 }
 
 impl<CS: CodeSink> MachInstEmit<CS> for Inst {
@@ -1183,7 +1236,14 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             | &Inst::Store32 { rd, ref mem, .. }
             | &Inst::Store64 { rd, ref mem, .. } => unimplemented!(),
             &Inst::MovZ { rd, .. } => unimplemented!(),
-            &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => unimplemented!(),
+            &Inst::Jump { ref dest } => {
+                assert!(dest.as_off26().is_some());
+                sink.put4(enc_jump26(dest.as_off26().unwrap()));
+            }
+            &Inst::Ret {} => {
+                sink.put4(0xd65f03c0);
+            }
+            &Inst::Call { .. } => unimplemented!(),
             &Inst::CallInd { rn, .. } => unimplemented!(),
             &Inst::CondBr { .. } => panic!("Unlowered CondBr during binemit!"),
             &Inst::CondBrLowered { .. } => unimplemented!(),
@@ -1192,6 +1252,7 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             &Inst::Nop4 => {
                 sink.put4(0xd503201f);
             }
+            &Inst::LiveIns => {}
         }
     }
 }

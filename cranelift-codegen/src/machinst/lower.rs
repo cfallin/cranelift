@@ -46,6 +46,8 @@ pub trait LowerCtx<I> {
     fn output_ty(&self, ir_inst: Inst, idx: usize) -> Type;
     /// Get a new temp.
     fn tmp(&mut self, rc: RegClass) -> Reg;
+    /// Get the number of EBB params.
+    fn num_ebb_params(&self, ebb: Ebb) -> usize;
     /// Get the register for an EBB param.
     fn ebb_param(&self, ebb: Ebb, idx: usize) -> Reg;
 }
@@ -69,6 +71,12 @@ pub trait LowerBackend {
         targets: &[BlockIndex],
         fallthrough: Option<BlockIndex>,
     );
+
+    /// Lower the entry point of the function. This allows the machine backend
+    /// an opportunity to emit any setup instructions (aside from the prologue),
+    /// for example initially assigning args from ABI regs and/or emitting
+    /// ghost instructions that define special (zero?) regs.
+    fn lower_entry<C: LowerCtx<Self::MInst>>(&self, ctx: &mut C, ebb: Ebb);
 }
 
 /// Machine-independent lowering driver / machine-instruction container. Maintains a correspondence
@@ -181,7 +189,7 @@ impl<'a, I: MachInst> Lower<'a, I> {
         for ebb in ebbs.iter() {
             for inst in self.f.layout.ebb_insts(*ebb) {
                 let op = self.f.dfg[inst].opcode();
-                if op.is_branch() || op.is_terminator() {
+                if op.is_branch() {
                     // Find the original target.
                     let instdata = &self.f.dfg[inst];
                     let next_ebb = match op {
@@ -247,6 +255,12 @@ impl<'a, I: MachInst> Lower<'a, I> {
                 backend.lower_branch_group(&mut self, &branches[..], &targets[..], fallthrough);
                 branches.clear();
                 targets.clear();
+            }
+
+            // If this is the entry block, invoke the backend's lower_entry hook.
+            if Some(*ebb) == self.f.layout.entry_block() {
+                backend.lower_entry(&mut self, *ebb);
+                self.vcode.end_ir_inst();
             }
 
             let bb = self.vcode.end_bb();
@@ -380,6 +394,11 @@ impl<'a, I: MachInst> LowerCtx<I> for Lower<'a, I> {
     /// Get the type for an instruction's output.
     fn output_ty(&self, ir_inst: Inst, idx: usize) -> Type {
         self.f.dfg.value_type(self.f.dfg.inst_results(ir_inst)[idx])
+    }
+
+    /// Get the number of EBB params.
+    fn num_ebb_params(&self, ebb: Ebb) -> usize {
+        self.f.dfg.ebb_params(ebb).len()
     }
 
     /// Get the register for an EBB param.

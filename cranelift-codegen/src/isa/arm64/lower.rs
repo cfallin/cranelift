@@ -496,9 +496,23 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
             });
         }
 
+        Opcode::Return => {
+            // TODO: multiple return values.
+            assert!(inputs.len() <= 1);
+            if inputs.len() > 0 {
+                let retval = input_to_reg(ctx, inputs[0]);
+                let abi_reg = xreg(0);
+                ctx.emit(Inst::gen_move(abi_reg, retval));
+            }
+            ctx.emit(Inst::Ret {});
+        }
+
         // TODO: cmp
         // TODO: more alu ops
-        _ => unimplemented!(),
+        _ => {
+            println!("Unimplemented opcode: {:?}", op);
+            unimplemented!()
+        }
     }
 }
 
@@ -554,6 +568,17 @@ fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
 
 impl LowerBackend for Arm64Backend {
     type MInst = Inst;
+
+    fn lower_entry<C: LowerCtx<Inst>>(&self, ctx: &mut C, ebb: Ebb) {
+        ctx.emit(Inst::LiveIns);
+        // TODO: ABI support for more than 8 args.
+        assert!(ctx.num_ebb_params(ebb) < 8);
+        for i in 0..ctx.num_ebb_params(ebb) {
+            let abi_reg = xreg(i as u8);
+            let ebb_reg = ctx.ebb_param(ebb, i);
+            ctx.emit(Inst::gen_move(ebb_reg, abi_reg));
+        }
+    }
 
     fn lower<C: LowerCtx<Inst>>(&self, ctx: &mut C, ir_inst: IRInst) {
         lower_insn_to_regs(ctx, ir_inst);

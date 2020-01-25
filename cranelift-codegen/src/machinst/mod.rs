@@ -42,7 +42,7 @@ pub enum RegMode {
 pub type MachInstRegs = SmallVec<[(Reg, RegMode); 4]>;
 
 /// A machine instruction.
-pub trait MachInst: Clone {
+pub trait MachInst: Clone + Debug {
     /// Return the registers referenced by this machine instruction along with the modes of
     /// reference (use, def, modify).
     ///
@@ -116,12 +116,8 @@ pub trait MachInst: Clone {
     }
 }
 
-/// Describes a block terminator (not call) in the vcode. Because MachInsts /
-/// vcode model machine code fairly directly (modulo the virtual registers), we
-/// do not have a two-target conditional branch. Rather, the conditional form
-/// falls through if not taken. A conditional branch should always be followed
-/// by an unconditional branch; branches to the next block will be elided (to
-/// allow fallthrough instead).
+/// Describes a block terminator (not call) in the vcode, when its branches
+/// have not yet been finalized (so a branch may have two targets).
 #[derive(Clone, Debug)]
 pub enum MachTerminator {
     /// Not a terminator.
