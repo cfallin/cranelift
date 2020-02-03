@@ -6,11 +6,8 @@ use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I6
 use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
 use crate::machinst::*;
 
-use minira::Map as RegallocMap;
-use minira::{
-    mkRealReg, mkVirtualReg, RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg,
-    NUM_REG_CLASSES,
-};
+use regalloc::Map as RegallocMap;
+use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, NUM_REG_CLASSES};
 
 use smallvec::SmallVec;
 use std::mem;
@@ -21,7 +18,7 @@ use std::sync::Once;
 /// Get a reference to an X-register (integer register).
 pub fn xreg(num: u8) -> Reg {
     assert!(num < 32);
-    mkRealReg(
+    Reg::new_real(
         RegClass::I64,
         /* enc = */ num,
         /* index = */ 32u8 + num,
@@ -42,12 +39,12 @@ fn stack_reg() -> Reg {
 fn for_all_real_regs<F: FnMut(Reg)>(f: &mut F) {
     // V-regs
     for i in 0..32 {
-        let reg = mkRealReg(RegClass::V128, i as u8, i as u8);
+        let reg = Reg::new_real(RegClass::V128, i as u8, i as u8);
         f(reg);
     }
     // X-regs, including zero reg.
     for i in 0..32 {
-        let reg = mkRealReg(RegClass::I64, i as u8, (i + 32) as u8);
+        let reg = Reg::new_real(RegClass::I64, i as u8, (i + 32) as u8);
         f(reg);
     }
 }
@@ -65,7 +62,7 @@ pub fn get_reg_universe() -> RealRegUniverse {
     let v_reg_count = 32u8;
     let v_reg_last = v_reg_base + v_reg_count - 1;
     for i in 0u8..v_reg_count {
-        let reg = mkRealReg(
+        let reg = Reg::new_real(
             RegClass::V128,
             /* enc = */ i,
             /* index = */ v_reg_base + i,
@@ -79,7 +76,7 @@ pub fn get_reg_universe() -> RealRegUniverse {
     let x_reg_count = 31u8;
     let x_reg_last = x_reg_base + x_reg_count - 1;
     for i in 0u8..x_reg_count {
-        let reg = mkRealReg(
+        let reg = Reg::new_real(
             RegClass::I64,
             /* enc = */ i,
             /* index = */ x_reg_base + i,

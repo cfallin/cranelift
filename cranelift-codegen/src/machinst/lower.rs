@@ -9,8 +9,8 @@ use crate::isa::registers::RegUnit;
 use crate::machinst::{BlockIndex, MachInst, MachInstEmit, MachInstRegs, VCode, VCodeBuilder};
 use crate::num_uses::NumUses;
 
-use minira::Function as RegallocFunction;
-use minira::{mkVirtualReg, RealReg, Reg, RegClass, VirtualReg};
+use regalloc::Function as RegallocFunction;
+use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;
@@ -110,7 +110,7 @@ fn alloc_vreg(
     if value_regs.get(value).is_none() {
         let v = *next_vreg;
         *next_vreg += 1;
-        value_regs[value] = mkVirtualReg(regclass, v);
+        value_regs[value] = Reg::new_virtual(regclass, v);
     }
 }
 
@@ -126,7 +126,7 @@ impl<'a, I: MachInst> Lower<'a, I> {
         // loops over EBB parameters and instruction results below.
         //
         // We do not use vreg 0 so that we can detect any unassigned register that leaks through.
-        let default_register = mkVirtualReg(RegClass::I32, 0);
+        let default_register = Reg::new_virtual(RegClass::I32, 0);
         let mut value_regs = SecondaryMap::with_default(default_register);
 
         // Assign a vreg to each value.
@@ -373,7 +373,7 @@ impl<'a, I: MachInst> LowerCtx<I> for Lower<'a, I> {
     fn tmp(&mut self, rc: RegClass) -> Reg {
         let v = self.next_vreg;
         self.next_vreg += 1;
-        mkVirtualReg(rc, v)
+        Reg::new_virtual(rc, v)
     }
 
     /// Get the number of inputs for the given IR instruction.

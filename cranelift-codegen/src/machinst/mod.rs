@@ -13,8 +13,8 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::iter::Sum;
-use minira::Map as RegallocMap;
-use minira::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg};
+use regalloc::Map as RegallocMap;
+use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg};
 use smallvec::SmallVec;
 use std::hash::Hash;
 
@@ -22,8 +22,6 @@ pub mod lower;
 pub use lower::*;
 pub mod vcode;
 pub use vcode::*;
-pub mod branch_splitting;
-pub use branch_splitting::*;
 pub mod compile;
 pub use compile::*;
 

@@ -10,7 +10,7 @@ use crate::machinst::*;
 use crate::isa::arm64::inst::*;
 use crate::isa::arm64::Arm64Backend;
 
-use minira::{mkRealReg, mkVirtualReg, RealReg, Reg, RegClass, VirtualReg};
+use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 
 use smallvec::SmallVec;
 

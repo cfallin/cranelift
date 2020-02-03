@@ -3,7 +3,7 @@
 use crate::ir::Function;
 use crate::machinst::*;
 
-use minira::{allocate_registers, RegAllocAlgorithm};
+use regalloc::{allocate_registers, RegAllocAlgorithm};
 
 /// Compile the given function down to VCode with allocated registers, ready
 /// for binary emission.

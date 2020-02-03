@@ -44,11 +44,9 @@
 use crate::ir;
 use crate::machinst::*;
 
-use minira::Function as RegallocFunction;
-use minira::Set as RegallocSet;
-use minira::{
-    mkBlockIx, mkInstIx, BlockIx, InstIx, InstRegUses, MyRange, RegAllocResult, RegClass,
-};
+use regalloc::Function as RegallocFunction;
+use regalloc::Set as RegallocSet;
+use regalloc::{BlockIx, InstIx, InstRegUses, MyRange, RegAllocResult, RegClass};
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;
@@ -432,16 +430,16 @@ impl<I: MachInst> RegallocFunction for VCode<I> {
     }
 
     fn blocks(&self) -> MyRange<BlockIx> {
-        MyRange::new(mkBlockIx(0), self.block_ranges.len())
+        MyRange::new(BlockIx::new(0), self.block_ranges.len())
     }
 
     fn entry_block(&self) -> BlockIx {
-        mkBlockIx(self.entry)
+        BlockIx::new(self.entry)
     }
 
     fn block_insns(&self, block: BlockIx) -> MyRange<InstIx> {
         let (start, end) = self.block_ranges[block.get() as usize];
-        MyRange::new(mkInstIx(start), (end - start) as usize)
+        MyRange::new(InstIx::new(start), (end - start) as usize)
     }
 
     fn block_succs(&self, block: BlockIx) -> Vec<BlockIx> {
@@ -449,7 +447,7 @@ impl<I: MachInst> RegallocFunction for VCode<I> {
         self.block_succs[start..end]
             .iter()
             .cloned()
-            .map(mkBlockIx)
+            .map(BlockIx::new)
             .collect()
     }
 
@@ -485,19 +483,19 @@ impl<I: MachInst> RegallocFunction for VCode<I> {
         insn.is_move()
     }
 
-    fn get_spillslot_size(&self, regclass: RegClass) -> u32 {
+    fn get_spillslot_size(&self, regclass: RegClass, _vreg: VirtualReg) -> u32 {
         I::get_spillslot_size(regclass)
     }
 
-    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg) -> I {
+    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, _vreg: VirtualReg) -> I {
         I::gen_spill(to_slot, from_reg)
     }
 
-    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot) -> I {
+    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, _vreg: VirtualReg) -> I {
         I::gen_reload(to_reg, from_slot)
     }
 
-    fn gen_move(&self, to_reg: RealReg, from_reg: RealReg) -> I {
+    fn gen_move(&self, to_reg: RealReg, from_reg: RealReg, _vreg: VirtualReg) -> I {
         I::gen_move(to_reg.to_reg(), from_reg.to_reg())
     }
 
