@@ -105,11 +105,11 @@ pub trait MachInst: Clone + Debug {
     /// BlockIndex.
     fn with_block_offsets(&mut self, my_offset: usize, targets: &[usize]);
 
-    /// Get the size of the instruction.
-    fn size(&self) -> usize;
-
     /// Get the register universe for this backend.
     fn reg_universe() -> RealRegUniverse;
+
+    /// Get the size of the instruction.
+    fn size(&self) -> usize;
 
     /// Align a basic block offset (from start of function).  By default, no
     /// alignment occurs.
@@ -131,9 +131,6 @@ pub enum MachTerminator {
     /// A conditional branch to one of two other blocks.
     Cond(BlockIndex, BlockIndex),
 }
-
-/// A map from virtual registers to physical registers.
-pub type MachLocations = Vec<RegUnit>; // Indexed by virtual register number.
 
 /// A trait describing the ability to encode a MachInst into binary machine code.
 pub trait MachInstEmit<CS: CodeSink> {

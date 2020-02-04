@@ -6,6 +6,7 @@
 mod memorysink;
 mod relaxation;
 mod shrink;
+mod sizesink;
 mod stackmap;
 
 pub use self::memorysink::{
@@ -14,6 +15,7 @@ pub use self::memorysink::{
 };
 pub use self::relaxation::relax_branches;
 pub use self::shrink::shrink_instructions;
+pub use self::sizesink::SizeCodeSink;
 pub use self::stackmap::Stackmap;
 use crate::ir::entities::Value;
 use crate::ir::{ConstantOffset, ExternalName, Function, Inst, JumpTable, SourceLoc, TrapCode};

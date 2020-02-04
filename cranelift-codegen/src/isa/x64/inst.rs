@@ -5,7 +5,7 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-use crate::binemit::CodeSink;
+use crate::binemit::{CodeSink, SizeCodeSink};
 //zz use crate::ir::constant::{ConstantData, ConstantOffset};
 //zz use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
 use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
@@ -1521,22 +1521,15 @@ impl MachInst for Inst {
         //zz         }
     }
 
-    fn size(&self) -> usize {
-        unimplemented!()
-        //zz         match self {
-        //zz             // These can result from branch finalization: nop from fallthrough,
-        //zz             // compound condbr if two non-fallthrough targets (open-coded
-        //zz             // sequence of two branches).
-        //zz             &Inst::Nop => 0,
-        //zz             &Inst::LiveIns => 0,
-        //zz             &Inst::CondBrLoweredCompound { .. } => 8,
-        //zz             _ => 4, // RISC!
-        //zz         }
-    }
-
     fn reg_universe() -> RealRegUniverse {
         unimplemented!()
         //zz         get_reg_universe()
+    }
+
+    fn size(&self) -> usize {
+        let mut sizesink = SizeCodeSink::new();
+        self.emit(&mut sizesink);
+        sizesink.size()
     }
 }
 

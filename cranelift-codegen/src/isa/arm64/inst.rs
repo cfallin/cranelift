@@ -1081,6 +1081,10 @@ impl MachInst for Inst {
         }
     }
 
+    fn reg_universe() -> RealRegUniverse {
+        get_reg_universe()
+    }
+
     fn size(&self) -> usize {
         match self {
             // These can result from branch finalization: nop from fallthrough,
@@ -1091,10 +1095,6 @@ impl MachInst for Inst {
             &Inst::CondBrLoweredCompound { .. } => 8,
             _ => 4, // RISC!
         }
-    }
-
-    fn reg_universe() -> RealRegUniverse {
-        get_reg_universe()
     }
 }
 
