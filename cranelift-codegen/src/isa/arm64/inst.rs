@@ -960,6 +960,9 @@ impl MachInst for Inst {
                 taken.as_block_index().unwrap(),
                 not_taken.as_block_index().unwrap(),
             ),
+            &Inst::CondBrLowered { .. } | &Inst::CondBrLoweredCompound { .. } => {
+                panic!("is_term() called after lowering branches");
+            }
             _ => MachTerminator::None,
         }
     }
@@ -1022,6 +1025,26 @@ impl MachInst for Inst {
 
     fn gen_jump(_blockindex: BlockIndex) -> Inst {
         unimplemented!()
+    }
+
+    fn with_block_rewrites(&mut self, block_target_map: &[BlockIndex]) {
+        match self {
+            &mut Inst::Jump { ref mut dest } => {
+                dest.map(block_target_map);
+            }
+            &mut Inst::CondBr {
+                ref mut taken,
+                ref mut not_taken,
+                ..
+            } => {
+                taken.map(block_target_map);
+                not_taken.map(block_target_map);
+            }
+            &mut Inst::CondBrLowered { .. } | &mut Inst::CondBrLoweredCompound { .. } => {
+                panic!("with_block_rewrites called after branch lowering!");
+            }
+            _ => {}
+        }
     }
 
     fn with_fallthrough_block(&mut self, fallthrough: Option<BlockIndex>) {
@@ -1122,6 +1145,16 @@ impl BranchTarget {
                 None
             }
         })
+    }
+
+    fn map(&mut self, block_index_map: &[BlockIndex]) {
+        match self {
+            &mut BranchTarget::Block(ref mut bix) => {
+                let n = block_index_map[*bix as usize];
+                *bix = n;
+            }
+            _ => panic!("BranchTarget::map() called on already-lowered BranchTarget!"),
+        }
     }
 }
 

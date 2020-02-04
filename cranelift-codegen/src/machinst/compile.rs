@@ -10,6 +10,7 @@ use regalloc::{allocate_registers, RegAllocAlgorithm};
 pub fn compile<B: LowerBackend>(f: &mut Function, b: &B) -> VCode<B::MInst> {
     // This lowers the CL IR.
     let mut vcode = Lower::new(f).lower(b);
+    vcode.remove_redundant_branches();
 
     println!("vcode from lowering:\n{:?}", vcode);
 

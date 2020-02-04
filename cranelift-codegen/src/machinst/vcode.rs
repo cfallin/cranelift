@@ -215,36 +215,6 @@ impl<I: VCodeInst> VCodeBuilder<I> {
     }
 }
 
-struct BlockRPO {
-    visited: Vec<bool>,
-    postorder: Vec<BlockIndex>,
-}
-
-impl BlockRPO {
-    fn new<I: VCodeInst>(vcode: &VCode<I>) -> BlockRPO {
-        BlockRPO {
-            visited: std::iter::repeat(false).take(vcode.num_blocks()).collect(),
-            postorder: vec![],
-        }
-    }
-
-    fn visit<I: VCodeInst>(&mut self, vcode: &VCode<I>, block: BlockIndex) {
-        self.visited[block as usize] = true;
-        for succ in vcode.succs(block) {
-            if !self.visited[*succ as usize] {
-                self.visit(vcode, *succ);
-            }
-        }
-        self.postorder.push(block);
-    }
-
-    fn rpo(self) -> Vec<BlockIndex> {
-        let mut rpo = self.postorder;
-        rpo.reverse();
-        rpo
-    }
-}
-
 fn block_ranges(indices: &[InstIx], len: usize) -> Vec<(usize, usize)> {
     let v = indices
         .iter()
@@ -268,6 +238,26 @@ fn inst_size<I: VCodeInst>(insn: &I) -> usize {
     sizesink.size()
 }
 
+fn is_trivial_jump_block<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> Option<BlockIndex> {
+    let range = vcode.block_insns(BlockIx::new(block));
+    if range.len() != 1 {
+        return None;
+    }
+    let insn = range.first();
+    match vcode.get_insn(insn).is_term() {
+        MachTerminator::Uncond(target) => Some(target),
+        _ => None,
+    }
+}
+
+fn look_through_trivial_jumps<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> BlockIndex {
+    let mut b = block;
+    while let Some(next) = is_trivial_jump_block(vcode, b) {
+        b = next;
+    }
+    b
+}
+
 impl<I: VCodeInst> VCode<I> {
     /// New empty VCode.
     fn new() -> VCode<I> {
@@ -284,6 +274,11 @@ impl<I: VCodeInst> VCode<I> {
         }
     }
 
+    /// Get the entry block.
+    pub fn entry(&self) -> BlockIndex {
+        self.entry
+    }
+
     /// Get the number of blocks. Block indices will be in the range `0 ..
     /// (self.num_blocks() - 1)`.
     pub fn num_blocks(&self) -> usize {
@@ -296,18 +291,11 @@ impl<I: VCodeInst> VCode<I> {
         &self.block_succs[start..end]
     }
 
-    /// Compute the final block order.
-    fn compute_final_block_order(&mut self) -> Vec<BlockIndex> {
-        let mut rpo = BlockRPO::new(self);
-        rpo.visit(self, self.entry);
-        rpo.rpo()
-    }
-
     /// Take the results of register allocation, with a sequence of
     /// instructions including spliced fill/reload/move instructions, and replace
     /// the VCode with them.
     pub fn replace_insns_from_regalloc(&mut self, result: RegAllocResult<Self>) {
-        self.final_block_order = self.compute_final_block_order();
+        self.final_block_order = compute_final_block_order(self);
         // We want to move instructions over in final block order, using the new
         // block-start map given by the regalloc.
         let block_ranges: Vec<(usize, usize)> =
@@ -332,6 +320,28 @@ impl<I: VCodeInst> VCode<I> {
 
         self.insts = final_insns;
         self.block_ranges = final_block_ranges;
+    }
+
+    /// Removes redundant branches, rewriting targets to point directly to the
+    /// ultimate block at the end of a chain of trivial one-target jumps.
+    pub fn remove_redundant_branches(&mut self) {
+        // For each block, compute the actual target block, looking through all
+        // blocks with single-target jumps.
+        //
+        // The outer `Option` indicates whether the dynamic programming algorithm
+        // has computed this value yet. The inner `Option` indicates whether there
+        // is a redirect.
+        let block_rewrites: Vec<BlockIndex> = (0..self.num_blocks() as u32)
+            .map(|bix| look_through_trivial_jumps(self, bix))
+            .collect();
+        for block in 0..self.num_blocks() as u32 {
+            let term_insn = self.block_insns(BlockIx::new(block)).last();
+            self.get_insn_mut(term_insn)
+                .with_block_rewrites(&block_rewrites[..]);
+        }
+
+        // TODO: mark dead trivial blocks as dead, to skip during code
+        // emission.
     }
 
     /// Mutate branch instructions to (i) lower two-way condbrs to one-way,

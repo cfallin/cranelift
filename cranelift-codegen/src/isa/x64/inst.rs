@@ -1536,6 +1536,10 @@ impl MachInst for Inst {
         unimplemented!()
     }
 
+    fn with_block_rewrites(&mut self, _block_target_map: &[BlockIndex]) {
+        unimplemented!()
+    }
+
     fn with_fallthrough_block(&mut self, _fallthrough: Option<BlockIndex>) {
         //zz         match self {
         //zz             &mut Inst::CondBr {

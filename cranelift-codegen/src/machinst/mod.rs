@@ -26,6 +26,8 @@ pub mod vcode;
 pub use vcode::*;
 pub mod compile;
 pub use compile::*;
+pub mod blockorder;
+pub use blockorder::*;
 pub mod abi;
 pub use abi::*;
 
@@ -96,6 +98,9 @@ pub trait MachInst: Clone + Debug {
     /// preferred size, but must not return a NOP that is larger. However,
     /// the instruction must have a nonzero size.
     fn gen_nop(preferred_size: usize) -> Self;
+
+    /// Rewrite block targets using the block-target map.
+    fn with_block_rewrites(&mut self, block_target_map: &[BlockIndex]);
 
     /// Finalize branches once the block order (fallthrough) is known.
     fn with_fallthrough_block(&mut self, fallthrough_block: Option<BlockIndex>);
