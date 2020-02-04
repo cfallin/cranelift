@@ -1224,19 +1224,73 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 sink.put4(enc_arith_rr_imml(top9, imml.enc_bits(), rn, rd));
             }
             &Inst::AluRRImmShift { rd: _, rn: _, .. } => unimplemented!(),
-            &Inst::AluRRRShift { rd: _, rn: _, rm: _, .. } => unimplemented!(),
-            &Inst::AluRRRExtend { rd: _, rn: _, rm: _, .. } => unimplemented!(),
-            &Inst::ULoad8 { rd: _, /*ref*/ mem: _, .. }
-            | &Inst::SLoad8 { rd: _, /*ref*/ mem: _, .. }
-            | &Inst::ULoad16 { rd: _, /*ref*/ mem: _, .. }
-            | &Inst::SLoad16 { rd: _, /*ref*/ mem: _, .. }
-            | &Inst::ULoad32 { rd: _, /*ref*/ mem: _, .. }
-            | &Inst::SLoad32 { rd: _, /*ref*/ mem: _, .. }
-            | &Inst::ULoad64 { rd: _, /*ref*/ mem: _, .. } => unimplemented!(),
-            &Inst::Store8 { rd: _, /*ref*/ mem: _, .. }
-            | &Inst::Store16 { rd: _, /*ref*/ mem: _, .. }
-            | &Inst::Store32 { rd: _, /*ref*/ mem: _, .. }
-            | &Inst::Store64 { rd: _, /*ref*/ mem: _, .. } => unimplemented!(),
+            &Inst::AluRRRShift {
+                rd: _,
+                rn: _,
+                rm: _,
+                ..
+            } => unimplemented!(),
+            &Inst::AluRRRExtend {
+                rd: _,
+                rn: _,
+                rm: _,
+                ..
+            } => unimplemented!(),
+            &Inst::ULoad8 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            }
+            | &Inst::SLoad8 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            }
+            | &Inst::ULoad16 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            }
+            | &Inst::SLoad16 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            }
+            | &Inst::ULoad32 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            }
+            | &Inst::SLoad32 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            }
+            | &Inst::ULoad64 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            } => unimplemented!(),
+            &Inst::Store8 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            }
+            | &Inst::Store16 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            }
+            | &Inst::Store32 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            }
+            | &Inst::Store64 {
+                rd: _,
+                /*ref*/ mem: _,
+                ..
+            } => unimplemented!(),
             &Inst::MovZ { rd: _, .. } => unimplemented!(),
             &Inst::Jump { ref dest } => {
                 assert!(dest.as_off26().is_some());

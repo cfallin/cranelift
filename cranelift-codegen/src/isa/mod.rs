@@ -140,9 +140,7 @@ pub fn lookup(triple: Triple) -> Result<IsaBackend, LookupError> {
             arm64::Arm64Backend::new(),
         ))),
         // X86_64 uses the new backend.  Bwaha!
-        Architecture::X86_64 => Ok(IsaBackend::MachBackend(Box::new(
-            x64::X64Backend::new(),
-        ))),
+        Architecture::X86_64 => Ok(IsaBackend::MachBackend(Box::new(x64::X64Backend::new()))),
         _ => Err(LookupError::Unsupported),
     }
 }

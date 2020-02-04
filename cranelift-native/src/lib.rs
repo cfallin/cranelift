@@ -35,10 +35,14 @@ use raw_cpuid::CpuId;
 /// machine, or `Err(())` if the host machine is not supported
 /// in the current configuration.
 pub fn builder() -> Result<isa::Builder, &'static str> {
-    let mut isa_builder = isa::lookup(Triple::host()).map_err(|err| match err {
-        isa::LookupError::SupportDisabled => "support for architecture disabled at compile time",
-        isa::LookupError::Unsupported => "unsupported architecture",
-    })?.as_builder();
+    let mut isa_builder = isa::lookup(Triple::host())
+        .map_err(|err| match err {
+            isa::LookupError::SupportDisabled => {
+                "support for architecture disabled at compile time"
+            }
+            isa::LookupError::Unsupported => "unsupported architecture",
+        })?
+        .as_builder();
 
     if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
         parse_x86_cpuid(&mut isa_builder)?;

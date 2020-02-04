@@ -2,7 +2,7 @@
 
 use crate::ir;
 use crate::machinst::*;
-use regalloc::{Reg, VirtualReg, Set};
+use regalloc::{Reg, Set, VirtualReg};
 
 /// Trait implemented by an object that tracks ABI-related state (e.g., stack
 /// layout) and can generate code while emitting the *body* of a function.

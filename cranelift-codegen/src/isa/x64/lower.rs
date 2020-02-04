@@ -15,7 +15,7 @@ use crate::isa::x64::X64Backend;
 use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 
 //zz use smallvec::SmallVec;
-//zz 
+//zz
 //zz fn op_to_aluop(op: Opcode, ty: Type) -> Option<ALUOp> {
 //zz     match (op, ty) {
 //zz         (Opcode::Iadd, I32) => Some(ALUOp::Add32),
@@ -25,11 +25,11 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         _ => None,
 //zz     }
 //zz }
-//zz 
+//zz
 //zz fn is_alu_op(op: Opcode, ctrl_typevar: Type) -> bool {
 //zz     op_to_aluop(op, ctrl_typevar).is_some()
 //zz }
-//zz 
+//zz
 //zz /// A lowering result: register, register-shift, register-extend.  An SSA value can always be
 //zz /// lowered into one of these options; the register form is the fallback.
 //zz #[derive(Clone, Debug)]
@@ -38,7 +38,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz     RegShift(Reg, ShiftOpAndAmt),
 //zz     RegExtend(Reg, ExtendOp),
 //zz }
-//zz 
+//zz
 //zz /// A lowering result: register, register-shift, register-extend, or 12-bit immediate form.
 //zz /// An SSA value can always be lowered into one of these options; the register form is the
 //zz /// fallback.
@@ -49,7 +49,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz     RegExtend(Reg, ExtendOp),
 //zz     Imm12(Imm12),
 //zz }
-//zz 
+//zz
 //zz impl ResultRSEImm12 {
 //zz     fn from_rse(rse: ResultRSE) -> ResultRSEImm12 {
 //zz         match rse {
@@ -59,7 +59,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         }
 //zz     }
 //zz }
-//zz 
+//zz
 //zz /// A lowering result: register, register-shift, register-extend, or logical immediate form.
 //zz /// An SSA value can always be lowered into one of these options; the register form is the
 //zz /// fallback.
@@ -70,7 +70,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz     RegExtend(Reg, ExtendOp),
 //zz     ImmLogic(ImmLogic),
 //zz }
-//zz 
+//zz
 //zz impl ResultRSEImmLogic {
 //zz     fn from_rse(rse: ResultRSE) -> ResultRSEImmLogic {
 //zz         match rse {
@@ -80,21 +80,21 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         }
 //zz     }
 //zz }
-//zz 
+//zz
 //zz /// Identifier for a particular output of an instruction.
 //zz #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 //zz struct InsnOutput {
 //zz     insn: IRInst,
 //zz     output: usize,
 //zz }
-//zz 
+//zz
 //zz /// Identifier for a particular input of an instruction.
 //zz #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 //zz struct InsnInput {
 //zz     insn: IRInst,
 //zz     input: usize,
 //zz }
-//zz 
+//zz
 //zz /// Producer of a value: either a previous instruction's output, or a register that will be
 //zz /// codegen'd separately.
 //zz #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,7 +102,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz     Output(InsnOutput),
 //zz     Reg(Reg),
 //zz }
-//zz 
+//zz
 //zz impl InsnInputSource {
 //zz     fn as_output(self) -> Option<InsnOutput> {
 //zz         match self {
@@ -111,10 +111,10 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         }
 //zz     }
 //zz }
-//zz 
+//zz
 //zz /// Context passed to all lowering functions.
 //zz type Ctx<'a> = &'a mut dyn LowerCtx<Inst>;
-//zz 
+//zz
 //zz fn get_input<'a>(ctx: Ctx<'a>, output: InsnOutput, num: usize) -> InsnInput {
 //zz     assert!(num <= ctx.num_inputs(output.insn));
 //zz     InsnInput {
@@ -122,7 +122,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         input: num,
 //zz     }
 //zz }
-//zz 
+//zz
 //zz /// Convert an instruction input to a producing instruction's output if possible (in same BB), or a
 //zz /// register otherwise.
 //zz fn input_source<'a>(ctx: Ctx<'a>, input: InsnInput) -> InsnInputSource {
@@ -137,7 +137,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         InsnInputSource::Reg(reg)
 //zz     }
 //zz }
-//zz 
+//zz
 //zz /// Lower an instruction output to a 64-bit constant, if possible.
 //zz fn output_to_const<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Option<u64> {
 //zz     if out.output > 0 {
@@ -156,22 +156,22 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         }
 //zz     }
 //zz }
-//zz 
+//zz
 //zz /// Lower an instruction output to a constant register-shift amount, if possible.
 //zz fn output_to_shiftimm<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Option<ShiftOpShiftImm> {
 //zz     output_to_const(ctx, out).and_then(ShiftOpShiftImm::maybe_from_shift)
 //zz }
-//zz 
+//zz
 //zz /// Lower an instruction input to a reg.
 //zz fn input_to_reg<'a>(ctx: Ctx<'a>, input: InsnInput) -> Reg {
 //zz     ctx.input(input.insn, input.input)
 //zz }
-//zz 
+//zz
 //zz /// Lower an instruction output to a reg.
 //zz fn output_to_reg<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Reg {
 //zz     ctx.output(out.insn, out.output)
 //zz }
-//zz 
+//zz
 //zz /// Lower an instruction output to a reg, reg/shift, or reg/extend operand.  This does not actually
 //zz /// codegen the source instruction; it just uses the vreg into which the source instruction will
 //zz /// generate its value.
@@ -180,11 +180,11 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz     let insn = out.insn;
 //zz     let op = ctx.data(out.insn).opcode();
 //zz     let out_ty = ctx.output_ty(out.insn, out.output);
-//zz 
+//zz
 //zz     if op == Opcode::Ishl {
 //zz         let shiftee = get_input(ctx, out, 0);
 //zz         let _shift_amt = get_input(ctx, out, 1);
-//zz 
+//zz
 //zz         // Can we get the shift amount as an immediate?
 //zz         if let Some(out) = input_source(ctx, shiftee).as_output() {
 //zz             if let Some(shiftimm) = output_to_shiftimm(ctx, out) {
@@ -194,7 +194,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz             }
 //zz         }
 //zz     }
-//zz 
+//zz
 //zz     // Is this a zero-extend or sign-extend and can we handle that with a register-mode operator?
 //zz     if (op == Opcode::Uextend || op == Opcode::Sextend) && out_ty == I64 {
 //zz         let sign_extend = op == Opcode::Sextend;
@@ -217,11 +217,11 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz             }
 //zz         }
 //zz     }
-//zz 
+//zz
 //zz     // Otherwise, just return the register corresponding to the output.
 //zz     ResultRSE::Reg(output_to_reg(ctx, out))
 //zz }
-//zz 
+//zz
 //zz /// Lower an instruction output to a reg, reg/shift, reg/extend, or 12-bit immediate operand.
 //zz fn output_to_rse_imm12<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSEImm12 {
 //zz     if let Some(imm_value) = output_to_const(ctx, out) {
@@ -230,10 +230,10 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz             return ResultRSEImm12::Imm12(i);
 //zz         }
 //zz     }
-//zz 
+//zz
 //zz     ResultRSEImm12::from_rse(output_to_rse(ctx, out))
 //zz }
-//zz 
+//zz
 //zz /// Lower an instruction output to a reg, reg/shift, reg/extend, or logic-immediate operand.
 //zz fn output_to_rse_immlogic<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSEImmLogic {
 //zz     if let Some(imm_value) = output_to_const(ctx, out) {
@@ -242,31 +242,31 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz             return ResultRSEImmLogic::ImmLogic(i);
 //zz         }
 //zz     }
-//zz 
+//zz
 //zz     ResultRSEImmLogic::from_rse(output_to_rse(ctx, out))
 //zz }
-//zz 
+//zz
 //zz fn input_to_rse<'a>(ctx: Ctx<'a>, input: InsnInput) -> ResultRSE {
 //zz     match input_source(ctx, input) {
 //zz         InsnInputSource::Output(out) => output_to_rse(ctx, out),
 //zz         InsnInputSource::Reg(reg) => ResultRSE::Reg(reg),
 //zz     }
 //zz }
-//zz 
+//zz
 //zz fn input_to_rse_imm12<'a>(ctx: Ctx<'a>, input: InsnInput) -> ResultRSEImm12 {
 //zz     match input_source(ctx, input) {
 //zz         InsnInputSource::Output(out) => output_to_rse_imm12(ctx, out),
 //zz         InsnInputSource::Reg(reg) => ResultRSEImm12::Reg(reg),
 //zz     }
 //zz }
-//zz 
+//zz
 //zz fn input_to_rse_immlogic<'a>(ctx: Ctx<'a>, input: InsnInput) -> ResultRSEImmLogic {
 //zz     match input_source(ctx, input) {
 //zz         InsnInputSource::Output(out) => output_to_rse_immlogic(ctx, out),
 //zz         InsnInputSource::Reg(reg) => ResultRSEImmLogic::Reg(reg),
 //zz     }
 //zz }
-//zz 
+//zz
 //zz fn alu_inst_imm12(op: ALUOp, rd: Reg, rn: Reg, rm: ResultRSEImm12) -> Inst {
 //zz     match rm {
 //zz         ResultRSEImm12::Imm12(imm12) => Inst::AluRRImm12 {
@@ -297,12 +297,12 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         },
 //zz     }
 //zz }
-//zz 
+//zz
 //zz /// Lower the address of a load or store.
 //zz fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset: i32) -> MemArg {
 //zz     // TODO: support base_reg + scale * index_reg. For this, we would need to pattern-match shl or
 //zz     // mul instructions (Load/StoreComplex don't include scale factors).
-//zz 
+//zz
 //zz     // Handle one reg and offset that fits in immediate, if possible.
 //zz     if addends.len() == 1 {
 //zz         let reg = input_to_reg(ctx, addends[0]);
@@ -310,20 +310,20 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz             return memarg;
 //zz         }
 //zz     }
-//zz 
+//zz
 //zz     // Handle two regs and a zero offset, if possible.
 //zz     if addends.len() == 2 && offset == 0 {
 //zz         let ra = input_to_reg(ctx, addends[0]);
 //zz         let rb = input_to_reg(ctx, addends[1]);
 //zz         return MemArg::BasePlusReg(ra, rb);
 //zz     }
-//zz 
+//zz
 //zz     // Otherwise, generate add instructions.
 //zz     let addr = ctx.tmp(RegClass::I64);
-//zz 
+//zz
 //zz     // Get the const into a reg.
 //zz     lower_constant(ctx, addr.clone(), offset as u64);
-//zz 
+//zz
 //zz     // Add each addend to the address.
 //zz     for addend in addends {
 //zz         let reg = input_to_reg(ctx, *addend);
@@ -334,10 +334,10 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz             rm: reg.clone(),
 //zz         });
 //zz     }
-//zz 
+//zz
 //zz     MemArg::Base(addr)
 //zz }
-//zz 
+//zz
 //zz fn lower_constant<'a>(ctx: Ctx<'a>, rd: Reg, value: u64) {
 //zz     if let Some(imm12) = Imm12::maybe_from_u64(value) {
 //zz         // 12-bit immediate (shifted by 0 or 12 bits) in ADDI using zero register
@@ -367,7 +367,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         });
 //zz     }
 //zz }
-//zz 
+//zz
 //zz fn lower_condcode(cc: IntCC) -> Cond {
 //zz     match cc {
 //zz         IntCC::Equal => Cond::Eq,
@@ -384,7 +384,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         IntCC::NotOverflow => Cond::Vc,
 //zz     }
 //zz }
-//zz 
+//zz
 //zz /// Actually codegen an instruction's results into registers.
 //zz fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
 //zz     let op = ctx.data(insn).opcode();
@@ -399,7 +399,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz     } else {
 //zz         None
 //zz     };
-//zz 
+//zz
 //zz     match op {
 //zz         Opcode::Iconst | Opcode::Bconst | Opcode::F32const | Opcode::F64const => {
 //zz             let value = output_to_const(ctx, outputs[0]).unwrap();
@@ -422,7 +422,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz             let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
 //zz             ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
 //zz         }
-//zz 
+//zz
 //zz         Opcode::Load
 //zz         | Opcode::Uload8
 //zz         | Opcode::Sload8
@@ -453,10 +453,10 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz                 Opcode::Load | Opcode::LoadComplex => I64,
 //zz                 _ => unreachable!(),
 //zz             };
-//zz 
+//zz
 //zz             let mem = lower_address(ctx, elem_ty, &inputs[..], off);
 //zz             let rd = output_to_reg(ctx, outputs[0]);
-//zz 
+//zz
 //zz             ctx.emit(match op {
 //zz                 Opcode::Uload8 | Opcode::Uload8Complex => Inst::ULoad8 { rd, mem },
 //zz                 Opcode::Sload8 | Opcode::Sload8Complex => Inst::SLoad8 { rd, mem },
@@ -468,7 +468,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz                 _ => unreachable!(),
 //zz             });
 //zz         }
-//zz 
+//zz
 //zz         Opcode::Store
 //zz         | Opcode::Istore8
 //zz         | Opcode::Istore16
@@ -485,10 +485,10 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz                 Opcode::Store | Opcode::StoreComplex => I64,
 //zz                 _ => unreachable!(),
 //zz             };
-//zz 
+//zz
 //zz             let mem = lower_address(ctx, elem_ty, &inputs[1..], off);
 //zz             let rd = input_to_reg(ctx, inputs[0]);
-//zz 
+//zz
 //zz             ctx.emit(match op {
 //zz                 Opcode::Istore8 | Opcode::Istore8Complex => Inst::Store8 { rd, mem },
 //zz                 Opcode::Istore16 | Opcode::Istore16Complex => Inst::Store16 { rd, mem },
@@ -497,7 +497,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz                 _ => unreachable!(),
 //zz             });
 //zz         }
-//zz 
+//zz
 //zz         Opcode::Return => {
 //zz             // TODO: multiple return values.
 //zz             assert!(inputs.len() <= 1);
@@ -508,7 +508,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz             }
 //zz             ctx.emit(Inst::Ret {});
 //zz         }
-//zz 
+//zz
 //zz         // TODO: cmp
 //zz         // TODO: more alu ops
 //zz         _ => {
@@ -517,7 +517,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         }
 //zz     }
 //zz }
-//zz 
+//zz
 //zz fn choose_32_64(ty: Type, op32: ALUOp, op64: ALUOp) -> ALUOp {
 //zz     if ty == I32 {
 //zz         op32
@@ -527,7 +527,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         panic!("type {} is not I32 or I64", ty);
 //zz     }
 //zz }
-//zz 
+//zz
 //zz fn branch_target(data: &InstructionData) -> Option<Ebb> {
 //zz     match data {
 //zz         &InstructionData::BranchIcmp { destination, .. }
@@ -542,7 +542,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         }
 //zz     }
 //zz }
-//zz 
+//zz
 //zz fn ldst_offset(data: &InstructionData) -> Option<i32> {
 //zz     match data {
 //zz         &InstructionData::Load { offset, .. }
@@ -554,7 +554,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz         _ => None,
 //zz     }
 //zz }
-//zz 
+//zz
 //zz fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
 //zz     match data {
 //zz         &InstructionData::IntCond { cond, .. }
@@ -572,18 +572,18 @@ impl LowerBackend for X64Backend {
     type MInst = Inst;
 
     fn lower_entry<C: LowerCtx<Inst>>(&self, _ctx: &mut C, _ebb: Ebb) {
-//zz         ctx.emit(Inst::LiveIns);
-//zz         // TODO: ABI support for more than 8 args.
-//zz         assert!(ctx.num_ebb_params(ebb) < 8);
-//zz         for i in 0..ctx.num_ebb_params(ebb) {
-//zz             let abi_reg = xreg(i as u8);
-//zz             let ebb_reg = ctx.ebb_param(ebb, i);
-//zz             ctx.emit(Inst::gen_move(ebb_reg, abi_reg));
-//zz         }
+        //zz         ctx.emit(Inst::LiveIns);
+        //zz         // TODO: ABI support for more than 8 args.
+        //zz         assert!(ctx.num_ebb_params(ebb) < 8);
+        //zz         for i in 0..ctx.num_ebb_params(ebb) {
+        //zz             let abi_reg = xreg(i as u8);
+        //zz             let ebb_reg = ctx.ebb_param(ebb, i);
+        //zz             ctx.emit(Inst::gen_move(ebb_reg, abi_reg));
+        //zz         }
     }
 
     fn lower<C: LowerCtx<Inst>>(&self, _ctx: &mut C, _ir_inst: IRInst) {
-//zz         lower_insn_to_regs(ctx, ir_inst);
+        //zz         lower_insn_to_regs(ctx, ir_inst);
     }
 
     fn lower_branch_group<C: LowerCtx<Inst>>(
@@ -593,110 +593,110 @@ impl LowerBackend for X64Backend {
         _targets: &[BlockIndex],
         _fallthrough: Option<BlockIndex>,
     ) {
-//zz         // A block should end with at most two branches. The first may be a
-//zz         // conditional branch; a conditional branch can be followed only by an
-//zz         // unconditional branch or fallthrough. Otherwise, if only one branch,
-//zz         // it may be an unconditional branch, a fallthrough, a return, or a
-//zz         // trap. These conditions are verified by `is_ebb_basic()` during the
-//zz         // verifier pass.
-//zz         assert!(branches.len() <= 2);
-//zz 
-//zz         if branches.len() == 2 {
-//zz             // Must be a conditional branch followed by an unconditional branch.
-//zz             let op1 = ctx.data(branches[0]).opcode();
-//zz             let op2 = ctx.data(branches[1]).opcode();
-//zz 
-//zz             assert!(op2 == Opcode::Jump || op2 == Opcode::Fallthrough);
-//zz             let taken = BranchTarget::Block(targets[0]);
-//zz             let not_taken = match op2 {
-//zz                 Opcode::Jump => BranchTarget::Block(targets[1]),
-//zz                 Opcode::Fallthrough => BranchTarget::Block(fallthrough.unwrap()),
-//zz                 _ => unreachable!(), // assert above.
-//zz             };
-//zz             match op1 {
-//zz                 Opcode::Brz | Opcode::Brnz => {
-//zz                     let rt = input_to_reg(
-//zz                         ctx,
-//zz                         InsnInput {
-//zz                             insn: branches[0],
-//zz                             input: 0,
-//zz                         },
-//zz                     );
-//zz                     let kind = match op1 {
-//zz                         Opcode::Brz => CondBrKind::Zero(rt),
-//zz                         Opcode::Brnz => CondBrKind::NotZero(rt),
-//zz                         _ => unreachable!(),
-//zz                     };
-//zz                     ctx.emit(Inst::CondBr {
-//zz                         taken,
-//zz                         not_taken,
-//zz                         kind,
-//zz                     });
-//zz                 }
-//zz                 Opcode::BrIcmp => {
-//zz                     let rn = input_to_reg(
-//zz                         ctx,
-//zz                         InsnInput {
-//zz                             insn: branches[0],
-//zz                             input: 0,
-//zz                         },
-//zz                     );
-//zz                     let rm = input_to_reg(
-//zz                         ctx,
-//zz                         InsnInput {
-//zz                             insn: branches[0],
-//zz                             input: 1,
-//zz                         },
-//zz                     );
-//zz                     let ty = ctx.input_ty(branches[0], 0);
-//zz                     let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
-//zz                     let rd = zero_reg();
-//zz                     ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
-//zz                     let cond = lower_condcode(inst_condcode(ctx.data(branches[0])).unwrap());
-//zz                     ctx.emit(Inst::CondBr {
-//zz                         taken,
-//zz                         not_taken,
-//zz                         kind: CondBrKind::Cond(cond),
-//zz                     });
-//zz                 }
-//zz 
-//zz                 // TODO: Brif/icmp, Brff/icmp, jump tables, call, ret
-//zz                 _ => unimplemented!(),
-//zz             }
-//zz         } else {
-//zz             assert!(branches.len() == 1);
-//zz 
-//zz             // Must be an unconditional branch, fallthrough, return, or trap.
-//zz             let op = ctx.data(branches[0]).opcode();
-//zz             match op {
-//zz                 Opcode::Jump => {
-//zz                     ctx.emit(Inst::Jump {
-//zz                         dest: BranchTarget::Block(targets[0]),
-//zz                     });
-//zz                 }
-//zz                 Opcode::Fallthrough => {
-//zz                     ctx.emit(Inst::Jump {
-//zz                         dest: BranchTarget::Block(targets[0]),
-//zz                     });
-//zz                 }
-//zz 
-//zz                 Opcode::FallthroughReturn => {
-//zz                     // What is this? The definition says it's a "special
-//zz                     // instruction" meant to allow falling through into an
-//zz                     // epilogue that will then return; that just sounds like a
-//zz                     // normal fallthrough. TODO: Do we need to handle this
-//zz                     // differently?
-//zz                     unimplemented!();
-//zz                 }
-//zz 
-//zz                 Opcode::Return => {
-//zz                     ctx.emit(Inst::Ret {});
-//zz                 }
-//zz 
-//zz                 Opcode::Trap => unimplemented!(),
-//zz 
-//zz                 _ => panic!("Unknown branch type!"),
-//zz             }
-//zz         }
+        //zz         // A block should end with at most two branches. The first may be a
+        //zz         // conditional branch; a conditional branch can be followed only by an
+        //zz         // unconditional branch or fallthrough. Otherwise, if only one branch,
+        //zz         // it may be an unconditional branch, a fallthrough, a return, or a
+        //zz         // trap. These conditions are verified by `is_ebb_basic()` during the
+        //zz         // verifier pass.
+        //zz         assert!(branches.len() <= 2);
+        //zz
+        //zz         if branches.len() == 2 {
+        //zz             // Must be a conditional branch followed by an unconditional branch.
+        //zz             let op1 = ctx.data(branches[0]).opcode();
+        //zz             let op2 = ctx.data(branches[1]).opcode();
+        //zz
+        //zz             assert!(op2 == Opcode::Jump || op2 == Opcode::Fallthrough);
+        //zz             let taken = BranchTarget::Block(targets[0]);
+        //zz             let not_taken = match op2 {
+        //zz                 Opcode::Jump => BranchTarget::Block(targets[1]),
+        //zz                 Opcode::Fallthrough => BranchTarget::Block(fallthrough.unwrap()),
+        //zz                 _ => unreachable!(), // assert above.
+        //zz             };
+        //zz             match op1 {
+        //zz                 Opcode::Brz | Opcode::Brnz => {
+        //zz                     let rt = input_to_reg(
+        //zz                         ctx,
+        //zz                         InsnInput {
+        //zz                             insn: branches[0],
+        //zz                             input: 0,
+        //zz                         },
+        //zz                     );
+        //zz                     let kind = match op1 {
+        //zz                         Opcode::Brz => CondBrKind::Zero(rt),
+        //zz                         Opcode::Brnz => CondBrKind::NotZero(rt),
+        //zz                         _ => unreachable!(),
+        //zz                     };
+        //zz                     ctx.emit(Inst::CondBr {
+        //zz                         taken,
+        //zz                         not_taken,
+        //zz                         kind,
+        //zz                     });
+        //zz                 }
+        //zz                 Opcode::BrIcmp => {
+        //zz                     let rn = input_to_reg(
+        //zz                         ctx,
+        //zz                         InsnInput {
+        //zz                             insn: branches[0],
+        //zz                             input: 0,
+        //zz                         },
+        //zz                     );
+        //zz                     let rm = input_to_reg(
+        //zz                         ctx,
+        //zz                         InsnInput {
+        //zz                             insn: branches[0],
+        //zz                             input: 1,
+        //zz                         },
+        //zz                     );
+        //zz                     let ty = ctx.input_ty(branches[0], 0);
+        //zz                     let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
+        //zz                     let rd = zero_reg();
+        //zz                     ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
+        //zz                     let cond = lower_condcode(inst_condcode(ctx.data(branches[0])).unwrap());
+        //zz                     ctx.emit(Inst::CondBr {
+        //zz                         taken,
+        //zz                         not_taken,
+        //zz                         kind: CondBrKind::Cond(cond),
+        //zz                     });
+        //zz                 }
+        //zz
+        //zz                 // TODO: Brif/icmp, Brff/icmp, jump tables, call, ret
+        //zz                 _ => unimplemented!(),
+        //zz             }
+        //zz         } else {
+        //zz             assert!(branches.len() == 1);
+        //zz
+        //zz             // Must be an unconditional branch, fallthrough, return, or trap.
+        //zz             let op = ctx.data(branches[0]).opcode();
+        //zz             match op {
+        //zz                 Opcode::Jump => {
+        //zz                     ctx.emit(Inst::Jump {
+        //zz                         dest: BranchTarget::Block(targets[0]),
+        //zz                     });
+        //zz                 }
+        //zz                 Opcode::Fallthrough => {
+        //zz                     ctx.emit(Inst::Jump {
+        //zz                         dest: BranchTarget::Block(targets[0]),
+        //zz                     });
+        //zz                 }
+        //zz
+        //zz                 Opcode::FallthroughReturn => {
+        //zz                     // What is this? The definition says it's a "special
+        //zz                     // instruction" meant to allow falling through into an
+        //zz                     // epilogue that will then return; that just sounds like a
+        //zz                     // normal fallthrough. TODO: Do we need to handle this
+        //zz                     // differently?
+        //zz                     unimplemented!();
+        //zz                 }
+        //zz
+        //zz                 Opcode::Return => {
+        //zz                     ctx.emit(Inst::Ret {});
+        //zz                 }
+        //zz
+        //zz                 Opcode::Trap => unimplemented!(),
+        //zz
+        //zz                 _ => panic!("Unknown branch type!"),
+        //zz             }
+        //zz         }
     }
 }

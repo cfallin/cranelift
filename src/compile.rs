@@ -92,7 +92,10 @@ fn handle_module(
                 .expect("Compilation error");
             println!("Machine code:");
             for word in code.chunks(4) {
-                println!("{:02x}{:02x}{:02x}{:02x}", word[3], word[2], word[1], word[0]);
+                println!(
+                    "{:02x}{:02x}{:02x}{:02x}",
+                    word[3], word[2], word[1], word[0]
+                );
             }
         }
     }
