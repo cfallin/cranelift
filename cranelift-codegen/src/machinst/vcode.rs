@@ -451,6 +451,13 @@ impl<I: MachInst> RegallocFunction for VCode<I> {
             .collect()
     }
 
+    fn is_ret(&self, insn: InstIx) -> bool {
+        match self.insts[insn.get() as usize].is_term() {
+            MachTerminator::Ret => true,
+            _ => false,
+        }
+    }
+
     fn get_regs(&self, insn: &I) -> InstRegUses {
         let mut used = RegallocSet::empty();
         let mut defined = RegallocSet::empty();
@@ -503,12 +510,12 @@ impl<I: MachInst> RegallocFunction for VCode<I> {
         insn.maybe_direct_reload(reg, slot)
     }
 
-    fn func_liveins(&self) -> RegallocSet<Reg> {
+    fn func_liveins(&self) -> RegallocSet<RealReg> {
         // TODO
         RegallocSet::empty()
     }
 
-    fn func_liveouts(&self) -> RegallocSet<Reg> {
+    fn func_liveouts(&self) -> RegallocSet<RealReg> {
         // TODO
         RegallocSet::empty()
     }
