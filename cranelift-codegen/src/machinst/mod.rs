@@ -1,5 +1,7 @@
 //! This module exposes the machine-specific backend definition pieces.
 
+#![allow(unused_imports)]
+
 use crate::binemit::{CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
 use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;

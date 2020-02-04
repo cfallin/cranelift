@@ -1,5 +1,10 @@
 //! This module defines arm64-specific machine instruction types.
 
+#![allow(non_snake_case)]
+#![allow(unused_imports)]
+#![allow(non_camel_case_types)]
+#![allow(dead_code)]
+
 use crate::binemit::CodeSink;
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
@@ -314,7 +319,7 @@ pub struct ImmLogic {
 
 impl ImmLogic {
     /// Compute an ImmLogic from raw bits, if possible.
-    pub fn maybe_from_u64(val: u64) -> Option<ImmLogic> {
+    pub fn maybe_from_u64(_val: u64) -> Option<ImmLogic> {
         // TODO: implement.
         None
     }
@@ -1002,7 +1007,7 @@ impl MachInst for Inst {
         Inst::Nop4
     }
 
-    fn maybe_direct_reload(&self, reg: VirtualReg, slot: SpillSlot) -> Option<Inst> {
+    fn maybe_direct_reload(&self, _reg: VirtualReg, _slot: SpillSlot) -> Option<Inst> {
         None
     }
 
@@ -1015,7 +1020,7 @@ impl MachInst for Inst {
         }
     }
 
-    fn gen_jump(blockindex: BlockIndex) -> Inst {
+    fn gen_jump(_blockindex: BlockIndex) -> Inst {
         unimplemented!()
     }
 
@@ -1218,21 +1223,21 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 };
                 sink.put4(enc_arith_rr_imml(top9, imml.enc_bits(), rn, rd));
             }
-            &Inst::AluRRImmShift { rd, rn, .. } => unimplemented!(),
-            &Inst::AluRRRShift { rd, rn, rm, .. } => unimplemented!(),
-            &Inst::AluRRRExtend { rd, rn, rm, .. } => unimplemented!(),
-            &Inst::ULoad8 { rd, ref mem, .. }
-            | &Inst::SLoad8 { rd, ref mem, .. }
-            | &Inst::ULoad16 { rd, ref mem, .. }
-            | &Inst::SLoad16 { rd, ref mem, .. }
-            | &Inst::ULoad32 { rd, ref mem, .. }
-            | &Inst::SLoad32 { rd, ref mem, .. }
-            | &Inst::ULoad64 { rd, ref mem, .. } => unimplemented!(),
-            &Inst::Store8 { rd, ref mem, .. }
-            | &Inst::Store16 { rd, ref mem, .. }
-            | &Inst::Store32 { rd, ref mem, .. }
-            | &Inst::Store64 { rd, ref mem, .. } => unimplemented!(),
-            &Inst::MovZ { rd, .. } => unimplemented!(),
+            &Inst::AluRRImmShift { rd: _, rn: _, .. } => unimplemented!(),
+            &Inst::AluRRRShift { rd: _, rn: _, rm: _, .. } => unimplemented!(),
+            &Inst::AluRRRExtend { rd: _, rn: _, rm: _, .. } => unimplemented!(),
+            &Inst::ULoad8 { rd: _, /*ref*/ mem: _, .. }
+            | &Inst::SLoad8 { rd: _, /*ref*/ mem: _, .. }
+            | &Inst::ULoad16 { rd: _, /*ref*/ mem: _, .. }
+            | &Inst::SLoad16 { rd: _, /*ref*/ mem: _, .. }
+            | &Inst::ULoad32 { rd: _, /*ref*/ mem: _, .. }
+            | &Inst::SLoad32 { rd: _, /*ref*/ mem: _, .. }
+            | &Inst::ULoad64 { rd: _, /*ref*/ mem: _, .. } => unimplemented!(),
+            &Inst::Store8 { rd: _, /*ref*/ mem: _, .. }
+            | &Inst::Store16 { rd: _, /*ref*/ mem: _, .. }
+            | &Inst::Store32 { rd: _, /*ref*/ mem: _, .. }
+            | &Inst::Store64 { rd: _, /*ref*/ mem: _, .. } => unimplemented!(),
+            &Inst::MovZ { rd: _, .. } => unimplemented!(),
             &Inst::Jump { ref dest } => {
                 assert!(dest.as_off26().is_some());
                 sink.put4(enc_jump26(dest.as_off26().unwrap()));
@@ -1241,7 +1246,7 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 sink.put4(0xd65f03c0);
             }
             &Inst::Call { .. } => unimplemented!(),
-            &Inst::CallInd { rn, .. } => unimplemented!(),
+            &Inst::CallInd { rn: _, .. } => unimplemented!(),
             &Inst::CondBr { .. } => panic!("Unlowered CondBr during binemit!"),
             &Inst::CondBrLowered { .. } => unimplemented!(),
             &Inst::CondBrLoweredCompound { .. } => unimplemented!(),

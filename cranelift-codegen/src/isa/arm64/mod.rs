@@ -1,5 +1,7 @@
 //! ARM 64-bit Instruction Set Architecture.
 
+#![allow(unused_imports)]
+
 use crate::binemit::{CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
 use crate::ir::Function;
 use crate::machinst::compile;
@@ -37,7 +39,7 @@ impl MachBackend for Arm64Backend {
     ) -> CodegenResult<Vec<u8>> {
         // This performs lowering to VCode, register-allocates the code, computes
         // block layout and finalizes branches. The result is ready for binary emission.
-        let mut vcode = compile::compile::<Arm64Backend>(&mut func, self);
+        let /*mut*/ vcode = compile::compile::<Arm64Backend>(&mut func, self);
 
         let mut buf: Vec<u8> = vec![];
         buf.resize(vcode.code_size(), 0);

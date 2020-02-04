@@ -1,5 +1,8 @@
 //! A pass that computes the number of uses of any given instruction.
 
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 use crate::cursor::{Cursor, FuncCursor};
 use crate::dce::has_side_effect;
 use crate::entity::SecondaryMap;

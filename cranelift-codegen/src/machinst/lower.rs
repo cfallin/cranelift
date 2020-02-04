@@ -415,7 +415,7 @@ fn branch_target(inst: &InstructionData) -> Option<Ebb> {
         | &InstructionData::BranchInt { destination, .. }
         | &InstructionData::BranchIcmp { destination, .. }
         | &InstructionData::BranchFloat { destination, .. } => Some(destination),
-        &InstructionData::BranchTable { destination, .. } => unimplemented!(),
+        &InstructionData::BranchTable { destination: _, .. } => unimplemented!(),
         _ => None,
     }
 }

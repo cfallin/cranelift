@@ -1,5 +1,7 @@
 //! Lowering rules for ARM64.
 
+#![allow(dead_code)]
+
 use crate::ir::condcodes::IntCC;
 use crate::ir::types::*;
 use crate::ir::Inst as IRInst;
@@ -143,13 +145,13 @@ fn output_to_const<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Option<u64> {
     } else {
         let inst_data = ctx.data(out.insn);
         match inst_data {
-            &InstructionData::UnaryImm { opcode, imm } => {
+            &InstructionData::UnaryImm { opcode: _, imm } => {
                 // Only has Into for i64; we use u64 elsewhere, so we cast.
                 let imm: i64 = imm.into();
                 Some(imm as u64)
             }
-            &InstructionData::UnaryIeee32 { opcode, imm } => Some(imm.bits() as u64),
-            &InstructionData::UnaryIeee64 { opcode, imm } => Some(imm.bits()),
+            &InstructionData::UnaryIeee32 { opcode: _, imm } => Some(imm.bits() as u64),
+            &InstructionData::UnaryIeee64 { opcode: _, imm } => Some(imm.bits()),
             _ => None,
         }
     }
@@ -181,7 +183,7 @@ fn output_to_rse<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSE {
 
     if op == Opcode::Ishl {
         let shiftee = get_input(ctx, out, 0);
-        let shift_amt = get_input(ctx, out, 1);
+        let _shift_amt = get_input(ctx, out, 1);
 
         // Can we get the shift amount as an immediate?
         if let Some(out) = input_source(ctx, shiftee).as_output() {

@@ -3,6 +3,8 @@
 //! The `Function` struct defined in this module owns all of its extended basic blocks and
 //! instructions.
 
+#![allow(unused_imports)]
+
 use crate::binemit::CodeOffset;
 use crate::entity::{PrimaryMap, SecondaryMap};
 use crate::ir;
