@@ -418,13 +418,18 @@ pub enum ShiftKind {
     RightS,
     RightZ,
 }
+impl ShiftKind {
+    fn to_string(&self) -> String {
+        match self {
+            ShiftKind::Left => "shl".to_string(),
+            ShiftKind::RightS => "sar".to_string(),
+            ShiftKind::RightZ => "shr".to_string(),
+        }
+    }
+}
 impl fmt::Debug for ShiftKind {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ShiftKind::Left => write!(fmt, "shl"),
-            ShiftKind::RightS => write!(fmt, "sar"),
-            ShiftKind::RightZ => write!(fmt, "shr"),
-        }
+        write!(fmt, "{}", self.to_string())
     }
 }
 
@@ -433,12 +438,17 @@ pub enum CC {
     Z,
     NZ,
 } // add more as needed
+impl CC {
+    fn to_string(&self) -> String {
+        match self {
+            CC::Z => "z".to_string(),
+            CC::NZ => "nz".to_string(),
+        }
+    }
+}
 impl fmt::Debug for CC {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            CC::Z => write!(fmt, "z"),
-            CC::NZ => write!(fmt, "nz"),
-        }
+        write!(fmt, "{}", self.to_string())
     }
 }
 
@@ -496,7 +506,8 @@ pub enum Inst {
 
     /// (shl shr sar) (l q) imm reg
     Shift_R {
-        shMode: ShiftKind,
+        is64: bool,
+        kind: ShiftKind,
         nBits: u8, // 1 .. #bits-in-type - 1, or 0 to mean "%cl"
         dst: Reg,
     },
@@ -580,7 +591,7 @@ pub enum Inst {
 }
 impl fmt::Debug for Inst {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fn justify_name(s: String) -> String {
+        fn ljustify(s: String) -> String {
             let w = 7;
             if s.len() >= w {
                 s
@@ -595,8 +606,8 @@ impl fmt::Debug for Inst {
                 s + &extra.to_string()
             }
         }
-        fn justify_name2(s1: String, s2: String) -> String {
-            justify_name(s1 + &s2)
+        fn ljustify2(s1: String, s2: String) -> String {
+            ljustify(s1 + &s2)
         }
         fn suffixLQ(is64: bool) -> String {
             (if is64 { "l" } else { "q" }).to_string()
@@ -615,7 +626,7 @@ impl fmt::Debug for Inst {
             Inst::Alu_RMI_R { is64, op, src, dst } => write!(
                 fmt,
                 "{} {:?}, {:?}",
-                justify_name2(op.to_string(), suffixLQ(*is64)),
+                ljustify2(op.to_string(), suffixLQ(*is64)),
                 src,
                 dst
             ),
@@ -628,7 +639,7 @@ impl fmt::Debug for Inst {
                     write!(
                         fmt,
                         "{} ${:?},{:?}",
-                        justify_name("movabsq".to_string()),
+                        ljustify("movabsq".to_string()),
                         simm64,
                         dst
                     )
@@ -636,7 +647,7 @@ impl fmt::Debug for Inst {
                     write!(
                         fmt,
                         "{} ${:?},{:?}",
-                        justify_name("movl".to_string()),
+                        ljustify("movl".to_string()),
                         simm64,
                         dst
                     )
@@ -645,31 +656,93 @@ impl fmt::Debug for Inst {
             Inst::Mov_R_R { is64, src, dst } => write!(
                 fmt,
                 "{} {:?}, {:?}",
-                justify_name2("mov".to_string(), suffixLQ(*is64)),
+                ljustify2("mov".to_string(), suffixLQ(*is64)),
                 src,
                 dst
             ),
             Inst::MovZX_M_R { extMode, addr, dst } => write!(
                 fmt,
                 "{} {:?}, {:?}",
-                justify_name2("movz".to_string(), extMode.to_string()),
+                ljustify2("movz".to_string(), extMode.to_string()),
                 addr,
                 dst
             ),
             Inst::MovSX_M_R { extMode, addr, dst } => write!(
                 fmt,
                 "{} {:?}, {:?}",
-                justify_name2("movs".to_string(), extMode.to_string()),
+                ljustify2("movs".to_string(), extMode.to_string()),
                 addr,
                 dst
             ),
             Inst::Mov_R_M { size, src, addr } => write!(
                 fmt,
                 "{} {:?}. {:?}",
-                justify_name2("mov".to_string(), suffixBWLQ(*size)),
+                ljustify2("mov".to_string(), suffixBWLQ(*size)),
                 src,
                 addr
             ),
+            Inst::Shift_R {
+                is64,
+                kind,
+                nBits,
+                dst,
+            } => {
+                if *nBits == 0 {
+                    write!(
+                        fmt,
+                        "{} %cl, {:?}",
+                        ljustify2(kind.to_string(), suffixLQ(*is64)),
+                        dst
+                    )
+                } else {
+                    write!(
+                        fmt,
+                        "{} ${}, {:?}",
+                        ljustify2(kind.to_string(), suffixLQ(*is64)),
+                        nBits,
+                        dst
+                    )
+                }
+            }
+            Inst::Cmp_RMI_R { size, src, dst } => write!(
+                fmt,
+                "{} {:?}, {:?}",
+                ljustify2("cmp".to_string(), suffixBWLQ(*size)),
+                src,
+                dst
+            ),
+            Inst::Push { is64, src } => write!(
+                fmt,
+                "{} {:?}",
+                ljustify2("push".to_string(), suffixLQ(*is64)),
+                src
+            ),
+            Inst::JmpKnown { simm32 } => write!(
+                fmt,
+                "{} simm32={}",
+                ljustify("jmp".to_string()),
+                *simm32 as i32
+            ),
+            Inst::JmpUnknown { target } => {
+                write!(fmt, "{} {:?}", ljustify("jmp".to_string()), target)
+            }
+            Inst::JmpCond {
+                cc,
+                tsimm32,
+                fsimm32,
+            } => write!(
+                fmt,
+                "{} tsimm32={} fsimm32={}",
+                ljustify2("j".to_string(), cc.to_string()),
+                *tsimm32 as i32,
+                *fsimm32 as i32
+            ),
+            Inst::CallKnown { target } => {
+                write!(fmt, "{} {:?}", ljustify("call".to_string()), target)
+            }
+            Inst::CallUnknown { target } => {
+                write!(fmt, "{} {:?}", ljustify("call".to_string()), target)
+            }
             _ => write!(fmt, "bleh"),
         }
     }
