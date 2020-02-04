@@ -5,7 +5,7 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-use crate::binemit::{CodeSink, SizeCodeSink};
+use crate::binemit::{CodeOffset, CodeSink};
 //zz use crate::ir::constant::{ConstantData, ConstantOffset};
 //zz use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
 use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
@@ -1573,7 +1573,7 @@ impl MachInst for Inst {
         //zz         }
     }
 
-    fn with_block_offsets(&mut self, _my_offset: usize, _targets: &[usize]) {
+    fn with_block_offsets(&mut self, _my_offset: CodeOffset, _targets: &[CodeOffset]) {
         unimplemented!()
         //zz         match self {
         //zz             &mut Inst::CondBrLowered { ref mut target, .. } => {
@@ -1598,16 +1598,10 @@ impl MachInst for Inst {
         unimplemented!()
         //zz         get_reg_universe()
     }
-
-    fn size(&self) -> usize {
-        let mut sizesink = SizeCodeSink::new();
-        self.emit(&mut sizesink);
-        sizesink.size()
-    }
 }
 
 //zz impl BranchTarget {
-//zz     fn lower(&mut self, targets: &[usize], my_offset: usize) {
+//zz     fn lower(&mut self, targets: &[CodeOffset], my_offset: CodeOffset) {
 //zz         match self {
 //zz             &mut BranchTarget::Block(bix) => {
 //zz                 let bix = bix as usize;

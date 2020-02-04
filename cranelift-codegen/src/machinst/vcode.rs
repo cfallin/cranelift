@@ -41,6 +41,7 @@
 //! critical-edge splitting happens just before lowering, because it is a
 //! machine-independent transform.
 
+use crate::binemit::SizeCodeSink;
 use crate::ir;
 use crate::machinst::*;
 
@@ -59,10 +60,15 @@ pub type InsnIndex = u32;
 /// Index referring to a basic block in VCode.
 pub type BlockIndex = u32;
 
+/// VCodeInst wraps all requirements for a MachInst to be in VCode: it must be
+/// a `MachInst` and it must be able to emit itself at least to a `SizeCodeSink`.
+pub trait VCodeInst: MachInst + MachInstEmit<SizeCodeSink> {}
+impl<I: MachInst + MachInstEmit<SizeCodeSink>> VCodeInst for I {}
+
 /// A function in "VCode" (virtualized-register code) form, after lowering.
 /// This is essentially a standard CFG of basic blocks, where each basic block
 /// consists of lowered instructions produced by the machine-specific backend.
-pub struct VCode<I: MachInst> {
+pub struct VCode<I: VCodeInst> {
     /// Lowered machine instructions in order corresponding to the original IR.
     insts: Vec<I>,
 
@@ -88,10 +94,10 @@ pub struct VCode<I: MachInst> {
 
     /// Final block offsets. Computed during branch finalization and used
     /// during emission.
-    final_block_offsets: Vec<usize>,
+    final_block_offsets: Vec<CodeOffset>,
 
     /// Size of code, according for block layout / alignment.
-    code_size: usize,
+    code_size: CodeOffset,
 }
 
 /// A builder for a VCode function body. This builder is designed for the
@@ -108,7 +114,7 @@ pub struct VCode<I: MachInst> {
 /// block, in reverse order. Finally, when we're done with a basic block, we
 /// reverse the whole block's vec of instructions again, and concatenate onto
 /// the VCode's insts.
-pub struct VCodeBuilder<I: MachInst> {
+pub struct VCodeBuilder<I: VCodeInst> {
     /// In-progress VCode.
     vcode: VCode<I>,
 
@@ -123,7 +129,7 @@ pub struct VCodeBuilder<I: MachInst> {
     succ_start: usize,
 }
 
-impl<I: MachInst> VCodeBuilder<I> {
+impl<I: VCodeInst> VCodeBuilder<I> {
     /// Create a new VCodeBuilder.
     pub fn new() -> VCodeBuilder<I> {
         VCodeBuilder {
@@ -215,14 +221,14 @@ struct BlockRPO {
 }
 
 impl BlockRPO {
-    fn new<I: MachInst>(vcode: &VCode<I>) -> BlockRPO {
+    fn new<I: VCodeInst>(vcode: &VCode<I>) -> BlockRPO {
         BlockRPO {
             visited: std::iter::repeat(false).take(vcode.num_blocks()).collect(),
             postorder: vec![],
         }
     }
 
-    fn visit<I: MachInst>(&mut self, vcode: &VCode<I>, block: BlockIndex) {
+    fn visit<I: VCodeInst>(&mut self, vcode: &VCode<I>, block: BlockIndex) {
         self.visited[block as usize] = true;
         for succ in vcode.succs(block) {
             if !self.visited[*succ as usize] {
@@ -248,7 +254,7 @@ fn block_ranges(indices: &[InstIx], len: usize) -> Vec<(usize, usize)> {
     v.windows(2).map(|p| (p[0], p[1])).collect()
 }
 
-fn is_redundant_move<I: MachInst>(insn: &I) -> bool {
+fn is_redundant_move<I: VCodeInst>(insn: &I) -> bool {
     if let Some((to, from)) = insn.is_move() {
         to == from
     } else {
@@ -256,7 +262,13 @@ fn is_redundant_move<I: MachInst>(insn: &I) -> bool {
     }
 }
 
-impl<I: MachInst> VCode<I> {
+fn inst_size<I: VCodeInst>(insn: &I) -> usize {
+    let mut sizesink = SizeCodeSink::new();
+    insn.emit(&mut sizesink);
+    sizesink.size()
+}
+
+impl<I: VCodeInst> VCode<I> {
     /// New empty VCode.
     fn new() -> VCode<I> {
         VCode {
@@ -355,7 +367,7 @@ impl<I: MachInst> VCode<I> {
             block_offsets.push(offset);
             let (start, end) = self.block_ranges[*block as usize].clone();
             for iix in start..end {
-                offset += self.insts[iix as usize].size();
+                offset += inst_size(&self.insts[iix as usize]) as CodeOffset;
             }
         }
 
@@ -369,7 +381,7 @@ impl<I: MachInst> VCode<I> {
             let (start, end) = self.block_ranges[*block as usize].clone();
             for iix in start..end {
                 self.insts[iix as usize].with_block_offsets(offset, &block_offsets[..]);
-                offset += self.insts[iix as usize].size();
+                offset += inst_size(&self.insts[iix as usize]) as CodeOffset;
             }
         }
 
@@ -380,7 +392,7 @@ impl<I: MachInst> VCode<I> {
     /// Get the total size of the code when emitted.
     pub fn code_size(&self) -> usize {
         // TODO: size of any ConstantData?
-        self.code_size
+        self.code_size as usize
     }
 
     /// Emit the instructions to the given sink.
@@ -388,21 +400,18 @@ impl<I: MachInst> VCode<I> {
     where
         I: MachInstEmit<CS>,
     {
-        let mut offset = 0;
         for block in &self.final_block_order {
-            let new_offset = I::align_basic_block(offset);
-            while new_offset > offset {
+            let new_offset = I::align_basic_block(cs.offset());
+            while new_offset > cs.offset() {
                 // Pad with NOPs up to the aligned block offset.
-                let nop = I::gen_nop(new_offset - offset);
+                let nop = I::gen_nop((new_offset - cs.offset()) as usize);
                 nop.emit(cs);
-                offset += nop.size();
             }
-            assert!(offset == new_offset);
+            assert!(cs.offset() == new_offset);
 
             let (start, end) = self.block_ranges[*block as usize].clone();
             for iix in start..end {
                 self.insts[iix as usize].emit(cs);
-                offset += self.insts[iix as usize].size();
             }
         }
 
@@ -410,7 +419,7 @@ impl<I: MachInst> VCode<I> {
     }
 }
 
-impl<I: MachInst> RegallocFunction for VCode<I> {
+impl<I: VCodeInst> RegallocFunction for VCode<I> {
     type Inst = I;
 
     fn insns(&self) -> &[I] {
@@ -524,7 +533,7 @@ impl<I: MachInst> RegallocFunction for VCode<I> {
 // N.B.: Debug impl assumes that VCode has already been through all compilation
 // passes, and so has a final block order and offsets.
 
-impl<I: MachInst> fmt::Debug for VCode<I> {
+impl<I: VCodeInst> fmt::Debug for VCode<I> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "VCode {{")?;
 

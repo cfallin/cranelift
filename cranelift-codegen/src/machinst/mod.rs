@@ -2,7 +2,7 @@
 
 #![allow(unused_imports)]
 
-use crate::binemit::{CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
+use crate::binemit::{CodeOffset, CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
 use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;
 use crate::ir::ValueLocations;
@@ -103,17 +103,14 @@ pub trait MachInst: Clone + Debug {
     /// Update instruction once block offsets are known.  These offsets are
     /// relative to the beginning of the function. `targets` is indexed by
     /// BlockIndex.
-    fn with_block_offsets(&mut self, my_offset: usize, targets: &[usize]);
+    fn with_block_offsets(&mut self, my_offset: CodeOffset, targets: &[CodeOffset]);
 
     /// Get the register universe for this backend.
     fn reg_universe() -> RealRegUniverse;
 
-    /// Get the size of the instruction.
-    fn size(&self) -> usize;
-
     /// Align a basic block offset (from start of function).  By default, no
     /// alignment occurs.
-    fn align_basic_block(offset: usize) -> usize {
+    fn align_basic_block(offset: CodeOffset) -> CodeOffset {
         offset
     }
 }

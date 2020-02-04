@@ -6,7 +6,9 @@ use crate::binemit::CodeSink;
 use crate::entity::SecondaryMap;
 use crate::ir::{Ebb, Function, Inst, InstructionData, Opcode, Type, Value, ValueDef};
 use crate::isa::registers::RegUnit;
-use crate::machinst::{BlockIndex, MachInst, MachInstEmit, MachInstRegs, VCode, VCodeBuilder};
+use crate::machinst::{
+    BlockIndex, MachInst, MachInstEmit, MachInstRegs, VCode, VCodeBuilder, VCodeInst,
+};
 use crate::num_uses::NumUses;
 
 use regalloc::Function as RegallocFunction;
@@ -55,7 +57,7 @@ pub trait LowerCtx<I> {
 /// A machine backend.
 pub trait LowerBackend {
     /// The machine instruction type.
-    type MInst: MachInst;
+    type MInst: VCodeInst;
 
     /// Lower a single instruction. Instructions are lowered in reverse order.
     /// This function need not handle branches; those are always passed to
@@ -81,7 +83,7 @@ pub trait LowerBackend {
 
 /// Machine-independent lowering driver / machine-instruction container. Maintains a correspondence
 /// from original Inst to MachInsts.
-pub struct Lower<'a, I: MachInst> {
+pub struct Lower<'a, I: VCodeInst> {
     // The function to lower.
     f: &'a Function,
 
@@ -114,7 +116,7 @@ fn alloc_vreg(
     }
 }
 
-impl<'a, I: MachInst> Lower<'a, I> {
+impl<'a, I: VCodeInst> Lower<'a, I> {
     /// Prepare a new lowering context for the given IR function.
     pub fn new(f: &'a Function) -> Lower<'a, I> {
         let num_uses = NumUses::compute(f).take_uses();
@@ -324,7 +326,7 @@ impl<'a, I: MachInst> Lower<'a, I> {
     }
 }
 
-impl<'a, I: MachInst> LowerCtx<I> for Lower<'a, I> {
+impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     /// Get the instdata for a given IR instruction.
     fn data(&self, ir_inst: Inst) -> &InstructionData {
         &self.f.dfg[ir_inst]

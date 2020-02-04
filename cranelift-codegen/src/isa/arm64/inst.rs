@@ -5,7 +5,7 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-use crate::binemit::CodeSink;
+use crate::binemit::{CodeOffset, CodeSink};
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
 use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
@@ -1061,7 +1061,7 @@ impl MachInst for Inst {
         }
     }
 
-    fn with_block_offsets(&mut self, my_offset: usize, targets: &[usize]) {
+    fn with_block_offsets(&mut self, my_offset: CodeOffset, targets: &[CodeOffset]) {
         match self {
             &mut Inst::CondBrLowered { ref mut target, .. } => {
                 target.lower(targets, my_offset);
@@ -1084,22 +1084,10 @@ impl MachInst for Inst {
     fn reg_universe() -> RealRegUniverse {
         get_reg_universe()
     }
-
-    fn size(&self) -> usize {
-        match self {
-            // These can result from branch finalization: nop from fallthrough,
-            // compound condbr if two non-fallthrough targets (open-coded
-            // sequence of two branches).
-            &Inst::Nop => 0,
-            &Inst::LiveIns => 0,
-            &Inst::CondBrLoweredCompound { .. } => 8,
-            _ => 4, // RISC!
-        }
-    }
 }
 
 impl BranchTarget {
-    fn lower(&mut self, targets: &[usize], my_offset: usize) {
+    fn lower(&mut self, targets: &[CodeOffset], my_offset: CodeOffset) {
         match self {
             &mut BranchTarget::Block(bix) => {
                 let bix = bix as usize;

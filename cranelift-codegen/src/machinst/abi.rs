@@ -6,7 +6,7 @@ use regalloc::{Reg, Set, VirtualReg};
 
 /// Trait implemented by an object that tracks ABI-related state (e.g., stack
 /// layout) and can generate code while emitting the *body* of a function.
-pub trait ABIBody<'a, I: MachInst> {
+pub trait ABIBody<'a, I: VCodeInst> {
     /// Generate a new ABI instance for the body of the given function.
     fn new(f: &'a ir::Function) -> Self;
 
@@ -51,7 +51,7 @@ pub trait ABIBody<'a, I: MachInst> {
 
 /// Trait implemented by an object that tracks ABI-related state and can
 /// generate code while emitting a *call* to a function.
-pub trait ABICall<'a, I: MachInst> {
+pub trait ABICall<'a, I: VCodeInst> {
     /// Generate a new ABI instance for a call to the given function.
     fn new(f: &'a ir::Function) -> Self;
 
