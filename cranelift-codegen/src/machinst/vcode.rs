@@ -502,6 +502,16 @@ impl<I: MachInst> RegallocFunction for VCode<I> {
     fn maybe_direct_reload(&self, insn: &I, reg: VirtualReg, slot: SpillSlot) -> Option<I> {
         insn.maybe_direct_reload(reg, slot)
     }
+
+    fn func_liveins(&self) -> RegallocSet<Reg> {
+        // TODO
+        RegallocSet::empty()
+    }
+
+    fn func_liveouts(&self) -> RegallocSet<Reg> {
+        // TODO
+        RegallocSet::empty()
+    }
 }
 
 // N.B.: Debug impl assumes that VCode has already been through all compilation

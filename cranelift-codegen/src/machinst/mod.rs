@@ -24,6 +24,8 @@ pub mod vcode;
 pub use vcode::*;
 pub mod compile;
 pub use compile::*;
+pub mod abi;
+pub use abi::*;
 
 /// The mode in which a register is used or defined.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
