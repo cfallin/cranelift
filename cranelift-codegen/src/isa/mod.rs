@@ -75,7 +75,7 @@ use thiserror::Error;
 mod riscv;
 
 #[cfg(feature = "x86")]
-mod x86;
+mod x64;
 
 #[cfg(feature = "arm32")]
 mod arm32;
@@ -131,13 +131,17 @@ macro_rules! isa_builder {
 pub fn lookup(triple: Triple) -> Result<IsaBackend, LookupError> {
     match triple.architecture {
         Architecture::Riscv32 | Architecture::Riscv64 => isa_builder!(riscv, "riscv", triple),
-        Architecture::I386 | Architecture::I586 | Architecture::I686 | Architecture::X86_64 => {
-            isa_builder!(x86, "x86", triple)
-        }
+        //Architecture::I386 | Architecture::I586 | Architecture::I686 => {
+        //    isa_builder!(x86, "x86", triple)
+        //}
         Architecture::Arm { .. } => isa_builder!(arm32, "arm32", triple),
         // ARM64 uses the new backend.
         Architecture::Aarch64 { .. } => Ok(IsaBackend::MachBackend(Box::new(
             arm64::Arm64Backend::new(),
+        ))),
+        // X86_64 uses the new backend.  Bwaha!
+        Architecture::X86_64 => Ok(IsaBackend::MachBackend(Box::new(
+            x64::X64Backend::new(),
         ))),
         _ => Err(LookupError::Unsupported),
     }
