@@ -14,199 +14,400 @@ use crate::machinst::*;
 use regalloc::Map as RegallocMap;
 use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, NUM_REG_CLASSES};
 
+use std::string::{String, ToString};
+use std::vec::Vec;
+use std::fmt;
+
 //zz use smallvec::SmallVec;
 //zz use std::mem;
 //zz use std::sync::Once;
-//zz 
-//zz // ------------- registers ----------------
-//zz 
-//zz /// Get a reference to an X-register (integer register).
-//zz pub fn xreg(num: u8) -> Reg {
-//zz     assert!(num < 32);
-//zz     Reg::new_real(
-//zz         RegClass::I64,
-//zz         /* enc = */ num,
-//zz         /* index = */ 32u8 + num,
-//zz     )
-//zz }
-//zz 
-//zz /// Get a reference to the zero-register.
-//zz pub fn zero_reg() -> Reg {
-//zz     xreg(31)
-//zz }
-//zz 
-//zz /// Get a reference to the stack-pointer register.
-//zz fn stack_reg() -> Reg {
-//zz     // XSP (stack) and XZR (zero) are the same register, in different contexts.
-//zz     zero_reg()
-//zz }
-//zz 
-//zz fn for_all_real_regs<F: FnMut(Reg)>(f: &mut F) {
-//zz     // V-regs
-//zz     for i in 0..32 {
-//zz         let reg = Reg::new_real(RegClass::V128, i as u8, i as u8);
-//zz         f(reg);
-//zz     }
-//zz     // X-regs, including zero reg.
-//zz     for i in 0..32 {
-//zz         let reg = Reg::new_real(RegClass::I64, i as u8, (i + 32) as u8);
-//zz         f(reg);
-//zz     }
-//zz }
-//zz 
-//zz /// Create the register universe for ARM64.
-//zz pub fn get_reg_universe() -> RealRegUniverse {
-//zz     let mut regs = vec![];
-//zz     let mut allocable_by_class = [None; NUM_REG_CLASSES];
-//zz 
-//zz     // Numbering Scheme: we put V-regs first, then X-regs, so that X31 (the
-//zz     // zero register or stack pointer, depending on context) is excluded from
-//zz     // the contiguous range of allocatable registers.
-//zz 
-//zz     let v_reg_base = 0u8; // in contiguous real-register index space
-//zz     let v_reg_count = 32u8;
-//zz     let v_reg_last = v_reg_base + v_reg_count - 1;
-//zz     for i in 0u8..v_reg_count {
-//zz         let reg = Reg::new_real(
-//zz             RegClass::V128,
-//zz             /* enc = */ i,
-//zz             /* index = */ v_reg_base + i,
-//zz         )
-//zz         .to_real_reg();
-//zz         let name = format!("v{}", i);
-//zz         regs.push((reg, name));
-//zz     }
-//zz 
-//zz     let x_reg_base = 32u8; // in contiguous real-register index space
-//zz     let x_reg_count = 31u8;
-//zz     let x_reg_last = x_reg_base + x_reg_count - 1;
-//zz     for i in 0u8..x_reg_count {
-//zz         let reg = Reg::new_real(
-//zz             RegClass::I64,
-//zz             /* enc = */ i,
-//zz             /* index = */ x_reg_base + i,
-//zz         )
-//zz         .to_real_reg();
-//zz         let name = format!("x{}", i);
-//zz         regs.push((reg, name));
-//zz     }
-//zz 
-//zz     allocable_by_class[RegClass::I64.rc_to_usize()] =
-//zz         Some((x_reg_base as usize, x_reg_last as usize));
-//zz     allocable_by_class[RegClass::V128.rc_to_usize()] =
-//zz         Some((v_reg_base as usize, v_reg_last as usize));
-//zz 
-//zz     let allocable = regs.len();
-//zz     RealRegUniverse {
-//zz         regs,
-//zz         allocable,
-//zz         allocable_by_class,
-//zz     }
-//zz }
-//zz 
-//zz /// An ALU operation. This can be paired with several instruction formats below (see `Inst`) in any
-//zz /// combination.
-//zz #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-//zz pub enum ALUOp {
-//zz     Add32,
-//zz     Add64,
-//zz     Sub32,
-//zz     Sub64,
-//zz     Orr32,
-//zz     Orr64,
-//zz     And32,
-//zz     And64,
-//zz     SubS32,
-//zz     SubS64,
-//zz }
+//zz
 
-/// Instruction formats.
-#[derive(Clone, Debug)]
+//=============================================================================
+// Registers and the Universe thereof
+
+// These are ordered by sequence number, as required in the Universe.  The
+// strange ordering is intended to make callee-save registers available before
+// caller-saved ones.  This is a net win provided that each function makes at
+// least one onward call.  It'll be a net loss for leaf functions, and we
+// should change the ordering in that case, so as to make caller-save regs
+// available first.
+
+fn info_R12() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/12, /*index=*/ 0).to_real_reg(), "r12".to_string())
+}
+fn info_R13() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/13, /*index=*/ 1).to_real_reg(), "r13".to_string())
+}
+fn info_R14() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/14, /*index=*/ 2).to_real_reg(), "r14".to_string())
+}
+fn info_R15() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/15, /*index=*/ 3).to_real_reg(), "r15".to_string())
+}
+fn info_RBX() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/ 3, /*index=*/ 4).to_real_reg(), "rbx".to_string())
+}
+
+fn info_RSI() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/ 6, /*index=*/ 5).to_real_reg(), "rsi".to_string())
+}
+fn info_RDI() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/ 7, /*index=*/ 6).to_real_reg(), "rdi".to_string())
+}
+fn info_RAX() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/ 0, /*index=*/ 7).to_real_reg(), "rax".to_string())
+}
+fn info_RCX() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/ 1, /*index=*/ 8).to_real_reg(), "rcx".to_string())
+}
+fn info_RDX() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/ 2, /*index=*/ 9).to_real_reg(), "rdx".to_string())
+}
+
+fn info_R8() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/ 8, /*index=*/10).to_real_reg(), "r8".to_string())
+}
+fn info_R9() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/ 9, /*index=*/11).to_real_reg(), "r9".to_string())
+}
+fn info_R10() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/10, /*index=*/12).to_real_reg(), "r10".to_string())
+}
+fn info_R11() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/11, /*index=*/13).to_real_reg(), "r11".to_string())
+}
+
+fn info_XMM0() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/ 0, /*index=*/14).to_real_reg(), "xmm0".to_string())
+}
+fn info_XMM1() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/ 1, /*index=*/15).to_real_reg(), "xmm1".to_string())
+}
+fn info_XMM2() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/ 2, /*index=*/16).to_real_reg(), "xmm2".to_string())
+}
+fn info_XMM3() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/ 3, /*index=*/17).to_real_reg(), "xmm3".to_string())
+}
+fn info_XMM4() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/ 4, /*index=*/18).to_real_reg(), "xmm4".to_string())
+}
+fn info_XMM5() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/ 5, /*index=*/19).to_real_reg(), "xmm5".to_string())
+}
+fn info_XMM6() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/ 6, /*index=*/20).to_real_reg(), "xmm6".to_string())
+}
+fn info_XMM7() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/ 7, /*index=*/21).to_real_reg(), "xmm7".to_string())
+}
+fn info_XMM8() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/ 8, /*index=*/22).to_real_reg(), "xmm8".to_string())
+}
+fn info_XMM9() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/ 9, /*index=*/23).to_real_reg(), "xmm9".to_string())
+}
+fn info_XMM10() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/10, /*index=*/24).to_real_reg(), "xmm10".to_string())
+}
+fn info_XMM11() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/11, /*index=*/25).to_real_reg(), "xmm11".to_string())
+}
+fn info_XMM12() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/12, /*index=*/26).to_real_reg(), "xmm12".to_string())
+}
+fn info_XMM13() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/13, /*index=*/27).to_real_reg(), "xmm13".to_string())
+}
+fn info_XMM14() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/14, /*index=*/28).to_real_reg(), "xmm14".to_string())
+}
+fn info_XMM15() -> (RealReg, String) {
+    (Reg::new_real(RegClass::V128, /*enc=*/15, /*index=*/29).to_real_reg(), "xmm15".to_string())
+}
+
+fn info_RSP() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/ 4, /*index=*/30).to_real_reg(), "rsp".to_string())
+}
+fn info_RBP() -> (RealReg, String) {
+    (Reg::new_real(RegClass::I64,  /*enc=*/ 5, /*index=*/31).to_real_reg(), "rbp".to_string())
+}
+
+// For external consumption.  It's probably important that LLVM optimises
+// these into a constant.
+pub fn reg_RSP() -> Reg { info_RSP().0.to_reg() }
+
+/// Create the register universe for X64.
+pub fn get_reg_universe() -> RealRegUniverse {
+    let mut regs = Vec::<(RealReg, String)>::new();
+    let mut allocable_by_class = [None; NUM_REG_CLASSES];
+
+    // Integer regs
+    let mut base = regs.len();
+    // Callee-saved, in the ELF x86_64 ABI
+    regs.push(info_R12());
+    regs.push(info_R13());
+    regs.push(info_R14());
+    regs.push(info_R15());
+    regs.push(info_RBX());
+    // Caller-saved, in the ELF x86_64 ABI
+    regs.push(info_RSI());
+    regs.push(info_RDI());
+    regs.push(info_RAX());
+    regs.push(info_RCX());
+    regs.push(info_RDX());
+    regs.push(info_R8());
+    regs.push(info_R9());
+    regs.push(info_R10());
+    regs.push(info_R11());
+    allocable_by_class[RegClass::I64.rc_to_usize()] =
+        Some((base, regs.len() - 1));
+
+    // XMM registers
+    base = regs.len();
+    regs.push(info_XMM0());
+    regs.push(info_XMM1());
+    regs.push(info_XMM2());
+    regs.push(info_XMM3());
+    regs.push(info_XMM4());
+    regs.push(info_XMM5());
+    regs.push(info_XMM6());
+    regs.push(info_XMM7());
+    regs.push(info_XMM8());
+    regs.push(info_XMM9());
+    regs.push(info_XMM10());
+    regs.push(info_XMM11());
+    regs.push(info_XMM12());
+    regs.push(info_XMM13());
+    regs.push(info_XMM14());
+    regs.push(info_XMM15());
+    allocable_by_class[RegClass::V128.rc_to_usize()] =
+        Some((base, regs.len() - 1));
+
+    // Other regs, not available to the allocator.
+    let allocable = regs.len();
+    regs.push(info_RSP());
+    regs.push(info_RBP());
+
+    RealRegUniverse {
+        regs,
+        allocable,
+        allocable_by_class,
+    }
+}
+
+//=============================================================================
+// Instructions
+
+#[derive(Clone)]
+pub enum AMode {
+    IR { simm32: u32, base: Reg },
+    IRRS { simm32: u32, base: Reg, index: Reg, shift: u8 /* 0 .. 3 only */}
+}
+impl fmt::Debug for AMode {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            AMode::IR { simm32, base } =>
+                write!(fmt, "{}({:?})", *simm32 as i32, base),
+            AMode::IRRS { simm32, base, index, shift } =>
+                write!(fmt, "{}({:?},{:?},{})",
+                       *simm32 as i32, base, index, 1 << shift)
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum RMI {
+    R { reg: Reg },
+    M { amode: AMode },
+    I { simm32: u32 }
+}
+impl fmt::Debug for RMI {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RMI::R { reg } => reg.fmt(fmt),
+            RMI::M { amode } => amode.fmt(fmt),
+            RMI::I { simm32 } => write!(fmt, "{}", *simm32 as i32)
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum RM {
+    R { reg: Reg },
+    M { amode: AMode }
+}
+impl fmt::Debug for RM {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RM::R { reg } => reg.fmt(fmt),
+            RM::M { amode } => amode.fmt(fmt),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum RMI_R_Op { Add, Sub, And, Or, Xor, Mul } // Also Adc, Sbb ?
+impl RMI_R_Op {
+    fn to_string(&self) -> String {
+        match self {
+            RMI_R_Op::Add => "add".to_string(),
+            RMI_R_Op::Sub => "sub".to_string(),
+            RMI_R_Op::And => "and".to_string(),
+            RMI_R_Op::Or  => "or".to_string(),
+            RMI_R_Op::Xor => "xor".to_string(),
+            RMI_R_Op::Mul => "mul".to_string(),
+        }
+    }
+}
+impl fmt::Debug for RMI_R_Op {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "{}", self.to_string())
+    }
+}
+
+#[derive(Clone)]
+pub enum ExtMode { BL, BQ, WL, WQ, LQ }
+impl ExtMode {
+    fn to_string(&self) -> String {
+        match self {
+            ExtMode::BL => "bl".to_string(),
+            ExtMode::BQ => "bq".to_string(),
+            ExtMode::WL => "wl".to_string(),
+            ExtMode::WQ => "wq".to_string(),
+            ExtMode::LQ => "lq".to_string(),
+        }
+    }
+}
+impl fmt::Debug for ExtMode {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "{}", self.to_string())
+    }
+}
+
+#[derive(Clone)]
+pub enum ShiftKind { Left, RightS, RightZ }
+impl fmt::Debug for ShiftKind {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ShiftKind::Left   => write!(fmt, "shl"),
+            ShiftKind::RightS => write!(fmt, "sar"),
+            ShiftKind::RightZ => write!(fmt, "shr"),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum CC { Z, NZ } // add more as needed
+impl fmt::Debug for CC {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CC::Z  => write!(fmt, "z"),
+            CC::NZ => write!(fmt, "nz"),
+        }
+    }
+}
+
+/// Instructions.  Destinations are on the RIGHT (a la AT&T syntax).
+#[derive(Clone)]
 pub enum Inst {
-    /// A no-op of zero size.
-    Nop,
-//zz 
-//zz     /// A no-op that is one instruction large.
-//zz     Nop4,
-//zz 
-//zz     /// ABI-defined liveins + zero reg. Ghost instruction that takes zero bytes.
-//zz     /// This is a workaround; ideally, the register allocator should assume
-//zz     /// virtual defs for every real register prior to the entrypoint.
-//zz     LiveIns,
-//zz 
-//zz     /// An ALU operation with two register sources and a register destination.
-//zz     AluRRR {
-//zz         alu_op: ALUOp,
-//zz         rd: Reg,
-//zz         rn: Reg,
-//zz         rm: Reg,
-//zz     },
-//zz     /// An ALU operation with a register source and an immediate-12 source, and a register
-//zz     /// destination.
-//zz     AluRRImm12 {
-//zz         alu_op: ALUOp,
-//zz         rd: Reg,
-//zz         rn: Reg,
-//zz         imm12: Imm12,
-//zz     },
-//zz     /// An ALU operation with a register source and an immediate-logic source, and a register destination.
-//zz     AluRRImmLogic {
-//zz         alu_op: ALUOp,
-//zz         rd: Reg,
-//zz         rn: Reg,
-//zz         imml: ImmLogic,
-//zz     },
-//zz     /// An ALU operation with a register source and an immediate-shiftamt source, and a register destination.
-//zz     AluRRImmShift {
-//zz         alu_op: ALUOp,
-//zz         rd: Reg,
-//zz         rn: Reg,
-//zz         immshift: ImmShift,
-//zz     },
-//zz     /// An ALU operation with two register sources, one of which can be shifted, and a register
-//zz     /// destination.
-//zz     AluRRRShift {
-//zz         alu_op: ALUOp,
-//zz         rd: Reg,
-//zz         rn: Reg,
-//zz         rm: Reg,
-//zz         shiftop: ShiftOpAndAmt,
-//zz     },
-//zz     /// An ALU operation with two register sources, one of which can be {zero,sign}-extended and
-//zz     /// shifted, and a register destination.
-//zz     AluRRRExtend {
-//zz         alu_op: ALUOp,
-//zz         rd: Reg,
-//zz         rn: Reg,
-//zz         rm: Reg,
-//zz         extendop: ExtendOp,
-//zz     },
-//zz     /// An unsigned (zero-extending) 8-bit load.
-//zz     ULoad8 { rd: Reg, mem: MemArg },
-//zz     /// A signed (sign-extending) 8-bit load.
-//zz     SLoad8 { rd: Reg, mem: MemArg },
-//zz     /// An unsigned (zero-extending) 16-bit load.
-//zz     ULoad16 { rd: Reg, mem: MemArg },
-//zz     /// A signed (sign-extending) 16-bit load.
-//zz     SLoad16 { rd: Reg, mem: MemArg },
-//zz     /// An unsigned (zero-extending) 32-bit load.
-//zz     ULoad32 { rd: Reg, mem: MemArg },
-//zz     /// A signed (sign-extending) 32-bit load.
-//zz     SLoad32 { rd: Reg, mem: MemArg },
-//zz     /// A 64-bit load.
-//zz     ULoad64 { rd: Reg, mem: MemArg },
-//zz 
-//zz     /// An 8-bit store.
-//zz     Store8 { rd: Reg, mem: MemArg },
-//zz     /// A 16-bit store.
-//zz     Store16 { rd: Reg, mem: MemArg },
-//zz     /// A 32-bit store.
-//zz     Store32 { rd: Reg, mem: MemArg },
-//zz     /// A 64-bit store.
-//zz     Store64 { rd: Reg, mem: MemArg },
-//zz 
-//zz     /// A MOVZ with a 16-bit immediate.
-//zz     MovZ { rd: Reg, imm: MovZConst },
+    /// (add sub and or xor mul adc? sbb?) (32 64) (reg amode imm) reg
+    Alu_RMI_R {
+        is64: bool,
+        op: RMI_R_Op,
+        src: RMI,
+        dst: Reg
+    },
+
+    /// (imm32 imm64) reg
+    Imm_R {
+        dstIs64: bool,
+        simm64: u64,
+        dst: Reg
+    },
+
+    /// mov (64 32) reg reg
+    Mov_R_R {
+        is64: bool,
+        src: Reg,
+        dst: Reg
+    },
+
+    /// movz (bl bq wl wq lq) amode reg (good for all ZX loads except 64->64)
+    MovZX_M_R {
+        extMode: ExtMode,
+        addr: AMode,
+        dst: Reg
+    },
+
+    /// A plain 64-bit integer load, since MovXZ_M_R can't represent that
+    Mov64_M_R {
+        addr: AMode,
+        dst: Reg
+    },
+
+    /// movs (bl bq wl wq lq) amode reg (good for all SX loads)
+    MovSX_M_R {
+        extMode: ExtMode,
+        addr: AMode,
+        dst: Reg
+    },
+
+    /// mov (b w l q) reg amode (good for all integer stores)
+    Mov_R_M {
+        size: u8, // 1, 2, 4 or 8
+        src: Reg,
+        addr: AMode
+    },
+
+    /// (shl shr sar) (l q) imm reg
+    Shift_R {
+        shMode: ShiftKind,
+        nBits: u8, // 1 .. #bits-in-type - 1, or 0 to mean "%cl"
+        dst: Reg
+    },
+
+    /// cmp (b w l q) (reg amode imm) reg
+    Cmp_RMI_R {
+        size: u8, // 1, 2, 4 or 8
+        src: RMI,
+        dst: Reg
+    },
+
+    /// push (l q) (reg amode imm)
+    Push {
+        is64: bool,
+        src: RMI
+    },
+
+    /// jmp simm32
+    JmpKnown {
+        simm32: u32
+    },
+
+    /// jmpq (reg mem)
+    JmpUnknown {
+        target: RM
+    },
+
+    /// jcond cond simm32 simm32
+    JmpCond {
+        cc: CC,
+        tsimm32: u32,
+        fsimm32: u32
+    },
+
+    /// call simm32
+    CallKnown {
+        target: FuncRef,
+    },
+
+    // callq (reg mem)
+    CallUnknown {
+        target: RM
+    },
+
 //zz 
 //zz     /// A machine call instruction.
 //zz     Call { dest: FuncRef },
@@ -245,6 +446,75 @@ pub enum Inst {
 //zz         kind: CondBrKind,
 //zz     },
 }
+impl fmt::Debug for Inst {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fn justify_name(s: String) -> String {
+            let w = 7;
+            if s.len() >= w {
+                s
+            } else {
+                // BEGIN hack
+                let mut need = w - s.len();
+                if need > w {
+                    need = w;
+                }
+                let extra = [" ", "  ", "   ", "    ",
+                             "     ", "      ", "       "][need - 1];
+                // END hack
+                s + &extra.to_string()
+            }
+        }
+        fn justify_name2(s1: String, s2: String) -> String {
+            justify_name(s1 + &s2)
+        }
+        fn suffixLQ(is64: bool) -> String {
+            (if is64 { "l" } else { "q" }).to_string()
+        }
+        fn suffixBWLQ(size: u8) -> String {
+            match size {
+                1 => "1".to_string(),
+                2 => "2".to_string(),
+                4 => "4".to_string(),
+                8 => "8".to_string(),
+                _ => panic!("Inst(x64).fmt.suffixBWLQ")
+            }
+        }
+
+        match self {
+            Inst::Alu_RMI_R { is64, op, src, dst } =>
+                write!(fmt, "{} {:?}, {:?}",
+                       justify_name2(op.to_string(), suffixLQ(*is64)),
+                       src, dst),
+            Inst::Imm_R { dstIs64, simm64, dst } =>
+                if *dstIs64 {
+                    write!(fmt, "{} ${:?},{:?}",
+                           justify_name("movabsq".to_string()), simm64, dst)
+                } else {
+                    write!(fmt, "{} ${:?},{:?}",
+                           justify_name("movl".to_string()), simm64, dst)
+                },
+            Inst::Mov_R_R { is64, src, dst } =>
+                write!(fmt, "{} {:?}, {:?}",
+                       justify_name2("mov".to_string(), suffixLQ(*is64)),
+                       src, dst),
+            Inst::MovZX_M_R { extMode, addr, dst } =>
+                write!(fmt, "{} {:?}, {:?}",
+                       justify_name2("movz".to_string(), extMode.to_string()),
+                       addr, dst),
+            Inst::MovSX_M_R { extMode, addr, dst } =>
+                write!(fmt, "{} {:?}, {:?}",
+                       justify_name2("movs".to_string(), extMode.to_string()),
+                       addr, dst),
+            Inst::Mov_R_M { size, src, addr } =>
+                write!(fmt, "{} {:?}. {:?}",
+                       justify_name2("mov".to_string(), suffixBWLQ(*size)),
+                       src, addr),
+            _ => write!(fmt, "bleh")
+        }
+    }
+}
+
+
 
 //zz /// The kind of conditional branch: the common-case-optimized "reg-is-zero" /
 //zz /// "reg-is-nonzero" variants, or the generic one that tests the machine
