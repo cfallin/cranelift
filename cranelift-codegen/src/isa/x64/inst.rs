@@ -1602,6 +1602,10 @@ impl MachInst for Inst {
         unimplemented!()
         //zz         get_reg_universe()
     }
+
+    fn is_special_reg(_reg: RealReg) -> bool {
+        false
+    }
 }
 
 //zz impl BranchTarget {

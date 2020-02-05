@@ -7,9 +7,13 @@ use regalloc::{allocate_registers, RegAllocAlgorithm};
 
 /// Compile the given function down to VCode with allocated registers, ready
 /// for binary emission.
-pub fn compile<B: LowerBackend>(f: &mut Function, b: &B) -> VCode<B::MInst> {
+pub fn compile<B: LowerBackend>(
+    f: &mut Function,
+    b: &B,
+    abi: Box<dyn ABIBody<B::MInst>>,
+) -> VCode<B::MInst> {
     // This lowers the CL IR.
-    let mut vcode = Lower::new(f).lower(b);
+    let mut vcode = Lower::new(f, abi).lower(b);
     vcode.remove_redundant_branches();
 
     println!("vcode from lowering:\n{:?}", vcode);

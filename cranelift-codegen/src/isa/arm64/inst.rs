@@ -129,11 +129,6 @@ pub enum Inst {
     /// A no-op that is one instruction large.
     Nop4,
 
-    /// ABI-defined liveins + zero reg. Ghost instruction that takes zero bytes.
-    /// This is a workaround; ideally, the register allocator should assume
-    /// virtual defs for every real register prior to the entrypoint.
-    LiveIns,
-
     /// An ALU operation with two register sources and a register destination.
     AluRRR {
         alu_op: ALUOp,
@@ -736,11 +731,6 @@ impl MachInst for Inst {
                 CondBrKind::Cond(_) => {}
             },
             &Inst::Nop | Inst::Nop4 => {}
-            &Inst::LiveIns => {
-                for_all_real_regs(&mut |reg| {
-                    ret.push((reg, RegMode::Def));
-                });
-            }
         }
         ret
     }
@@ -936,7 +926,6 @@ impl MachInst for Inst {
             },
             &mut Inst::Nop => Inst::Nop,
             &mut Inst::Nop4 => Inst::Nop4,
-            &mut Inst::LiveIns => Inst::LiveIns,
         };
         *self = newval;
     }
@@ -1023,8 +1012,10 @@ impl MachInst for Inst {
         }
     }
 
-    fn gen_jump(_blockindex: BlockIndex) -> Inst {
-        unimplemented!()
+    fn gen_jump(blockindex: BlockIndex) -> Inst {
+        Inst::Jump {
+            dest: BranchTarget::Block(blockindex),
+        }
     }
 
     fn with_block_rewrites(&mut self, block_target_map: &[BlockIndex]) {
@@ -1106,6 +1097,10 @@ impl MachInst for Inst {
 
     fn reg_universe() -> RealRegUniverse {
         get_reg_universe()
+    }
+
+    fn is_special_reg(reg: RealReg) -> bool {
+        reg == zero_reg().to_real_reg()
     }
 }
 
@@ -1329,7 +1324,6 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             &Inst::Nop4 => {
                 sink.put4(0xd503201f);
             }
-            &Inst::LiveIns => {}
         }
     }
 }

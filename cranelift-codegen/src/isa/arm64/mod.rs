@@ -6,12 +6,15 @@ use crate::binemit::{CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink
 use crate::ir::Function;
 use crate::machinst::compile;
 use crate::machinst::MachBackend;
+use crate::machinst::{ABIBody, ABICall};
 use crate::result::CodegenResult;
 use crate::settings;
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 // New backend:
+mod abi;
 mod inst;
 mod lower;
 
@@ -39,7 +42,8 @@ impl MachBackend for Arm64Backend {
     ) -> CodegenResult<Vec<u8>> {
         // This performs lowering to VCode, register-allocates the code, computes
         // block layout and finalizes branches. The result is ready for binary emission.
-        let /*mut*/ vcode = compile::compile::<Arm64Backend>(&mut func, self);
+        let abi = Box::new(abi::ARM64ABIBody::new(&func));
+        let vcode = compile::compile::<Arm64Backend>(&mut func, self, abi);
 
         let mut buf: Vec<u8> = vec![];
         buf.resize(vcode.code_size(), 0);

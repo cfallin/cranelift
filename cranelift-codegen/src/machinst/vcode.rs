@@ -49,6 +49,7 @@ use regalloc::Function as RegallocFunction;
 use regalloc::Set as RegallocSet;
 use regalloc::{BlockIx, InstIx, InstRegUses, MyRange, RegAllocResult, RegClass};
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use smallvec::SmallVec;
 use std::fmt;
@@ -69,6 +70,9 @@ impl<I: MachInst + MachInstEmit<SizeCodeSink>> VCodeInst for I {}
 /// This is essentially a standard CFG of basic blocks, where each basic block
 /// consists of lowered instructions produced by the machine-specific backend.
 pub struct VCode<I: VCodeInst> {
+    /// Function-body ABI.
+    abi: Box<dyn ABIBody<I>>,
+
     /// Lowered machine instructions in order corresponding to the original IR.
     insts: Vec<I>,
 
@@ -131,13 +135,18 @@ pub struct VCodeBuilder<I: VCodeInst> {
 
 impl<I: VCodeInst> VCodeBuilder<I> {
     /// Create a new VCodeBuilder.
-    pub fn new() -> VCodeBuilder<I> {
+    pub fn new(abi: Box<dyn ABIBody<I>>) -> VCodeBuilder<I> {
         VCodeBuilder {
-            vcode: VCode::new(),
+            vcode: VCode::new(abi),
             bb_insns: SmallVec::new(),
             ir_inst_insns: SmallVec::new(),
             succ_start: 0,
         }
+    }
+
+    /// Return the underlying Ebb-to-BlockIndex map.
+    pub fn blocks_by_ebb(&self) -> &SecondaryMap<ir::Ebb, BlockIndex> {
+        &self.vcode.block_by_ebb
     }
 
     /// Initialize the Ebb-to-BlockIndex map. Returns the first free
@@ -260,8 +269,9 @@ fn look_through_trivial_jumps<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex)
 
 impl<I: VCodeInst> VCode<I> {
     /// New empty VCode.
-    fn new() -> VCode<I> {
+    fn new(abi: Box<dyn ABIBody<I>>) -> VCode<I> {
         VCode {
+            abi,
             insts: vec![],
             entry: 0,
             block_ranges: vec![],
@@ -483,10 +493,12 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
         let mut modified = RegallocSet::empty();
 
         for (reg, regmode) in insn.regs().into_iter() {
-            match regmode {
-                RegMode::Use => used.insert(reg),
-                RegMode::Def => defined.insert(reg),
-                RegMode::Modify => modified.insert(reg),
+            if !reg.is_real() || !I::is_special_reg(reg.to_real_reg()) {
+                match regmode {
+                    RegMode::Use => used.insert(reg),
+                    RegMode::Def => defined.insert(reg),
+                    RegMode::Modify => modified.insert(reg),
+                }
             }
         }
 
@@ -530,13 +542,11 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
     }
 
     fn func_liveins(&self) -> RegallocSet<RealReg> {
-        // TODO
-        RegallocSet::empty()
+        self.abi.liveins()
     }
 
     fn func_liveouts(&self) -> RegallocSet<RealReg> {
-        // TODO
-        RegallocSet::empty()
+        self.abi.liveouts()
     }
 }
 
@@ -546,6 +556,7 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
 impl<I: VCodeInst> fmt::Debug for VCode<I> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "VCode {{")?;
+        writeln!(f, "  Entry block: {}", self.entry)?;
 
         for block in 0..self.num_blocks() {
             writeln!(f, "Block {}:", block,)?;

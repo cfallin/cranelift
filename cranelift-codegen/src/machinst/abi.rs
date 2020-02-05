@@ -6,15 +6,12 @@ use regalloc::{Reg, Set, VirtualReg};
 
 /// Trait implemented by an object that tracks ABI-related state (e.g., stack
 /// layout) and can generate code while emitting the *body* of a function.
-pub trait ABIBody<'a, I: VCodeInst> {
-    /// Generate a new ABI instance for the body of the given function.
-    fn new(f: &'a ir::Function) -> Self;
-
+pub trait ABIBody<I: VCodeInst> {
     /// Get the liveins of the function.
-    fn liveins(&self) -> Set<Reg>;
+    fn liveins(&self) -> Set<RealReg>;
 
     /// Get the liveouts of the function.
-    fn liveouts(&self) -> Set<Reg>;
+    fn liveouts(&self) -> Set<RealReg>;
 
     /// Generate an argument load sequence, given a destination register.
     /// Note that this may store a fixup to be done once the final stack
@@ -42,6 +39,8 @@ pub trait ABIBody<'a, I: VCodeInst> {
     /// Perform any fixups needed once the number of spill-slots is known.
     fn fixup(&mut self);
 
+    // TODO: spillslot load/store, since the stack frame may be ABI-dependent?
+
     /// Generate a prologue, post-regalloc.
     fn gen_prologue(&self) -> Vec<I>;
 
@@ -51,10 +50,7 @@ pub trait ABIBody<'a, I: VCodeInst> {
 
 /// Trait implemented by an object that tracks ABI-related state and can
 /// generate code while emitting a *call* to a function.
-pub trait ABICall<'a, I: VCodeInst> {
-    /// Generate a new ABI instance for a call to the given function.
-    fn new(f: &'a ir::Function) -> Self;
-
+pub trait ABICall<I: VCodeInst> {
     /// Store a value as an argument to the callee.
     fn store_arg(&mut self, idx: usize, from_reg: Reg, vcode: &mut VCodeBuilder<I>);
 
@@ -64,5 +60,5 @@ pub trait ABICall<'a, I: VCodeInst> {
     /// Generate the actual call.
 
     /// Get the clobbers of the function call (not including the args/retvals).
-    fn clobbers(&self) -> Set<Reg>;
+    fn clobbers(&self) -> Set<RealReg>;
 }

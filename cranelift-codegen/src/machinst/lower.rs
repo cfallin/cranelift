@@ -7,13 +7,14 @@ use crate::entity::SecondaryMap;
 use crate::ir::{Ebb, Function, Inst, InstructionData, Opcode, Type, Value, ValueDef};
 use crate::isa::registers::RegUnit;
 use crate::machinst::{
-    BlockIndex, MachInst, MachInstEmit, MachInstRegs, VCode, VCodeBuilder, VCodeInst,
+    ABIBody, BlockIndex, MachInst, MachInstEmit, MachInstRegs, VCode, VCodeBuilder, VCodeInst,
 };
 use crate::num_uses::NumUses;
 
 use regalloc::Function as RegallocFunction;
 use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use smallvec::SmallVec;
 use std::ops::Range;
@@ -118,7 +119,7 @@ fn alloc_vreg(
 
 impl<'a, I: VCodeInst> Lower<'a, I> {
     /// Prepare a new lowering context for the given IR function.
-    pub fn new(f: &'a Function) -> Lower<'a, I> {
+    pub fn new(f: &'a Function, abi: Box<dyn ABIBody<I>>) -> Lower<'a, I> {
         let num_uses = NumUses::compute(f).take_uses();
 
         let mut next_vreg: u32 = 1;
@@ -163,7 +164,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
         Lower {
             f,
-            vcode: VCodeBuilder::new(),
+            vcode: VCodeBuilder::new(abi),
             num_uses,
             value_regs,
             next_vreg,
@@ -187,6 +188,9 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         let mut edge_blocks_by_inst: SecondaryMap<Inst, Option<BlockIndex>> =
             SecondaryMap::with_default(None);
         let mut edge_blocks: Vec<(Inst, BlockIndex, Ebb)> = vec![];
+
+        println!("about to lower function: {:?}", self.f);
+        println!("ebb map: {:?}", self.vcode.blocks_by_ebb());
 
         for ebb in ebbs.iter() {
             for inst in self.f.layout.ebb_insts(*ebb) {
@@ -212,7 +216,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             }
         }
 
-        for ebb in ebbs.iter().rev() {
+        for ebb in ebbs.iter() {
+            println!("lowering ebb: {}", ebb);
             // Find the branches at the end first, and process those, if any.
             let mut branches: SmallVec<[Inst; 2]> = SmallVec::new();
             let mut targets: SmallVec<[BlockIndex; 2]> = SmallVec::new();
@@ -227,6 +232,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                     if branches.len() > 0 {
                         let fallthrough = self.f.layout.next_ebb(*ebb);
                         let fallthrough = fallthrough.map(|ebb| self.vcode.ebb_to_bindex(ebb));
+                        branches.reverse();
                         backend.lower_branch_group(
                             &mut self,
                             &branches[..],
@@ -254,6 +260,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             if branches.len() > 0 {
                 let fallthrough = self.f.layout.next_ebb(*ebb);
                 let fallthrough = fallthrough.map(|ebb| self.vcode.ebb_to_bindex(ebb));
+                branches.reverse();
                 backend.lower_branch_group(&mut self, &branches[..], &targets[..], fallthrough);
                 branches.clear();
                 targets.clear();
@@ -266,6 +273,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             }
 
             let bb = self.vcode.end_bb();
+            println!("finished building bb: BlockIndex {}", bb);
+            println!("ebb_to_bindex map says: {}", self.vcode.ebb_to_bindex(*ebb));
             assert!(bb == self.vcode.ebb_to_bindex(*ebb));
             if Some(*ebb) == self.f.layout.entry_block() {
                 self.vcode.set_entry(bb);
@@ -274,6 +283,10 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
         // Now create the edge blocks, with phi lowering (block parameter copies).
         for (inst, edge_block, orig_block) in edge_blocks.into_iter() {
+            println!(
+                "creating edge block: inst {}, edge_block {}, orig_block {}",
+                inst, edge_block, orig_block
+            );
             // Create a temporary for each block parameter.
             let phi_classes: Vec<RegClass> = self
                 .f
@@ -288,8 +301,11 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 .map(|rc| self.tmp(rc)) // borrows `self` mutably.
                 .collect();
 
+            println!("phi_temps = {:?}", phi_temps);
+
             // Create all of the phi uses (reads) from jump args to temps.
-            for (i, arg) in self.f.dfg.inst_args(inst).iter().enumerate() {
+            for (i, arg) in self.f.dfg.inst_args(inst).iter().skip(1).enumerate() {
+                println!("jump arg {} is {}", i, arg);
                 let src_reg = self.value_regs[*arg];
                 let dst_reg = phi_temps[i];
                 self.vcode.push(I::gen_move(dst_reg, src_reg));
@@ -297,6 +313,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
             // Create all of the phi defs (writes) from temps to block params.
             for (i, param) in self.f.dfg.ebb_params(orig_block).iter().enumerate() {
+                println!("ebb arg {} is {}", i, param);
                 let src_reg = phi_temps[i];
                 let dst_reg = self.value_regs[*param];
                 self.vcode.push(I::gen_move(dst_reg, src_reg));

@@ -572,7 +572,6 @@ impl LowerBackend for Arm64Backend {
     type MInst = Inst;
 
     fn lower_entry<C: LowerCtx<Inst>>(&self, ctx: &mut C, ebb: Ebb) {
-        ctx.emit(Inst::LiveIns);
         // TODO: ABI support for more than 8 args.
         assert!(ctx.num_ebb_params(ebb) < 8);
         for i in 0..ctx.num_ebb_params(ebb) {
@@ -605,6 +604,11 @@ impl LowerBackend for Arm64Backend {
             // Must be a conditional branch followed by an unconditional branch.
             let op1 = ctx.data(branches[0]).opcode();
             let op2 = ctx.data(branches[1]).opcode();
+
+            println!(
+                "lowering two-branch group: opcodes are {:?} and {:?}",
+                op1, op2
+            );
 
             assert!(op2 == Opcode::Jump || op2 == Opcode::Fallthrough);
             let taken = BranchTarget::Block(targets[0]);
