@@ -354,6 +354,12 @@ impl<I: VCodeInst> VCode<I> {
         let block_rewrites: Vec<BlockIndex> = (0..self.num_blocks() as u32)
             .map(|bix| look_through_trivial_jumps(self, bix))
             .collect();
+        let deleted: Vec<bool> = block_rewrites
+            .iter()
+            .enumerate()
+            .map(|(i, target)| i != *target as usize)
+            .collect();
+
         println!(
             "remove_redundant_branches: block_rewrites = {:?}",
             block_rewrites
@@ -365,8 +371,11 @@ impl<I: VCodeInst> VCode<I> {
             }
         }
 
-        // TODO: mark dead trivial blocks as dead, to skip during code
-        // emission.
+        let block_order = std::mem::replace(&mut self.final_block_order, vec![]);
+        self.final_block_order = block_order
+            .into_iter()
+            .filter(|b| !deleted[*b as usize])
+            .collect();
     }
 
     /// Mutate branch instructions to (i) lower two-way condbrs to one-way,

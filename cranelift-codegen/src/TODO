@@ -1,11 +1,10 @@
 TODO:
 
 - Binary emission
-
-  - top-level driver to emit to a sink, with relos.
-  - Constant pool?
-  - Basic-block alignment?
-  - Get to M0 with CLIF or WASM input and pretty-printing the VCode output
+  - Constant pool? Need MemArg resolution just prior to emission (when we know
+    the constant-pool offset)
+  - Handle out-of-range branches and constant-pool references (out of imm19
+    range at least)
 
 - Function ABI:
   - callee side
@@ -14,14 +13,29 @@ TODO:
   - caller side
     - Clobbers, function args, etc.
 
+- VCode (re)design:
+  - allow edits (insertions, deletions, block reorder) alongside instruction list
+  - rework lowering and VCodeBuilder: single forward pass; delete insns when
+    unused
+
+- Misc:
+  - better block reordering: heuristically place after `from` or before `to` if
+    only one out-edge or in-edge respectively (?). Or split the compound
+    condbr/br and put one crit edge between the branches.
+
 - ISA completeness:
   - ImmLogic: implement the algorithm to determine whether an immediate can be
     encoded as a logical immediate.
-  - Add opcodes to lowering. ALU, loads/stores, control flow.
+  - Add opcodes to lowering. ALU, loads/stores, control flow. All integer
+    instruction set.
   - 8/16-bit ops? Widening for legalization?
 
 - Work out how to fit this into Cranelift public API.
   - Currently a hack-job (two different APIs). Unify somehow.
+
+- Post-MVP, VCode as arch-independent input:
+  - side-table: single-def for a given register use?
+  - put Cranelift IR opcodes/instructions into VCode container
 
 -------
 
