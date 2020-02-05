@@ -715,7 +715,7 @@ impl Inst {
     /// Create a move instruction.
     pub fn mov(to_reg: Reg, from_reg: Reg) -> Inst {
         Inst::AluRRR {
-            alu_op: ALUOp::Add64,
+            alu_op: ALUOp::Orr64,
             rd: to_reg,
             rm: from_reg,
             rn: zero_reg(),
@@ -991,6 +991,9 @@ impl MachInst for Inst {
     fn is_move(&self) -> Option<(Reg, Reg)> {
         match self {
             &Inst::AluRRR { alu_op, rd, rn, rm } if alu_op == ALUOp::Add64 && rn == zero_reg() => {
+                Some((rd, rm))
+            }
+            &Inst::AluRRR { alu_op, rd, rn, rm } if alu_op == ALUOp::Orr64 && rn == zero_reg() => {
                 Some((rd, rm))
             }
             _ => None,
@@ -1270,14 +1273,14 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
         match self {
             &Inst::AluRRR { alu_op, rd, rn, rm } => {
                 let top11 = match alu_op {
-                    ALUOp::Add32 => 0b00001011_001,
-                    ALUOp::Add64 => 0b10001011_001,
-                    ALUOp::Sub32 => 0b01001011_001,
-                    ALUOp::Sub64 => 0b11001011_001,
+                    ALUOp::Add32 => 0b00001011_000,
+                    ALUOp::Add64 => 0b10001011_000,
+                    ALUOp::Sub32 => 0b01001011_000,
+                    ALUOp::Sub64 => 0b11001011_000,
                     ALUOp::Orr32 => 0b00101010_000,
                     ALUOp::Orr64 => 0b10101010_000,
-                    ALUOp::SubS32 => 0b01101011_001,
-                    ALUOp::SubS64 => 0b11101011_001,
+                    ALUOp::SubS32 => 0b01101011_000,
+                    ALUOp::SubS64 => 0b11101011_000,
                     _ => unimplemented!(),
                 };
                 sink.put4(enc_arith_rrr(top11, 0b000_000, rd, rn, rm));

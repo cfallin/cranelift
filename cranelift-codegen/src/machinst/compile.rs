@@ -14,7 +14,6 @@ pub fn compile<B: LowerBackend>(
 ) -> VCode<B::MInst> {
     // This lowers the CL IR.
     let mut vcode = Lower::new(f, abi).lower(b);
-    vcode.remove_redundant_branches();
 
     println!("vcode from lowering:\n{:?}", vcode);
 
@@ -29,6 +28,12 @@ pub fn compile<B: LowerBackend>(
     // Reorder vcode into final order and copy out final instruction sequence
     // all at once.
     vcode.replace_insns_from_regalloc(result);
+
+    println!("vcode after regalloc:\n{:?}", vcode);
+
+    vcode.remove_redundant_branches();
+
+    println!("vcode after removing redundant branches:\n{:?}", vcode);
 
     // Do final passes over code to finalize branches.
     vcode.finalize_branches();

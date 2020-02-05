@@ -249,10 +249,20 @@ fn inst_size<I: VCodeInst>(insn: &I) -> usize {
 
 fn is_trivial_jump_block<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> Option<BlockIndex> {
     let range = vcode.block_insns(BlockIx::new(block));
+    println!(
+        "is_trivial_jump_block: block {} has len {}",
+        block,
+        range.len()
+    );
     if range.len() != 1 {
         return None;
     }
     let insn = range.first();
+    println!(
+        " -> only insn is: {:?} with terminator {:?}",
+        vcode.get_insn(insn),
+        vcode.get_insn(insn).is_term()
+    );
     match vcode.get_insn(insn).is_term() {
         MachTerminator::Uncond(target) => Some(target),
         _ => None,
@@ -344,10 +354,15 @@ impl<I: VCodeInst> VCode<I> {
         let block_rewrites: Vec<BlockIndex> = (0..self.num_blocks() as u32)
             .map(|bix| look_through_trivial_jumps(self, bix))
             .collect();
+        println!(
+            "remove_redundant_branches: block_rewrites = {:?}",
+            block_rewrites
+        );
         for block in 0..self.num_blocks() as u32 {
-            let term_insn = self.block_insns(BlockIx::new(block)).last();
-            self.get_insn_mut(term_insn)
-                .with_block_rewrites(&block_rewrites[..]);
+            for insn in self.block_insns(BlockIx::new(block)) {
+                self.get_insn_mut(insn)
+                    .with_block_rewrites(&block_rewrites[..]);
+            }
         }
 
         // TODO: mark dead trivial blocks as dead, to skip during code
