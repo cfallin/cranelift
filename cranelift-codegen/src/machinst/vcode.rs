@@ -556,6 +556,7 @@ impl<I: VCodeInst> fmt::Debug for VCode<I> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "VCode {{")?;
         writeln!(f, "  Entry block: {}", self.entry)?;
+        writeln!(f, "  Final block order: {:?}", self.final_block_order)?;
 
         for block in 0..self.num_blocks() {
             writeln!(f, "Block {}:", block,)?;
