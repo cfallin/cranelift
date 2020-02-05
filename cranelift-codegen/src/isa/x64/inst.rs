@@ -673,7 +673,12 @@ impl fmt::Debug for Inst {
                 dst
             ),
             Inst::Mov64_M_R { addr, dst } => write!(
-                fmt, "{} {:?}, {:?}", ljustify("movq".to_string()), addr, dst),
+                fmt,
+                "{} {:?}, {:?}",
+                ljustify("movq".to_string()),
+                addr,
+                dst
+            ),
             Inst::MovSX_M_R { extMode, addr, dst } => write!(
                 fmt,
                 "{} {:?}, {:?}",
@@ -744,10 +749,12 @@ impl fmt::Debug for Inst {
                 *tsimm32 as i32,
                 *fsimm32 as i32
             ),
-            Inst::CallKnown { target } =>
-                write!(fmt, "{} {:?}", ljustify("call".to_string()), target),
-            Inst::CallUnknown { target } =>
+            Inst::CallKnown { target } => {
                 write!(fmt, "{} {:?}", ljustify("call".to_string()), target)
+            }
+            Inst::CallUnknown { target } => {
+                write!(fmt, "{} {:?}", ljustify("call".to_string()), target)
+            }
         }
     }
 }
@@ -760,10 +767,15 @@ impl AMode {
     // appear (def/mod/use) is meaningless here, hence the use of plain |set|.
     fn get_regs(&self, set: &mut Set<Reg>) {
         match self {
-            AMode::IR { simm32:_, base } => {
+            AMode::IR { simm32: _, base } => {
                 set.insert(*base);
-            },
-            AMode::IRRS { simm32:_, base, index, shift:_ } => {
+            }
+            AMode::IRRS {
+                simm32: _,
+                base,
+                index,
+                shift: _,
+            } => {
                 set.insert(*base);
                 set.insert(*index);
             }
@@ -777,7 +789,7 @@ impl RMI {
         match self {
             RMI::R { reg } => set.insert(*reg),
             RMI::M { amode } => amode.get_regs(set),
-            RMI::I { simm32:_ } => {}
+            RMI::I { simm32: _ } => {}
         }
     }
 }
@@ -803,57 +815,81 @@ impl MachInst for Inst {
         let mut uce = Set::<Reg>::empty();
 
         match self {
-            Inst::Alu_RMI_R { is64:_, op:_, src, dst } => {
+            Inst::Alu_RMI_R {
+                is64: _,
+                op: _,
+                src,
+                dst,
+            } => {
                 src.get_regs(&mut uce);
                 m0d.insert(*dst);
-            },
-            Inst::Imm_R { dstIs64:_, simm64:_, dst } => {
+            }
+            Inst::Imm_R {
+                dstIs64: _,
+                simm64: _,
+                dst,
+            } => {
                 def.insert(*dst);
-            },
-            Inst::Mov_R_R { is64:_, src, dst } => {
+            }
+            Inst::Mov_R_R { is64: _, src, dst } => {
                 uce.insert(*src);
                 def.insert(*dst);
-            },
-            Inst::MovZX_M_R { extMode:_, addr, dst } => {
+            }
+            Inst::MovZX_M_R {
+                extMode: _,
+                addr,
+                dst,
+            } => {
                 addr.get_regs(&mut uce);
                 def.insert(*dst);
-            },
+            }
             Inst::Mov64_M_R { addr, dst } => {
                 addr.get_regs(&mut uce);
                 def.insert(*dst);
-            },
-            Inst::MovSX_M_R { extMode:_, addr, dst } => {
+            }
+            Inst::MovSX_M_R {
+                extMode: _,
+                addr,
+                dst,
+            } => {
                 addr.get_regs(&mut uce);
                 def.insert(*dst);
-            },
-            Inst::Mov_R_M { size:_, src, addr } => {
+            }
+            Inst::Mov_R_M { size: _, src, addr } => {
                 uce.insert(*src);
                 addr.get_regs(&mut uce);
-            },
-            Inst::Shift_R { is64:_, kind:_, nBits, dst } => {
+            }
+            Inst::Shift_R {
+                is64: _,
+                kind: _,
+                nBits,
+                dst,
+            } => {
                 if *nBits == 0 {
                     uce.insert(reg_RCX());
                 }
                 m0d.insert(*dst);
-            },
-            Inst::Cmp_RMI_R { size:_, src, dst } => {
+            }
+            Inst::Cmp_RMI_R { size: _, src, dst } => {
                 src.get_regs(&mut uce);
                 uce.insert(*dst); // yes, really |uce|
-            },
-            Inst::Push { is64:_, src } => {
+            }
+            Inst::Push { is64: _, src } => {
                 src.get_regs(&mut uce);
-            },
-            Inst::JmpKnown { simm32:_ } => {
-            },
+            }
+            Inst::JmpKnown { simm32: _ } => {}
             Inst::JmpUnknown { target } => {
                 target.get_regs(&mut uce);
             }
-            Inst::JmpCond { cc:_, tsimm32:_, fsimm32:_ } => {
-            },
-            Inst::CallKnown { target:_ } => {
+            Inst::JmpCond {
+                cc: _,
+                tsimm32: _,
+                fsimm32: _,
+            } => {}
+            Inst::CallKnown { target: _ } => {
                 // FIXME add arg regs (uce) and caller-saved regs (def)
                 unimplemented!();
-            },
+            }
             Inst::CallUnknown { target } => {
                 target.get_regs(&mut uce);
             }
@@ -878,42 +914,42 @@ impl MachInst for Inst {
         res
     }
 
-/*
-        match self {
-            Inst::Alu_RMI_R { is64, op, src, dst } => {
-            },
-            Inst::Imm_R { dstIs64, simm64, dst } => {
-            },
-            Inst::Mov_R_R { is64, src, dst } => {
-                ret.push((src, RegMode::Use));
-                ret.push((dst, RegMode::Def));
-            },
-            Inst::MovZX_M_R { extMode, addr, dst } => {
-            },
-            Inst::Mov64_M_R { addr, dst } => {
-            },
-            Inst::MovSX_M_R { extMode, addr, dst } => {
-            },
-            Inst::Mov_R_M { size, src, addr } => {
-            },
-            Inst::Shift_R { is64, kind, nBits, dst } => {
-            },
-            Inst::Cmp_RMI_R { size, src, dst } => {
-            },
-            Inst::Push { is64, src } => {
-            },
-            Inst::JmpKnown { simm32 } => {
-            },
-            Inst::JmpUnknown { target } => {
+    /*
+            match self {
+                Inst::Alu_RMI_R { is64, op, src, dst } => {
+                },
+                Inst::Imm_R { dstIs64, simm64, dst } => {
+                },
+                Inst::Mov_R_R { is64, src, dst } => {
+                    ret.push((src, RegMode::Use));
+                    ret.push((dst, RegMode::Def));
+                },
+                Inst::MovZX_M_R { extMode, addr, dst } => {
+                },
+                Inst::Mov64_M_R { addr, dst } => {
+                },
+                Inst::MovSX_M_R { extMode, addr, dst } => {
+                },
+                Inst::Mov_R_M { size, src, addr } => {
+                },
+                Inst::Shift_R { is64, kind, nBits, dst } => {
+                },
+                Inst::Cmp_RMI_R { size, src, dst } => {
+                },
+                Inst::Push { is64, src } => {
+                },
+                Inst::JmpKnown { simm32 } => {
+                },
+                Inst::JmpUnknown { target } => {
+                }
+                Inst::JmpCond { cc, tsimm32, fsimm32 } => {
+                },
+                Inst::CallKnown { target } => {
+                },
+                Inst::CallUnknown { target } => {
+                }
             }
-            Inst::JmpCond { cc, tsimm32, fsimm32 } => {
-            },
-            Inst::CallKnown { target } => {
-            },
-            Inst::CallUnknown { target } => {
-            }
-        }
-*/
+    */
 
     fn map_regs(
         &mut self,
