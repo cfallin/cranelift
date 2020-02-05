@@ -7,7 +7,7 @@
 
 use crate::binemit::{CodeOffset, CodeSink};
 //zz use crate::ir::constant::{ConstantData, ConstantOffset};
-//zz use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
+use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
 use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
 use crate::machinst::*;
 
@@ -238,7 +238,7 @@ pub fn reg_RCX() -> Reg {
 }
 
 /// Create the register universe for X64.
-pub fn get_reg_universe() -> RealRegUniverse {
+fn create_reg_universe() -> RealRegUniverse {
     let mut regs = Vec::<(RealReg, String)>::new();
     let mut allocable_by_class = [None; NUM_REG_CLASSES];
 
@@ -1073,6 +1073,9 @@ fn x64_map_regs(
     }
 }
 
+//=============================================================================
+// Instructions: misc functions (and external interface)
+
 impl MachInst for Inst {
     fn regs(&self) -> MachInstRegs {
         x64_get_regs(&self)
@@ -1087,13 +1090,14 @@ impl MachInst for Inst {
     }
 
     fn is_move(&self) -> Option<(Reg, Reg)> {
-        unimplemented!()
-        //zz         match self {
-        //zz             &Inst::AluRRR { alu_op, rd, rn, rm } if alu_op == ALUOp::Add64 && rn == zero_reg() => {
-        //zz                 Some((rd, rm))
-        //zz             }
-        //zz             _ => None,
-        //zz         }
+        // Note (carefully!) that a 32-bit mov *isn't* a no-op since it zeroes
+        // out the upper 32 bits of the destination.  For example, we could
+        // conceivably use |movl %reg, %reg| to zero out the top 32 bits of
+        // %reg.
+        match self {
+            Inst::Mov_R_R { is64, src, dst } if *is64 => Some((*dst, *src)),
+            _ => None,
+        }
     }
 
     fn is_term(&self) -> MachTerminator {
@@ -1111,14 +1115,13 @@ impl MachInst for Inst {
         //zz         }
     }
 
-    fn get_spillslot_size(_rc: RegClass) -> u32 {
-        unimplemented!()
-        //zz         // We allocate in terms of 8-byte slots.
-        //zz         match rc {
-        //zz             RegClass::I64 => 1,
-        //zz             RegClass::V128 => 2,
-        //zz             _ => panic!("Unexpected register class!"),
-        //zz         }
+    fn get_spillslot_size(rc: RegClass) -> u32 {
+        // We allocate in terms of 8-byte slots.
+        match rc {
+            RegClass::I64 => 1,
+            RegClass::V128 => 2,
+            _ => panic!("Unexpected register class!"),
+        }
     }
 
     fn gen_spill(_to_slot: SpillSlot, _from_reg: RealReg) -> Inst {
@@ -1163,14 +1166,13 @@ impl MachInst for Inst {
         None
     }
 
-    fn rc_for_type(_ty: Type) -> RegClass {
-        unimplemented!()
-        //zz         match ty {
-        //zz             I8 | I16 | I32 | I64 | B1 | B8 | B16 | B32 | B64 => RegClass::I64,
-        //zz             F32 | F64 => RegClass::V128,
-        //zz             I128 | B128 => RegClass::V128,
-        //zz             _ => panic!("Unexpected SSA-value type!"),
-        //zz         }
+    fn rc_for_type(ty: Type) -> RegClass {
+        match ty {
+            I8 | I16 | I32 | I64 | B1 | B8 | B16 | B32 | B64 => RegClass::I64,
+            F32 | F64 => RegClass::V128,
+            I128 | B128 => RegClass::V128,
+            _ => panic!("Unexpected SSA-value type!"),
+        }
     }
 
     fn gen_jump(_blockindex: BlockIndex) -> Inst {
@@ -1240,8 +1242,7 @@ impl MachInst for Inst {
     }
 
     fn reg_universe() -> RealRegUniverse {
-        unimplemented!()
-        //zz         get_reg_universe()
+        create_reg_universe()
     }
 
     fn is_special_reg(_reg: RealReg) -> bool {

@@ -55,7 +55,7 @@ fn for_all_real_regs<F: FnMut(Reg)>(f: &mut F) {
 }
 
 /// Create the register universe for ARM64.
-pub fn get_reg_universe() -> RealRegUniverse {
+fn create_reg_universe() -> RealRegUniverse {
     let mut regs = vec![];
     let mut allocable_by_class = [None; NUM_REG_CLASSES];
 
@@ -1098,7 +1098,7 @@ impl MachInst for Inst {
     }
 
     fn reg_universe() -> RealRegUniverse {
-        get_reg_universe()
+        create_reg_universe()
     }
 
     fn is_special_reg(reg: RealReg) -> bool {
