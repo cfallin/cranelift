@@ -110,7 +110,8 @@ fn alloc_vreg(
     value: Value,
     next_vreg: &mut u32,
 ) {
-    if value_regs.get(value).is_none() {
+    if value_regs[value].get_index() == 0 {
+        // default value in map.
         let v = *next_vreg;
         *next_vreg += 1;
         value_regs[value] = Reg::new_virtual(regclass, v);
@@ -239,6 +240,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                             &targets[..],
                             fallthrough,
                         );
+                        self.vcode.end_ir_inst();
                         branches.clear();
                         targets.clear();
                     }
@@ -262,6 +264,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 let fallthrough = fallthrough.map(|ebb| self.vcode.ebb_to_bindex(ebb));
                 branches.reverse();
                 backend.lower_branch_group(&mut self, &branches[..], &targets[..], fallthrough);
+                self.vcode.end_ir_inst();
                 branches.clear();
                 targets.clear();
             }
@@ -304,7 +307,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             println!("phi_temps = {:?}", phi_temps);
 
             // Create all of the phi uses (reads) from jump args to temps.
-            for (i, arg) in self.f.dfg.inst_args(inst).iter().skip(1).enumerate() {
+            for (i, arg) in self.f.dfg.inst_variable_args(inst).iter().enumerate() {
                 println!("jump arg {} is {}", i, arg);
                 let src_reg = self.value_regs[*arg];
                 let dst_reg = phi_temps[i];

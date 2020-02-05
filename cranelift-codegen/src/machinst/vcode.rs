@@ -358,10 +358,9 @@ impl<I: VCodeInst> VCode<I> {
     /// depending on fallthrough; and (ii) use concrete offsets.
     pub fn finalize_branches(&mut self) {
         // Compute fallthrough block, indexed by block.
-        let num_blocks = self.num_blocks();
-        let mut block_fallthrough: Vec<Option<BlockIndex>> =
-            std::iter::repeat(None).take(num_blocks).collect();
-        for i in 0..(num_blocks - 1) {
+        let num_final_blocks = self.final_block_order.len();
+        let mut block_fallthrough: Vec<Option<BlockIndex>> = vec![None; self.num_blocks()];
+        for i in 0..(num_final_blocks - 1) {
             let from = self.final_block_order[i];
             let to = self.final_block_order[i + 1];
             block_fallthrough[from as usize] = Some(to);
@@ -369,7 +368,7 @@ impl<I: VCodeInst> VCode<I> {
 
         // Pass over VCode instructions and finalize two-way branches into
         // one-way branches with fallthrough.
-        for block in 0..num_blocks {
+        for block in 0..self.num_blocks() {
             let next_block = block_fallthrough[block];
             let (start, end) = self.block_ranges[block].clone();
 
@@ -381,10 +380,10 @@ impl<I: VCodeInst> VCode<I> {
 
         // Compute block offsets.
         let mut offset = 0;
-        let mut block_offsets = vec![];
+        let mut block_offsets = vec![0; self.num_blocks()];
         for block in &self.final_block_order {
             offset = I::align_basic_block(offset);
-            block_offsets.push(offset);
+            block_offsets[*block as usize] = offset;
             let (start, end) = self.block_ranges[*block as usize].clone();
             for iix in start..end {
                 offset += inst_size(&self.insts[iix as usize]) as CodeOffset;

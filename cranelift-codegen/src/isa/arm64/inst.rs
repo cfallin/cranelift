@@ -254,6 +254,17 @@ pub enum CondBrKind {
     Cond(Cond),
 }
 
+impl CondBrKind {
+    /// Return the inverted branch condition.
+    pub fn invert(self) -> CondBrKind {
+        match self {
+            CondBrKind::Zero(reg) => CondBrKind::NotZero(reg),
+            CondBrKind::NotZero(reg) => CondBrKind::Zero(reg),
+            CondBrKind::Cond(c) => CondBrKind::Cond(c.invert()),
+        }
+    }
+}
+
 /// A shifted immediate value in 'imm12' format: supports 12 bits, shifted left by 0 or 12 places.
 #[derive(Clone, Debug)]
 pub struct Imm12 {
@@ -602,6 +613,51 @@ pub enum Cond {
     Le,
     Al,
     Nv,
+}
+
+impl Cond {
+    /// Return the inverted condition.
+    pub fn invert(self) -> Cond {
+        match self {
+            Cond::Eq => Cond::Ne,
+            Cond::Ne => Cond::Eq,
+            Cond::Hs => Cond::Lo,
+            Cond::Lo => Cond::Hs,
+            Cond::Mi => Cond::Pl,
+            Cond::Pl => Cond::Mi,
+            Cond::Vs => Cond::Vc,
+            Cond::Vc => Cond::Vs,
+            Cond::Hi => Cond::Ls,
+            Cond::Ls => Cond::Hi,
+            Cond::Ge => Cond::Lt,
+            Cond::Lt => Cond::Ge,
+            Cond::Gt => Cond::Le,
+            Cond::Le => Cond::Gt,
+            Cond::Al => Cond::Nv,
+            Cond::Nv => Cond::Al,
+        }
+    }
+
+    pub fn bits(self) -> u32 {
+        match self {
+            Cond::Eq => 0,
+            Cond::Ne => 1,
+            Cond::Hs => 2,
+            Cond::Lo => 3,
+            Cond::Mi => 4,
+            Cond::Pl => 5,
+            Cond::Vs => 6,
+            Cond::Vc => 7,
+            Cond::Hi => 8,
+            Cond::Ls => 9,
+            Cond::Ge => 10,
+            Cond::Lt => 11,
+            Cond::Gt => 12,
+            Cond::Le => 13,
+            Cond::Al => 14,
+            Cond::Nv => 15,
+        }
+    }
 }
 
 /// A branch target. Either unresolved (basic-block index) or resolved (offset
@@ -1136,8 +1192,18 @@ impl BranchTarget {
 
     fn as_off26(&self) -> Option<u32> {
         self.as_offset().and_then(|i| {
-            if (i < (1 << 26)) && (i >= -(1 << 26)) {
+            if (i < (1 << 25)) && (i >= -(1 << 25)) {
                 Some((i as u32) & ((1 << 26) - 1))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn as_off19(&self) -> Option<u32> {
+        self.as_offset().and_then(|i| {
+            if (i < (1 << 18)) && (i >= -(1 << 18)) {
+                Some((i as u32) & ((1 << 19) - 1))
             } else {
                 None
             }
@@ -1183,9 +1249,20 @@ fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: Reg) -> u32 {
         | machreg_to_gpr(rd)
 }
 
-fn enc_jump26(off_26_0: u32) -> u32 {
+fn enc_jump26(op_31_26: u32, off_26_0: u32) -> u32 {
     assert!(off_26_0 < (1 << 26));
-    (0b000101u32 << 26) | off_26_0
+    (op_31_26 << 26) | off_26_0
+}
+
+fn enc_cmpbr(op_31_24: u32, off_18_0: u32, reg: Reg) -> u32 {
+    assert!(off_18_0 < (1 << 19));
+    (op_31_24 << 24) | (off_18_0 << 5) | machreg_to_gpr(reg)
+}
+
+fn enc_cbr(op_31_24: u32, off_18_0: u32, op_4: u32, cond: u32) -> u32 {
+    assert!(off_18_0 < (1 << 19));
+    assert!(cond < (1 << 4));
+    (op_31_24 << 24) | (off_18_0 << 5) | (op_4 << 4) | cond
 }
 
 impl<CS: CodeSink> MachInstEmit<CS> for Inst {
@@ -1311,8 +1388,10 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             } => unimplemented!(),
             &Inst::MovZ { rd: _, .. } => unimplemented!(),
             &Inst::Jump { ref dest } => {
-                assert!(dest.as_off26().is_some());
-                sink.put4(enc_jump26(dest.as_off26().unwrap()));
+                // TODO: differentiate between as_off26() returning `None` for
+                // out-of-range vs. not-yet-finalized. The latter happens when we
+                // do early (fake) emission for size computation.
+                sink.put4(enc_jump26(0b000101, dest.as_off26().unwrap_or(0)));
             }
             &Inst::Ret {} => {
                 sink.put4(0xd65f03c0);
@@ -1320,8 +1399,54 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             &Inst::Call { .. } => unimplemented!(),
             &Inst::CallInd { rn: _, .. } => unimplemented!(),
             &Inst::CondBr { .. } => panic!("Unlowered CondBr during binemit!"),
-            &Inst::CondBrLowered { .. } => unimplemented!(),
-            &Inst::CondBrLoweredCompound { .. } => unimplemented!(),
+            &Inst::CondBrLowered {
+                target,
+                inverted,
+                kind,
+            } => {
+                let kind = if inverted { kind.invert() } else { kind };
+                match kind {
+                    CondBrKind::Zero(reg) => {
+                        sink.put4(enc_cmpbr(0b1_011010_0, target.as_off19().unwrap_or(0), reg));
+                    }
+                    CondBrKind::NotZero(reg) => {
+                        sink.put4(enc_cmpbr(0b1_011010_1, target.as_off19().unwrap_or(0), reg));
+                    }
+                    CondBrKind::Cond(c) => {
+                        sink.put4(enc_cbr(
+                            0b01010100,
+                            target.as_off19().unwrap_or(0),
+                            0b0,
+                            c.bits(),
+                        ));
+                    }
+                }
+            }
+            &Inst::CondBrLoweredCompound {
+                taken,
+                not_taken,
+                kind,
+            } => {
+                // Conditional part first.
+                match kind {
+                    CondBrKind::Zero(reg) => {
+                        sink.put4(enc_cmpbr(0b1_011010_0, taken.as_off19().unwrap_or(0), reg));
+                    }
+                    CondBrKind::NotZero(reg) => {
+                        sink.put4(enc_cmpbr(0b1_011010_1, taken.as_off19().unwrap_or(0), reg));
+                    }
+                    CondBrKind::Cond(c) => {
+                        sink.put4(enc_cbr(
+                            0b01010100,
+                            taken.as_off19().unwrap_or(0),
+                            0b0,
+                            c.bits(),
+                        ));
+                    }
+                }
+                // Unconditional part.
+                sink.put4(enc_jump26(0b000101, not_taken.as_off26().unwrap_or(0)));
+            }
             &Inst::Nop => {}
             &Inst::Nop4 => {
                 sink.put4(0xd503201f);
