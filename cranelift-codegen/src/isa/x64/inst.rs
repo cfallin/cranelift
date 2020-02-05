@@ -760,7 +760,7 @@ impl fmt::Debug for Inst {
 }
 
 //=============================================================================
-// Instructions: get and map regs
+// Instructions: get regs
 
 impl AMode {
     // Add the regs mentioned by |self| to |set|.  The role in which they
@@ -804,348 +804,286 @@ impl RM {
     }
 }
 
-impl MachInst for Inst {
-    fn regs(&self) -> MachInstRegs {
-        // This is a bit subtle.  If some register is in the modified set,
-        // then it may not be in either the use or def sets.  However,
-        // enforcing that directly is somewhat difficult.  Hence we
-        // postprocess the sets at the end of this function.
-        let mut def = Set::<Reg>::empty();
-        let mut m0d = Set::<Reg>::empty();
-        let mut uce = Set::<Reg>::empty();
+fn x64_get_regs(inst: &Inst) -> MachInstRegs {
+    // This is a bit subtle.  If some register is in the modified set, then it
+    // may not be in either the use or def sets.  However, enforcing that
+    // directly is somewhat difficult.  Hence we postprocess the sets at the
+    // end of this function.
+    let mut def = Set::<Reg>::empty();
+    let mut m0d = Set::<Reg>::empty();
+    let mut uce = Set::<Reg>::empty();
 
-        match self {
-            Inst::Alu_RMI_R {
-                is64: _,
-                op: _,
-                src,
-                dst,
-            } => {
-                src.get_regs(&mut uce);
-                m0d.insert(*dst);
-            }
-            Inst::Imm_R {
-                dstIs64: _,
-                simm64: _,
-                dst,
-            } => {
-                def.insert(*dst);
-            }
-            Inst::Mov_R_R { is64: _, src, dst } => {
-                uce.insert(*src);
-                def.insert(*dst);
-            }
-            Inst::MovZX_M_R {
-                extMode: _,
-                addr,
-                dst,
-            } => {
-                addr.get_regs(&mut uce);
-                def.insert(*dst);
-            }
-            Inst::Mov64_M_R { addr, dst } => {
-                addr.get_regs(&mut uce);
-                def.insert(*dst);
-            }
-            Inst::MovSX_M_R {
-                extMode: _,
-                addr,
-                dst,
-            } => {
-                addr.get_regs(&mut uce);
-                def.insert(*dst);
-            }
-            Inst::Mov_R_M { size: _, src, addr } => {
-                uce.insert(*src);
-                addr.get_regs(&mut uce);
-            }
-            Inst::Shift_R {
-                is64: _,
-                kind: _,
-                nBits,
-                dst,
-            } => {
-                if *nBits == 0 {
-                    uce.insert(reg_RCX());
-                }
-                m0d.insert(*dst);
-            }
-            Inst::Cmp_RMI_R { size: _, src, dst } => {
-                src.get_regs(&mut uce);
-                uce.insert(*dst); // yes, really |uce|
-            }
-            Inst::Push { is64: _, src } => {
-                src.get_regs(&mut uce);
-            }
-            Inst::JmpKnown { simm32: _ } => {}
-            Inst::JmpUnknown { target } => {
-                target.get_regs(&mut uce);
-            }
-            Inst::JmpCond {
-                cc: _,
-                tsimm32: _,
-                fsimm32: _,
-            } => {}
-            Inst::CallKnown { target: _ } => {
-                // FIXME add arg regs (uce) and caller-saved regs (def)
-                unimplemented!();
-            }
-            Inst::CallUnknown { target } => {
-                target.get_regs(&mut uce);
-            }
+    match inst {
+        Inst::Alu_RMI_R {
+            is64: _,
+            op: _,
+            src,
+            dst,
+        } => {
+            src.get_regs(&mut uce);
+            m0d.insert(*dst);
         }
-
-        // Enforce invariants described above.
-        def.remove(&m0d);
-        uce.remove(&m0d);
-
-        // (Interim) translate to the expected format
-        let mut res = SmallVec::new();
-        for r in def.iter() {
-            res.push((*r, RegMode::Def));
+        Inst::Imm_R {
+            dstIs64: _,
+            simm64: _,
+            dst,
+        } => {
+            def.insert(*dst);
         }
-        for r in m0d.iter() {
-            res.push((*r, RegMode::Modify));
+        Inst::Mov_R_R { is64: _, src, dst } => {
+            uce.insert(*src);
+            def.insert(*dst);
         }
-        for r in uce.iter() {
-            res.push((*r, RegMode::Use));
+        Inst::MovZX_M_R {
+            extMode: _,
+            addr,
+            dst,
+        } => {
+            addr.get_regs(&mut uce);
+            def.insert(*dst);
         }
-
-        res
+        Inst::Mov64_M_R { addr, dst } => {
+            addr.get_regs(&mut uce);
+            def.insert(*dst);
+        }
+        Inst::MovSX_M_R {
+            extMode: _,
+            addr,
+            dst,
+        } => {
+            addr.get_regs(&mut uce);
+            def.insert(*dst);
+        }
+        Inst::Mov_R_M { size: _, src, addr } => {
+            uce.insert(*src);
+            addr.get_regs(&mut uce);
+        }
+        Inst::Shift_R {
+            is64: _,
+            kind: _,
+            nBits,
+            dst,
+        } => {
+            if *nBits == 0 {
+                uce.insert(reg_RCX());
+            }
+            m0d.insert(*dst);
+        }
+        Inst::Cmp_RMI_R { size: _, src, dst } => {
+            src.get_regs(&mut uce);
+            uce.insert(*dst); // yes, really |uce|
+        }
+        Inst::Push { is64: _, src } => {
+            src.get_regs(&mut uce);
+        }
+        Inst::JmpKnown { simm32: _ } => {}
+        Inst::JmpUnknown { target } => {
+            target.get_regs(&mut uce);
+        }
+        Inst::JmpCond {
+            cc: _,
+            tsimm32: _,
+            fsimm32: _,
+        } => {}
+        Inst::CallKnown { target: _ } => {
+            // FIXME add arg regs (uce) and caller-saved regs (def)
+            unimplemented!();
+        }
+        Inst::CallUnknown { target } => {
+            target.get_regs(&mut uce);
+        }
     }
 
-    /*
-            match self {
-                Inst::Alu_RMI_R { is64, op, src, dst } => {
-                },
-                Inst::Imm_R { dstIs64, simm64, dst } => {
-                },
-                Inst::Mov_R_R { is64, src, dst } => {
-                    ret.push((src, RegMode::Use));
-                    ret.push((dst, RegMode::Def));
-                },
-                Inst::MovZX_M_R { extMode, addr, dst } => {
-                },
-                Inst::Mov64_M_R { addr, dst } => {
-                },
-                Inst::MovSX_M_R { extMode, addr, dst } => {
-                },
-                Inst::Mov_R_M { size, src, addr } => {
-                },
-                Inst::Shift_R { is64, kind, nBits, dst } => {
-                },
-                Inst::Cmp_RMI_R { size, src, dst } => {
-                },
-                Inst::Push { is64, src } => {
-                },
-                Inst::JmpKnown { simm32 } => {
-                },
-                Inst::JmpUnknown { target } => {
-                }
-                Inst::JmpCond { cc, tsimm32, fsimm32 } => {
-                },
-                Inst::CallKnown { target } => {
-                },
-                Inst::CallUnknown { target } => {
-                }
+    // Enforce invariants described above.
+    def.remove(&m0d);
+    uce.remove(&m0d);
+
+    // (Interim) translate to the expected format
+    let mut res = SmallVec::new();
+    for r in def.iter() {
+        res.push((*r, RegMode::Def));
+    }
+    for r in m0d.iter() {
+        res.push((*r, RegMode::Modify));
+    }
+    for r in uce.iter() {
+        res.push((*r, RegMode::Use));
+    }
+
+    res
+}
+
+//=============================================================================
+// Instructions: map regs
+
+fn apply_map(reg: &mut Reg, map: &RegallocMap<VirtualReg, RealReg>) {
+    // The allocator interface conveniently does this for us.
+    reg.apply_defs_or_uses(map)
+}
+
+fn apply_maps(
+    reg: &mut Reg,
+    pre_map__aka__map_uses: &RegallocMap<VirtualReg, RealReg>,
+    post_map__aka__map_defs: &RegallocMap<VirtualReg, RealReg>,
+) {
+    // The allocator interface conveniently does this for us.
+    reg.apply_mods(post_map__aka__map_defs, pre_map__aka__map_uses)
+}
+
+impl AMode {
+    fn apply_map(&mut self, map: &RegallocMap<VirtualReg, RealReg>) {
+        match self {
+            AMode::IR {
+                simm32: _,
+                ref mut base,
+            } => apply_map(base, map),
+            AMode::IRRS {
+                simm32: _,
+                ref mut base,
+                ref mut index,
+                shift: _,
+            } => {
+                apply_map(base, map);
+                apply_map(index, map);
             }
-    */
+        }
+    }
+}
+
+impl RMI {
+    fn apply_map(&mut self, map: &RegallocMap<VirtualReg, RealReg>) {
+        match self {
+            RMI::R { ref mut reg } => apply_map(reg, map),
+            RMI::M { ref mut amode } => amode.apply_map(map),
+            RMI::I { simm32: _ } => {}
+        }
+    }
+}
+
+impl RM {
+    fn apply_map(&mut self, map: &RegallocMap<VirtualReg, RealReg>) {
+        match self {
+            RM::R { ref mut reg } => apply_map(reg, map),
+            RM::M { ref mut amode } => amode.apply_map(map),
+        }
+    }
+}
+
+fn x64_map_regs(
+    inst: &mut Inst,
+    pre_map: &RegallocMap<VirtualReg, RealReg>,
+    post_map: &RegallocMap<VirtualReg, RealReg>,
+) {
+    // For registers that appear in a read role, apply |pre_map|.  For those
+    // that appear in a write role, apply |post_map|.  For registers that
+    // appear in a modify role, the two maps *must* return the same result, so
+    // we can apply either.
+    //
+    // Note that this function must be closely coordinated with |fn regs|, in
+    // the sense that each arm "agrees" with the one in |fn regs| about which
+    // fields are read, modifed or written.
+    match inst {
+        Inst::Alu_RMI_R {
+            is64: _,
+            op: _,
+            ref mut src,
+            ref mut dst,
+        } => {
+            src.apply_map(pre_map);
+            apply_maps(dst, pre_map, post_map);
+        }
+        Inst::Imm_R {
+            dstIs64: _,
+            simm64: _,
+            ref mut dst,
+        } => {
+            apply_map(dst, post_map);
+        }
+        Inst::Mov_R_R {
+            is64: _,
+            ref mut src,
+            ref mut dst,
+        } => {
+            apply_map(src, pre_map);
+            apply_map(dst, post_map);
+        }
+        Inst::MovZX_M_R {
+            extMode: _,
+            ref mut addr,
+            ref mut dst,
+        } => {
+            addr.apply_map(pre_map);
+            apply_map(dst, post_map);
+        }
+        Inst::Mov64_M_R { addr, dst } => {
+            addr.apply_map(pre_map);
+            apply_map(dst, post_map);
+        }
+        Inst::MovSX_M_R {
+            extMode: _,
+            ref mut addr,
+            ref mut dst,
+        } => {
+            addr.apply_map(pre_map);
+            apply_map(dst, post_map);
+        }
+        Inst::Mov_R_M {
+            size: _,
+            ref mut src,
+            ref mut addr,
+        } => {
+            apply_map(src, pre_map);
+            addr.apply_map(pre_map);
+        }
+        Inst::Shift_R {
+            is64: _,
+            kind: _,
+            nBits: _,
+            ref mut dst,
+        } => {
+            apply_maps(dst, pre_map, post_map);
+        }
+        Inst::Cmp_RMI_R {
+            size: _,
+            ref mut src,
+            ref mut dst,
+        } => {
+            src.apply_map(pre_map);
+            apply_map(dst, pre_map); // yes, really |pre_map|
+        }
+        Inst::Push {
+            is64: _,
+            ref mut src,
+        } => {
+            src.apply_map(pre_map);
+        }
+        Inst::JmpKnown { simm32: _ } => {}
+        Inst::JmpUnknown { target } => {
+            target.apply_map(pre_map);
+        }
+        Inst::JmpCond {
+            cc: _,
+            tsimm32: _,
+            fsimm32: _,
+        } => {}
+        Inst::CallKnown { target: _ } => {}
+        Inst::CallUnknown { target } => {
+            target.apply_map(pre_map);
+        }
+    }
+}
+
+impl MachInst for Inst {
+    fn regs(&self) -> MachInstRegs {
+        x64_get_regs(&self)
+    }
 
     fn map_regs(
         &mut self,
-        _pre_map: &RegallocMap<VirtualReg, RealReg>,
-        _post_map: &RegallocMap<VirtualReg, RealReg>,
+        pre_map: &RegallocMap<VirtualReg, RealReg>,
+        post_map: &RegallocMap<VirtualReg, RealReg>,
     ) {
-        unimplemented!()
-        //zz         fn map(m: &RegallocMap<VirtualReg, RealReg>, r: Reg) -> Reg {
-        //zz             if r.is_virtual() {
-        //zz                 m.get(&r.to_virtual_reg()).cloned().unwrap().to_reg()
-        //zz             } else {
-        //zz                 r
-        //zz             }
-        //zz         }
-        //zz
-        //zz         fn map_mem(u: &RegallocMap<VirtualReg, RealReg>, mem: &MemArg) -> MemArg {
-        //zz             // N.B.: we take only the pre-map here, but this is OK because the
-        //zz             // only addressing modes that update registers (pre/post-increment on
-        //zz             // ARM64, which we don't use yet but we may someday) both read and
-        //zz             // write registers, so they are "mods" rather than "defs", so must be
-        //zz             // the same in both the pre- and post-map.
-        //zz             match mem {
-        //zz                 &MemArg::Base(reg) => MemArg::Base(map(u, reg)),
-        //zz                 &MemArg::BaseSImm9(reg, simm9) => MemArg::BaseSImm9(map(u, reg), simm9),
-        //zz                 &MemArg::BaseUImm12Scaled(reg, uimm12) => {
-        //zz                     MemArg::BaseUImm12Scaled(map(u, reg), uimm12)
-        //zz                 }
-        //zz                 &MemArg::BasePlusReg(r1, r2) => MemArg::BasePlusReg(map(u, r1), map(u, r2)),
-        //zz                 &MemArg::BasePlusRegScaled(r1, r2, ty) => {
-        //zz                     MemArg::BasePlusRegScaled(map(u, r1), map(u, r2), ty)
-        //zz                 }
-        //zz                 &MemArg::Label(ref l) => MemArg::Label(l.clone()),
-        //zz             }
-        //zz         }
-        //zz
-        //zz         fn map_br(u: &RegallocMap<VirtualReg, RealReg>, br: &CondBrKind) -> CondBrKind {
-        //zz             match br {
-        //zz                 &CondBrKind::Zero(reg) => CondBrKind::Zero(map(u, reg)),
-        //zz                 &CondBrKind::NotZero(reg) => CondBrKind::NotZero(map(u, reg)),
-        //zz                 &CondBrKind::Cond(c) => CondBrKind::Cond(c),
-        //zz             }
-        //zz         }
-        //zz
-        //zz         let u = pre_map; // For brevity below.
-        //zz         let d = post_map;
-        //zz
-        //zz         let newval = match self {
-        //zz             &mut Inst::AluRRR { alu_op, rd, rn, rm } => Inst::AluRRR {
-        //zz                 alu_op,
-        //zz                 rd: map(d, rd),
-        //zz                 rn: map(u, rn),
-        //zz                 rm: map(u, rm),
-        //zz             },
-        //zz             &mut Inst::AluRRImm12 {
-        //zz                 alu_op,
-        //zz                 rd,
-        //zz                 rn,
-        //zz                 ref imm12,
-        //zz             } => Inst::AluRRImm12 {
-        //zz                 alu_op,
-        //zz                 rd: map(d, rd),
-        //zz                 rn: map(u, rn),
-        //zz                 imm12: imm12.clone(),
-        //zz             },
-        //zz             &mut Inst::AluRRImmLogic {
-        //zz                 alu_op,
-        //zz                 rd,
-        //zz                 rn,
-        //zz                 ref imml,
-        //zz             } => Inst::AluRRImmLogic {
-        //zz                 alu_op,
-        //zz                 rd: map(d, rd),
-        //zz                 rn: map(u, rn),
-        //zz                 imml: imml.clone(),
-        //zz             },
-        //zz             &mut Inst::AluRRImmShift {
-        //zz                 alu_op,
-        //zz                 rd,
-        //zz                 rn,
-        //zz                 ref immshift,
-        //zz             } => Inst::AluRRImmShift {
-        //zz                 alu_op,
-        //zz                 rd: map(d, rd),
-        //zz                 rn: map(u, rn),
-        //zz                 immshift: immshift.clone(),
-        //zz             },
-        //zz             &mut Inst::AluRRRShift {
-        //zz                 alu_op,
-        //zz                 rd,
-        //zz                 rn,
-        //zz                 rm,
-        //zz                 ref shiftop,
-        //zz             } => Inst::AluRRRShift {
-        //zz                 alu_op,
-        //zz                 rd: map(d, rd),
-        //zz                 rn: map(u, rn),
-        //zz                 rm: map(u, rm),
-        //zz                 shiftop: shiftop.clone(),
-        //zz             },
-        //zz             &mut Inst::AluRRRExtend {
-        //zz                 alu_op,
-        //zz                 rd,
-        //zz                 rn,
-        //zz                 rm,
-        //zz                 ref extendop,
-        //zz             } => Inst::AluRRRExtend {
-        //zz                 alu_op,
-        //zz                 rd: map(d, rd),
-        //zz                 rn: map(u, rn),
-        //zz                 rm: map(u, rm),
-        //zz                 extendop: extendop.clone(),
-        //zz             },
-        //zz             &mut Inst::ULoad8 { rd, ref mem } => Inst::ULoad8 {
-        //zz                 rd: map(d, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::SLoad8 { rd, ref mem } => Inst::SLoad8 {
-        //zz                 rd: map(d, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::ULoad16 { rd, ref mem } => Inst::ULoad16 {
-        //zz                 rd: map(d, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::SLoad16 { rd, ref mem } => Inst::SLoad16 {
-        //zz                 rd: map(d, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::ULoad32 { rd, ref mem } => Inst::ULoad32 {
-        //zz                 rd: map(d, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::SLoad32 { rd, ref mem } => Inst::SLoad32 {
-        //zz                 rd: map(d, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::ULoad64 { rd, ref mem } => Inst::ULoad64 {
-        //zz                 rd: map(d, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::Store8 { rd, ref mem } => Inst::Store8 {
-        //zz                 rd: map(u, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::Store16 { rd, ref mem } => Inst::Store16 {
-        //zz                 rd: map(u, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::Store32 { rd, ref mem } => Inst::Store32 {
-        //zz                 rd: map(u, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::Store64 { rd, ref mem } => Inst::Store64 {
-        //zz                 rd: map(u, rd),
-        //zz                 mem: map_mem(u, mem),
-        //zz             },
-        //zz             &mut Inst::MovZ { rd, ref imm } => Inst::MovZ {
-        //zz                 rd: map(d, rd),
-        //zz                 imm: imm.clone(),
-        //zz             },
-        //zz             &mut Inst::Jump { dest } => Inst::Jump { dest },
-        //zz             &mut Inst::Call { dest } => Inst::Call { dest },
-        //zz             &mut Inst::Ret {} => Inst::Ret {},
-        //zz             &mut Inst::CallInd { rn } => Inst::CallInd { rn: map(u, rn) },
-        //zz             &mut Inst::CondBr {
-        //zz                 taken,
-        //zz                 not_taken,
-        //zz                 kind,
-        //zz             } => Inst::CondBr {
-        //zz                 taken,
-        //zz                 not_taken,
-        //zz                 kind: map_br(u, &kind),
-        //zz             },
-        //zz             &mut Inst::CondBrLowered {
-        //zz                 target,
-        //zz                 inverted,
-        //zz                 kind,
-        //zz             } => Inst::CondBrLowered {
-        //zz                 target,
-        //zz                 inverted,
-        //zz                 kind: map_br(u, &kind),
-        //zz             },
-        //zz             &mut Inst::CondBrLoweredCompound {
-        //zz                 taken,
-        //zz                 not_taken,
-        //zz                 kind,
-        //zz             } => Inst::CondBrLoweredCompound {
-        //zz                 taken,
-        //zz                 not_taken,
-        //zz                 kind: map_br(u, &kind),
-        //zz             },
-        //zz             &mut Inst::Nop => Inst::Nop,
-        //zz             &mut Inst::Nop4 => Inst::Nop4,
-        //zz             &mut Inst::LiveIns => Inst::LiveIns,
-        //zz         };
-        //zz         *self = newval;
+        x64_map_regs(self, pre_map, post_map);
     }
 
     fn is_move(&self) -> Option<(Reg, Reg)> {
