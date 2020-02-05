@@ -1183,15 +1183,15 @@ impl BranchTarget {
         }
     }
 
-    fn as_offset(&self) -> Option<isize> {
+    fn as_offset_words(&self) -> Option<isize> {
         match self {
-            &BranchTarget::ResolvedOffset(off) => Some(off),
+            &BranchTarget::ResolvedOffset(off) => Some(off >> 2),
             _ => None,
         }
     }
 
     fn as_off26(&self) -> Option<u32> {
-        self.as_offset().and_then(|i| {
+        self.as_offset_words().and_then(|i| {
             if (i < (1 << 25)) && (i >= -(1 << 25)) {
                 Some((i as u32) & ((1 << 26) - 1))
             } else {
@@ -1201,7 +1201,7 @@ impl BranchTarget {
     }
 
     fn as_off19(&self) -> Option<u32> {
-        self.as_offset().and_then(|i| {
+        self.as_offset_words().and_then(|i| {
             if (i < (1 << 18)) && (i >= -(1 << 18)) {
                 Some((i as u32) & ((1 << 19) - 1))
             } else {
