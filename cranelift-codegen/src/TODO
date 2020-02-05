@@ -1,11 +1,5 @@
 TODO:
 
-- Binary emission
-  - Constant pool? Need MemArg resolution just prior to emission (when we know
-    the constant-pool offset)
-  - Handle out-of-range branches and constant-pool references (out of imm19
-    range at least)
-
 - Function ABI:
   - callee side
     - Arguments and return values
@@ -13,15 +7,13 @@ TODO:
   - caller side
     - Clobbers, function args, etc.
 
-- VCode (re)design:
-  - allow edits (insertions, deletions, block reorder) alongside instruction list
-  - rework lowering and VCodeBuilder: single forward pass; delete insns when
-    unused
+  - alloca? explicit spillslot / stackslot instructions?
+  - fixup pass after regalloc, when we know how large the frame is (or just make all
+    references relative to FP)
 
-- Misc:
-  - better block reordering: heuristically place after `from` or before `to` if
-    only one out-edge or in-edge respectively (?). Or split the compound
-    condbr/br and put one crit edge between the branches.
+- Binary emission
+  - Constant pool? Need MemArg resolution just prior to emission (when we know
+    the constant-pool offset)
 
 - ISA completeness:
   - ImmLogic: implement the algorithm to determine whether an immediate can be
@@ -30,12 +22,23 @@ TODO:
     instruction set.
   - 8/16-bit ops? Widening for legalization?
 
-- Work out how to fit this into Cranelift public API.
-  - Currently a hack-job (two different APIs). Unify somehow.
+- Post-MVP:
 
-- Post-MVP, VCode as arch-independent input:
-  - side-table: single-def for a given register use?
-  - put Cranelift IR opcodes/instructions into VCode container
+  - better block reordering: heuristically place after `from` or before `to` if
+    only one out-edge or in-edge respectively (?). Or split the compound
+    condbr/br and put one crit edge between the branches.
+
+  - VCode (re)design:
+    - allow edits (insertions, deletions, block reorder) alongside instruction list
+    - rework lowering and VCodeBuilder: single forward pass; delete insns when
+      unused
+
+  - VCode as arch-independent input:
+    - side-table: single-def for a given register use?
+    - put Cranelift IR opcodes/instructions into VCode container
+
+  - Handle out-of-range branches and constant-pool references (out of imm19
+    range at least)
 
 -------
 

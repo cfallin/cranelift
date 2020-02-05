@@ -4,27 +4,6 @@
 //! instruction; however, its register slots can refer to virtual registers in
 //! addition to real machine registers.
 //!
-//! A `VCode` is the result of lowering an `ir::Function`. The !
-//! machine-dependent lowering pass, driven by the machinst framework traversing
-//! the code, performs this transformation. The register allocator then
-//! receives the vcode (wrapped in a `regalloc::Function` trait implementation
-//! because the regalloc is abstracted into a general library) and rewrites the
-//! instructions into ones that refer only to real registers. Finally, the
-//! vcode-with-real-regs can be used by the machine-dependent backend to emit
-//! machine code. So we have:
-//!
-//! |       ir::Function                     VCode<arch_backend::Inst>
-//! |    (SSA IR,              [lower]         (machine-specific instruction
-//! |     machine-            ------------>     instances, referring mostly to
-//! |     independent ops)                      virtual registers)
-//! |
-//! |                                                     |
-//! |                                                     | [regalloc]
-//! |                         [binemit]                   v
-//! |      machine code      <----------      VCode<arch_backend::Inst>
-//! |                                           (machine insts with real regs)
-//!
-//!
 //! VCode is structured with traditional basic blocks, and
 //! each block must be terminated by an unconditional branch (one target), a
 //! conditional branch (two targets), or a return (no targets). Note that this
@@ -35,11 +14,8 @@
 //! branch-uncond pair if *both* targets are not fallthrough. This allows us to
 //! play with layout prior to final binary emission, as well, if we want.
 //!
-//! Finally, note that although this module does not verify it, we specify
-//! VCode to have *split critical edges*. This enables insertion of e.g.
-//! spills/fills/moves during regalloc. In the normal compilation pipeline, the
-//! critical-edge splitting happens just before lowering, because it is a
-//! machine-independent transform.
+//! See the main module comment in `mod.rs` for more details on the VCode-based
+//! backend pipeline.
 
 use crate::binemit::SizeCodeSink;
 use crate::ir;

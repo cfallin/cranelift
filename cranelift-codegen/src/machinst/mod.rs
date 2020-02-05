@@ -1,4 +1,102 @@
 //! This module exposes the machine-specific backend definition pieces.
+//!
+//! The MachInst infrastructure is the compiler backend, from CLIF
+//! (ir::Function) to machine code. The purpose of this infrastructure is, at a
+//! high level, to do instruction selection/lowering (to machine instructions),
+//! register allocation, and then perform all the fixups to branches, constant
+//! data references, etc., needed to actually generate machine code.
+//!
+//! The container for machine instructions, at various stages of construction,
+//! is the `VCode` struct. We refer to a sequence of machine instructions organized
+//! into basic blocks as "vcode". This is short for "virtual-register code", though
+//! it's a bit of a misnomer because near the end of the pipeline, vcode has all
+//! real registers. Nevertheless, the name is catchy and we like it.
+//!
+//! The compilation pipeline, from an `ir::Function` (already optimized as much as
+//! you like by machine-independent optimization passes) onward, is as follows.
+//! (N.B.: though we show the VCode separately at each stage, the passes
+//! mutate the VCode in place; these are not separate copies of the code.)
+//!
+//! |    ir::Function                (SSA IR, machine-independent opcodes)
+//! |        |
+//! |        |  [lower]
+//! |        |
+//! |    VCode<arch_backend::Inst>   (machine instructions:
+//! |        |                        - mostly virtual registers.
+//! |        |                        - cond branches in two-target form.
+//! |        |                        - branch targets are block indices.
+//! |        |                        - in-memory constants held by insns,
+//! |        |                          with unknown offsets.
+//! |        |                        - critical edges (actually all edges)
+//! |        |                          are split.)
+//! |        | [regalloc]
+//! |        |
+//! |    VCode<arch_backend::Inst>   (machine instructions:
+//! |        |                        - all real registers.
+//! |        |                        - new instruction sequence returned
+//! |        |                          out-of-band in RegAllocResult.
+//! |        |                        - instruction sequence has spills,
+//! |        |                          reloads, and moves inserted.
+//! |        |                        - other invariants same as above.)
+//! |        |
+//! |        | [preamble/postamble] -- TODO
+//! |        |
+//! |    VCode<arch_backend::Inst>   (machine instructions:
+//! |        |                        - stack-frame size known (pass over
+//! |        |                          code to see stackslot allocs +
+//! |        |                          regalloc info on spillslots +
+//! |        |                          regalloc info on clobbered
+//! |        |                          callee-saves)
+//! |        |                        - out-of-band instruction sequence
+//! |        |                          has preamble prepended to entry
+//! |        |                          block, and postamble appended to
+//! |        |                          end of function, with all return-blocks
+//! |        |                          branching to shared postamble.
+//! |        |                        - all symbolic stack references to
+//! |        |                          stackslots and spillslots are resolved
+//! |        |                          to concrete FP-offset mem addresses.)
+//! |        | [block/insn ordering]
+//! |        |
+//! |    VCode<arch_backend::Inst>   (machine instructions:
+//! |        |                        - vcode.final_block_order is filled in.
+//! |        |                        - new insn sequence from regalloc is
+//! |        |                          placed back into vcode and block
+//! |        |                          boundaries are updated.)
+//! |        | [redundant branch/block
+//! |        |  removal]
+//! |        |
+//! |    VCode<arch_backend::Inst>   (machine instructions:
+//! |        |                        - all blocks that were just an
+//! |        |                          unconditional branch are removed.)
+//! |        |
+//! |        | [branch finalization
+//! |        |  (fallthroughs)]
+//! |        |
+//! |    VCode<arch_backend::Inst>   (machine instructions:
+//! |        |                        - all branches are in lowered one-
+//! |        |                          target form, but targets are still
+//! |        |                          block indices.)
+//! |        |
+//! |        | [branch finalization
+//! |        |  (offsets)]
+//! |        |
+//! |    VCode<arch_backend::Inst>   (machine instructions:
+//! |        |                        - all branch offsets from start of
+//! |        |                          function are known, and all branches
+//! |        |                          have resolved-offset targets.)
+//! |        |
+//! |        | [MemArg finalization] -- TODO
+//! |        |
+//! |    VCode<arch_backend::Inst>   (machine instructions:
+//! |        |                        - all MemArg references to the constant
+//! |        |                          pool are replaced with offsets.
+//! |        |                        - all constant-pool data is collected
+//! |        |                          in the VCode.)
+//! |        |
+//! |        | [binary emission]
+//! |        |
+//! |    Vec<u8>                     (machine code!)
+//! |
 
 #![allow(unused_imports)]
 
