@@ -669,6 +669,8 @@ impl Inst {
 
 impl MachInst for Inst {
     fn regs(&self) -> MachInstRegs {
+        // FIXME JRS 2020Feb05: ensure we return no Modify uses.  Or more
+        // accurately, ensure that mod `intersect` (use `union` def) == empty.
         let mut ret = SmallVec::new();
         match self {
             &Inst::AluRRR { rd, rn, rm, .. } => {

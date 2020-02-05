@@ -12,13 +12,14 @@ use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
 use crate::machinst::*;
 
 use regalloc::Map as RegallocMap;
+use regalloc::Set;
 use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, NUM_REG_CLASSES};
 
 use std::fmt;
 use std::string::{String, ToString};
 use std::vec::Vec;
 
-//zz use smallvec::SmallVec;
+use smallvec::SmallVec;
 //zz use std::mem;
 //zz use std::sync::Once;
 //zz
@@ -232,8 +233,8 @@ fn info_RBP() -> (RealReg, String) {
 
 // For external consumption.  It's probably important that LLVM optimises
 // these into a constant.
-pub fn reg_RSP() -> Reg {
-    info_RSP().0.to_reg()
+pub fn reg_RCX() -> Reg {
+    info_RCX().0.to_reg()
 }
 
 /// Create the register universe for X64.
@@ -294,7 +295,7 @@ pub fn get_reg_universe() -> RealRegUniverse {
 }
 
 //=============================================================================
-// Instructions
+// Instructions: definitions, also of supporting types
 
 #[derive(Clone)]
 pub enum AMode {
@@ -589,6 +590,10 @@ pub enum Inst {
     //zz         kind: CondBrKind,
     //zz     },
 }
+
+//=============================================================================
+// Instructions: printing
+
 impl fmt::Debug for Inst {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fn ljustify(s: String) -> String {
@@ -667,6 +672,8 @@ impl fmt::Debug for Inst {
                 addr,
                 dst
             ),
+            Inst::Mov64_M_R { addr, dst } => write!(
+                fmt, "{} {:?}, {:?}", ljustify("movq".to_string()), addr, dst),
             Inst::MovSX_M_R { extMode, addr, dst } => write!(
                 fmt,
                 "{} {:?}, {:?}",
@@ -737,516 +744,176 @@ impl fmt::Debug for Inst {
                 *tsimm32 as i32,
                 *fsimm32 as i32
             ),
-            Inst::CallKnown { target } => {
+            Inst::CallKnown { target } =>
+                write!(fmt, "{} {:?}", ljustify("call".to_string()), target),
+            Inst::CallUnknown { target } =>
                 write!(fmt, "{} {:?}", ljustify("call".to_string()), target)
-            }
-            Inst::CallUnknown { target } => {
-                write!(fmt, "{} {:?}", ljustify("call".to_string()), target)
-            }
-            _ => write!(fmt, "bleh"),
         }
     }
 }
 
-//zz /// The kind of conditional branch: the common-case-optimized "reg-is-zero" /
-//zz /// "reg-is-nonzero" variants, or the generic one that tests the machine
-//zz /// condition codes.
-//zz #[derive(Clone, Copy, Debug)]
-//zz pub enum CondBrKind {
-//zz     /// Condition: given register is zero.
-//zz     Zero(Reg),
-//zz     /// Condition: given register is nonzero.
-//zz     NotZero(Reg),
-//zz     /// Condition: the given condition-code test is true.
-//zz     Cond(Cond),
-//zz }
-//zz
-//zz /// A shifted immediate value in 'imm12' format: supports 12 bits, shifted left by 0 or 12 places.
-//zz #[derive(Clone, Debug)]
-//zz pub struct Imm12 {
-//zz     /// The immediate bits.
-//zz     pub bits: usize,
-//zz     /// Whether the immediate bits are shifted left by 12 or not.
-//zz     pub shift12: bool,
-//zz }
-//zz
-//zz impl Imm12 {
-//zz     /// Compute a Imm12 from raw bits, if possible.
-//zz     pub fn maybe_from_u64(val: u64) -> Option<Imm12> {
-//zz         if val == 0 {
-//zz             Some(Imm12 {
-//zz                 bits: 0,
-//zz                 shift12: false,
-//zz             })
-//zz         } else if val < 0xfff {
-//zz             Some(Imm12 {
-//zz                 bits: val as usize,
-//zz                 shift12: false,
-//zz             })
-//zz         } else if val < 0xfff_000 && (val & 0xfff == 0) {
-//zz             Some(Imm12 {
-//zz                 bits: (val as usize) >> 12,
-//zz                 shift12: true,
-//zz             })
-//zz         } else {
-//zz             None
-//zz         }
-//zz     }
-//zz
-//zz     /// Bits for 2-bit "shift" field in e.g. AddI.
-//zz     pub fn shift_bits(&self) -> u8 {
-//zz         if self.shift12 {
-//zz             0b01
-//zz         } else {
-//zz             0b00
-//zz         }
-//zz     }
-//zz
-//zz     /// Bits for 12-bit "imm" field in e.g. AddI.
-//zz     pub fn imm_bits(&self) -> u16 {
-//zz         self.bits as u16
-//zz     }
-//zz }
-//zz
-//zz /// An immediate for logical instructions.
-//zz #[derive(Clone, Debug)]
-//zz pub struct ImmLogic {
-//zz     /// `N` flag.
-//zz     pub N: bool,
-//zz     /// `S` field: element size and element bits.
-//zz     pub R: u8,
-//zz     /// `R` field: rotate amount.
-//zz     pub S: u8,
-//zz }
-//zz
-//zz impl ImmLogic {
-//zz     /// Compute an ImmLogic from raw bits, if possible.
-//zz     pub fn maybe_from_u64(_val: u64) -> Option<ImmLogic> {
-//zz         // TODO: implement.
-//zz         None
-//zz     }
-//zz
-//zz     /// Returns bits ready for encoding: (N:1, R:6, S:6)
-//zz     pub fn enc_bits(&self) -> u16 {
-//zz         ((self.N as u16) << 12) | ((self.R as u16) << 6) | (self.S as u16)
-//zz     }
-//zz }
-//zz
-//zz /// An immediate for shift instructions.
-//zz #[derive(Clone, Debug)]
-//zz pub struct ImmShift {
-//zz     /// 6-bit shift amount.
-//zz     pub imm: u8,
-//zz }
-//zz
-//zz impl ImmShift {
-//zz     /// Create an ImmShift from raw bits, if possible.
-//zz     pub fn maybe_from_u64(val: u64) -> Option<ImmShift> {
-//zz         if val > 0 && val < 64 {
-//zz             Some(ImmShift { imm: val as u8 })
-//zz         } else {
-//zz             None
-//zz         }
-//zz     }
-//zz }
-//zz
-//zz /// A shift operator for a register or immediate.
-//zz #[derive(Clone, Copy, Debug)]
-//zz pub enum ShiftOp {
-//zz     ASR,
-//zz     LSR,
-//zz     LSL,
-//zz     ROR,
-//zz }
-//zz
-//zz impl ShiftOp {
-//zz     /// Get the encoding of this shift op.
-//zz     pub fn bits(&self) -> u8 {
-//zz         match self {
-//zz             &ShiftOp::LSL => 0b00,
-//zz             &ShiftOp::LSR => 0b01,
-//zz             &ShiftOp::ASR => 0b10,
-//zz             &ShiftOp::ROR => 0b11,
-//zz         }
-//zz     }
-//zz }
-//zz
-//zz /// A shift operator with an amount, guaranteed to be within range.
-//zz #[derive(Clone, Debug)]
-//zz pub struct ShiftOpAndAmt {
-//zz     op: ShiftOp,
-//zz     shift: ShiftOpShiftImm,
-//zz }
-//zz
-//zz /// A shift operator amount.
-//zz #[derive(Clone, Copy, Debug)]
-//zz pub struct ShiftOpShiftImm(u8);
-//zz
-//zz impl ShiftOpShiftImm {
-//zz     /// Maximum shift for shifted-register operands.
-//zz     pub const MAX_SHIFT: u64 = 7;
-//zz
-//zz     /// Create a new shiftop shift amount, if possible.
-//zz     pub fn maybe_from_shift(shift: u64) -> Option<ShiftOpShiftImm> {
-//zz         if shift <= Self::MAX_SHIFT {
-//zz             Some(ShiftOpShiftImm(shift as u8))
-//zz         } else {
-//zz             None
-//zz         }
-//zz     }
-//zz }
-//zz
-//zz impl ShiftOpAndAmt {
-//zz     pub fn new(op: ShiftOp, shift: ShiftOpShiftImm) -> ShiftOpAndAmt {
-//zz         ShiftOpAndAmt { op, shift }
-//zz     }
-//zz
-//zz     /// Get the shift op.
-//zz     pub fn op(&self) -> ShiftOp {
-//zz         self.op.clone()
-//zz     }
-//zz
-//zz     /// Get the shift amount.
-//zz     pub fn amt(&self) -> ShiftOpShiftImm {
-//zz         self.shift
-//zz     }
-//zz }
-//zz
-//zz /// An extend operator for a register.
-//zz #[derive(Clone, Copy, Debug)]
-//zz pub enum ExtendOp {
-//zz     SXTB,
-//zz     SXTH,
-//zz     SXTW,
-//zz     SXTX,
-//zz     UXTB,
-//zz     UXTH,
-//zz     UXTW,
-//zz     UXTX,
-//zz }
-//zz
-//zz impl ExtendOp {
-//zz     /// Encoding of this op.
-//zz     pub fn bits(&self) -> u8 {
-//zz         match self {
-//zz             &ExtendOp::UXTB => 0b000,
-//zz             &ExtendOp::UXTH => 0b001,
-//zz             &ExtendOp::UXTW => 0b010,
-//zz             &ExtendOp::UXTX => 0b011,
-//zz             &ExtendOp::SXTB => 0b100,
-//zz             &ExtendOp::SXTH => 0b101,
-//zz             &ExtendOp::SXTW => 0b110,
-//zz             &ExtendOp::SXTX => 0b111,
-//zz         }
-//zz     }
-//zz }
-//zz
-//zz /// A memory argument to load/store, encapsulating the possible addressing modes.
-//zz #[derive(Clone, Debug)]
-//zz pub enum MemArg {
-//zz     Base(Reg),
-//zz     BaseSImm9(Reg, SImm9),
-//zz     BaseUImm12Scaled(Reg, UImm12Scaled),
-//zz     BasePlusReg(Reg, Reg),
-//zz     BasePlusRegScaled(Reg, Reg, Type),
-//zz     Label(MemLabel),
-//zz     // TODO: use pre-indexed and post-indexed modes
-//zz }
-//zz
-//zz /// a 9-bit signed offset.
-//zz #[derive(Clone, Copy, Debug)]
-//zz pub struct SImm9 {
-//zz     bits: i16,
-//zz }
-//zz
-//zz impl SImm9 {
-//zz     /// Create a signed 9-bit offset from a full-range value, if possible.
-//zz     pub fn maybe_from_i64(value: i64) -> Option<SImm9> {
-//zz         if value >= -256 && value <= 255 {
-//zz             Some(SImm9 { bits: value as i16 })
-//zz         } else {
-//zz             None
-//zz         }
-//zz     }
-//zz }
-//zz
-//zz /// an unsigned, scaled 12-bit offset.
-//zz #[derive(Clone, Copy, Debug)]
-//zz pub struct UImm12Scaled {
-//zz     bits: u16,
-//zz     scale_ty: Type, // multiplied by the size of this type
-//zz }
-//zz
-//zz impl UImm12Scaled {
-//zz     /// Create a UImm12Scaled from a raw offset and the known scale type, if possible.
-//zz     pub fn maybe_from_i64(value: i64, scale_ty: Type) -> Option<UImm12Scaled> {
-//zz         let scale = scale_ty.bytes() as i64;
-//zz         assert!((scale & (scale - 1)) == 0); // must be a power of 2.
-//zz         let limit = 4095 * scale;
-//zz         if value >= 0 && value <= limit && (value & (scale - 1)) == 0 {
-//zz             Some(UImm12Scaled {
-//zz                 bits: (value / scale) as u16,
-//zz                 scale_ty,
-//zz             })
-//zz         } else {
-//zz             None
-//zz         }
-//zz     }
-//zz }
-//zz
-//zz /// A 16-bit immediate for a MOVZ instruction, with a {0,16,32,48}-bit shift.
-//zz #[derive(Clone, Copy, Debug)]
-//zz pub struct MovZConst {
-//zz     bits: u16,
-//zz     shift: u8, // shifted 16*shift bits to the left.
-//zz }
-//zz
-//zz impl MovZConst {
-//zz     /// Construct a MovZConst from an arbitrary 64-bit constant if possible.
-//zz     pub fn maybe_from_u64(value: u64) -> Option<MovZConst> {
-//zz         let mask0 = 0x0000_0000_0000_ffffu64;
-//zz         let mask1 = 0x0000_0000_ffff_0000u64;
-//zz         let mask2 = 0x0000_ffff_0000_0000u64;
-//zz         let mask3 = 0xffff_0000_0000_0000u64;
-//zz
-//zz         if value == (value & mask0) {
-//zz             return Some(MovZConst {
-//zz                 bits: (value & mask0) as u16,
-//zz                 shift: 0,
-//zz             });
-//zz         }
-//zz         if value == (value & mask1) {
-//zz             return Some(MovZConst {
-//zz                 bits: ((value >> 16) & mask0) as u16,
-//zz                 shift: 1,
-//zz             });
-//zz         }
-//zz         if value == (value & mask2) {
-//zz             return Some(MovZConst {
-//zz                 bits: ((value >> 32) & mask0) as u16,
-//zz                 shift: 2,
-//zz             });
-//zz         }
-//zz         if value == (value & mask3) {
-//zz             return Some(MovZConst {
-//zz                 bits: ((value >> 48) & mask0) as u16,
-//zz                 shift: 3,
-//zz             });
-//zz         }
-//zz         None
-//zz     }
-//zz }
-//zz
-//zz impl MemArg {
-//zz     /// Memory reference using an address in a register.
-//zz     pub fn reg(reg: Reg) -> MemArg {
-//zz         MemArg::Base(reg)
-//zz     }
-//zz
-//zz     /// Memory reference using an address in a register and an offset, if possible.
-//zz     pub fn reg_maybe_offset(reg: Reg, offset: i64, value_type: Type) -> Option<MemArg> {
-//zz         if offset == 0 {
-//zz             Some(MemArg::Base(reg))
-//zz         } else if let Some(simm9) = SImm9::maybe_from_i64(offset) {
-//zz             Some(MemArg::BaseSImm9(reg, simm9))
-//zz         } else if let Some(uimm12s) = UImm12Scaled::maybe_from_i64(offset, value_type) {
-//zz             Some(MemArg::BaseUImm12Scaled(reg, uimm12s))
-//zz         } else {
-//zz             None
-//zz         }
-//zz     }
-//zz
-//zz     /// Memory reference using the sum of two registers as an address.
-//zz     pub fn reg_reg(reg1: Reg, reg2: Reg) -> MemArg {
-//zz         MemArg::BasePlusReg(reg1, reg2)
-//zz     }
-//zz
-//zz     /// Memory reference to a label: a global function or value, or data in the constant pool.
-//zz     pub fn label(label: MemLabel) -> MemArg {
-//zz         MemArg::Label(label)
-//zz     }
-//zz
-//zz     pub const MAX_STACKSLOT: u32 = 0xfff;
-//zz
-//zz     /// Memory reference to a stack slot relative to the frame pointer.
-//zz     /// `off` is the Nth slot up from SP, i.e., `[sp, #8*off]`.
-//zz     /// `off` can be up to `MemArg::MAX_STACKSLOT`.
-//zz     pub fn stackslot(off: u32) -> MemArg {
-//zz         assert!(off <= MemArg::MAX_STACKSLOT);
-//zz         let uimm12 = UImm12Scaled::maybe_from_i64((8 * off) as i64, I64);
-//zz         assert!(uimm12.is_some());
-//zz         MemArg::BaseUImm12Scaled(stack_reg(), uimm12.unwrap())
-//zz     }
-//zz }
-//zz
-//zz /// A reference to some memory address.
-//zz #[derive(Clone, Debug)]
-//zz pub enum MemLabel {
-//zz     /// A value in a constant pool, already emitted.
-//zz     ConstantPool(ConstantOffset),
-//zz     /// A value in a constant pool, to be emitted during binemit.
-//zz     ConstantData(ConstantData),
-//zz     Function(FuncRef),
-//zz     GlobalValue(GlobalValue),
-//zz }
-//zz
-//zz /// Condition for conditional branches.
-//zz #[derive(Clone, Copy, Debug)]
-//zz pub enum Cond {
-//zz     Eq,
-//zz     Ne,
-//zz     Hs,
-//zz     Lo,
-//zz     Mi,
-//zz     Pl,
-//zz     Vs,
-//zz     Vc,
-//zz     Hi,
-//zz     Ls,
-//zz     Ge,
-//zz     Lt,
-//zz     Gt,
-//zz     Le,
-//zz     Al,
-//zz     Nv,
-//zz }
-//zz
-//zz /// A branch target. Either unresolved (basic-block index) or resolved (offset
-//zz /// from end of current instruction).
-//zz #[derive(Clone, Copy, Debug)]
-//zz pub enum BranchTarget {
-//zz     /// An unresolved reference to a BlockIndex, as passed into
-//zz     /// `lower_branch_group()`.
-//zz     Block(BlockIndex),
-//zz     /// A resolved reference to another instruction, after
-//zz     /// `Inst::with_block_offsets()`.
-//zz     ResolvedOffset(isize),
-//zz }
-//zz
-//zz /// Helper: get a ConstantData from a u32.
-//zz pub fn u32_constant(bits: u32) -> ConstantData {
-//zz     let data = [
-//zz         (bits & 0xff) as u8,
-//zz         ((bits >> 8) & 0xff) as u8,
-//zz         ((bits >> 16) & 0xff) as u8,
-//zz         ((bits >> 24) & 0xff) as u8,
-//zz     ];
-//zz     ConstantData::from(&data[..])
-//zz }
-//zz
-//zz /// Helper: get a ConstantData from a u64.
-//zz pub fn u64_constant(bits: u64) -> ConstantData {
-//zz     let data = [
-//zz         (bits & 0xff) as u8,
-//zz         ((bits >> 8) & 0xff) as u8,
-//zz         ((bits >> 16) & 0xff) as u8,
-//zz         ((bits >> 24) & 0xff) as u8,
-//zz         ((bits >> 32) & 0xff) as u8,
-//zz         ((bits >> 40) & 0xff) as u8,
-//zz         ((bits >> 48) & 0xff) as u8,
-//zz         ((bits >> 56) & 0xff) as u8,
-//zz     ];
-//zz     ConstantData::from(&data[..])
-//zz }
-//zz
-//zz fn memarg_regs(memarg: &MemArg, regs: &mut MachInstRegs) {
-//zz     match memarg {
-//zz         &MemArg::Base(reg) | &MemArg::BaseSImm9(reg, ..) | &MemArg::BaseUImm12Scaled(reg, ..) => {
-//zz             regs.push((reg.clone(), RegMode::Use));
-//zz         }
-//zz         &MemArg::BasePlusReg(r1, r2) | &MemArg::BasePlusRegScaled(r1, r2, ..) => {
-//zz             regs.push((r1.clone(), RegMode::Use));
-//zz             regs.push((r2.clone(), RegMode::Use));
-//zz         }
-//zz         &MemArg::Label(..) => {}
-//zz     }
-//zz }
-//zz
-//zz impl Inst {
-//zz     /// Create a move instruction.
-//zz     pub fn mov(to_reg: Reg, from_reg: Reg) -> Inst {
-//zz         Inst::AluRRR {
-//zz             alu_op: ALUOp::Add64,
-//zz             rd: to_reg,
-//zz             rm: from_reg,
-//zz             rn: zero_reg(),
-//zz         }
-//zz     }
-//zz }
+//=============================================================================
+// Instructions: get and map regs
+
+impl AMode {
+    // Add the regs mentioned by |self| to |set|.  The role in which they
+    // appear (def/mod/use) is meaningless here, hence the use of plain |set|.
+    fn get_regs(&self, set: &mut Set<Reg>) {
+        match self {
+            AMode::IR { simm32:_, base } => {
+                set.insert(*base);
+            },
+            AMode::IRRS { simm32:_, base, index, shift:_ } => {
+                set.insert(*base);
+                set.insert(*index);
+            }
+        }
+    }
+}
+
+impl RMI {
+    // Add the regs mentioned by |self| to |set|.  Same comment as above.
+    fn get_regs(&self, set: &mut Set<Reg>) {
+        match self {
+            RMI::R { reg } => set.insert(*reg),
+            RMI::M { amode } => amode.get_regs(set),
+            RMI::I { simm32:_ } => {}
+        }
+    }
+}
+
+impl RM {
+    // Add the regs mentioned by |self| to |set|.  Same comment as above.
+    fn get_regs(&self, set: &mut Set<Reg>) {
+        match self {
+            RM::R { reg } => set.insert(*reg),
+            RM::M { amode } => amode.get_regs(set),
+        }
+    }
+}
 
 impl MachInst for Inst {
     fn regs(&self) -> MachInstRegs {
-        unimplemented!()
-        //zz         let mut ret = SmallVec::new();
-        //zz         match self {
-        //zz             &Inst::AluRRR { rd, rn, rm, .. } => {
-        //zz                 ret.push((rd.clone(), RegMode::Def));
-        //zz                 ret.push((rn.clone(), RegMode::Use));
-        //zz                 ret.push((rm.clone(), RegMode::Use));
-        //zz             }
-        //zz             &Inst::AluRRImm12 { rd, rn, .. } => {
-        //zz                 ret.push((rd.clone(), RegMode::Def));
-        //zz                 ret.push((rn.clone(), RegMode::Use));
-        //zz             }
-        //zz             &Inst::AluRRImmLogic { rd, rn, .. } => {
-        //zz                 ret.push((rd.clone(), RegMode::Def));
-        //zz                 ret.push((rn.clone(), RegMode::Use));
-        //zz             }
-        //zz             &Inst::AluRRImmShift { rd, rn, .. } => {
-        //zz                 ret.push((rd.clone(), RegMode::Def));
-        //zz                 ret.push((rn.clone(), RegMode::Use));
-        //zz             }
-        //zz             &Inst::AluRRRShift { rd, rn, rm, .. } => {
-        //zz                 ret.push((rd.clone(), RegMode::Def));
-        //zz                 ret.push((rn.clone(), RegMode::Use));
-        //zz                 ret.push((rm.clone(), RegMode::Use));
-        //zz             }
-        //zz             &Inst::AluRRRExtend { rd, rn, rm, .. } => {
-        //zz                 ret.push((rd.clone(), RegMode::Def));
-        //zz                 ret.push((rn.clone(), RegMode::Use));
-        //zz                 ret.push((rm.clone(), RegMode::Use));
-        //zz             }
-        //zz             &Inst::ULoad8 { rd, ref mem, .. }
-        //zz             | &Inst::SLoad8 { rd, ref mem, .. }
-        //zz             | &Inst::ULoad16 { rd, ref mem, .. }
-        //zz             | &Inst::SLoad16 { rd, ref mem, .. }
-        //zz             | &Inst::ULoad32 { rd, ref mem, .. }
-        //zz             | &Inst::SLoad32 { rd, ref mem, .. }
-        //zz             | &Inst::ULoad64 { rd, ref mem, .. } => {
-        //zz                 ret.push((rd.clone(), RegMode::Def));
-        //zz                 memarg_regs(mem, &mut ret);
-        //zz             }
-        //zz             &Inst::Store8 { rd, ref mem, .. }
-        //zz             | &Inst::Store16 { rd, ref mem, .. }
-        //zz             | &Inst::Store32 { rd, ref mem, .. }
-        //zz             | &Inst::Store64 { rd, ref mem, .. } => {
-        //zz                 ret.push((rd.clone(), RegMode::Use));
-        //zz                 memarg_regs(mem, &mut ret);
-        //zz             }
-        //zz             &Inst::MovZ { rd, .. } => {
-        //zz                 ret.push((rd.clone(), RegMode::Def));
-        //zz             }
-        //zz             &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => {}
-        //zz             &Inst::CallInd { rn, .. } => {
-        //zz                 ret.push((rn.clone(), RegMode::Use));
-        //zz             }
-        //zz             &Inst::CondBr { ref kind, .. }
-        //zz             | &Inst::CondBrLowered { ref kind, .. }
-        //zz             | &Inst::CondBrLoweredCompound { ref kind, .. } => match kind {
-        //zz                 CondBrKind::Zero(rt) | CondBrKind::NotZero(rt) => {
-        //zz                     ret.push((rt.clone(), RegMode::Use));
-        //zz                 }
-        //zz                 CondBrKind::Cond(_) => {}
-        //zz             },
-        //zz             &Inst::Nop | Inst::Nop4 => {}
-        //zz             &Inst::LiveIns => {
-        //zz                 for_all_real_regs(&mut |reg| {
-        //zz                     ret.push((reg, RegMode::Def));
-        //zz                 });
-        //zz             }
-        //zz         }
-        //zz         ret
+        // This is a bit subtle.  If some register is in the modified set,
+        // then it may not be in either the use or def sets.  However,
+        // enforcing that directly is somewhat difficult.  Hence we
+        // postprocess the sets at the end of this function.
+        let mut def = Set::<Reg>::empty();
+        let mut m0d = Set::<Reg>::empty();
+        let mut uce = Set::<Reg>::empty();
+
+        match self {
+            Inst::Alu_RMI_R { is64:_, op:_, src, dst } => {
+                src.get_regs(&mut uce);
+                m0d.insert(*dst);
+            },
+            Inst::Imm_R { dstIs64:_, simm64:_, dst } => {
+                def.insert(*dst);
+            },
+            Inst::Mov_R_R { is64:_, src, dst } => {
+                uce.insert(*src);
+                def.insert(*dst);
+            },
+            Inst::MovZX_M_R { extMode:_, addr, dst } => {
+                addr.get_regs(&mut uce);
+                def.insert(*dst);
+            },
+            Inst::Mov64_M_R { addr, dst } => {
+                addr.get_regs(&mut uce);
+                def.insert(*dst);
+            },
+            Inst::MovSX_M_R { extMode:_, addr, dst } => {
+                addr.get_regs(&mut uce);
+                def.insert(*dst);
+            },
+            Inst::Mov_R_M { size:_, src, addr } => {
+                uce.insert(*src);
+                addr.get_regs(&mut uce);
+            },
+            Inst::Shift_R { is64:_, kind:_, nBits, dst } => {
+                if *nBits == 0 {
+                    uce.insert(reg_RCX());
+                }
+                m0d.insert(*dst);
+            },
+            Inst::Cmp_RMI_R { size:_, src, dst } => {
+                src.get_regs(&mut uce);
+                uce.insert(*dst); // yes, really |uce|
+            },
+            Inst::Push { is64:_, src } => {
+                src.get_regs(&mut uce);
+            },
+            Inst::JmpKnown { simm32:_ } => {
+            },
+            Inst::JmpUnknown { target } => {
+                target.get_regs(&mut uce);
+            }
+            Inst::JmpCond { cc:_, tsimm32:_, fsimm32:_ } => {
+            },
+            Inst::CallKnown { target:_ } => {
+                // FIXME add arg regs (uce) and caller-saved regs (def)
+                unimplemented!();
+            },
+            Inst::CallUnknown { target } => {
+                target.get_regs(&mut uce);
+            }
+        }
+
+        // Enforce invariants described above.
+        def.remove(&m0d);
+        uce.remove(&m0d);
+
+        // (Interim) translate to the expected format
+        let mut res = SmallVec::new();
+        for r in def.iter() {
+            res.push((*r, RegMode::Def));
+        }
+        for r in m0d.iter() {
+            res.push((*r, RegMode::Modify));
+        }
+        for r in uce.iter() {
+            res.push((*r, RegMode::Use));
+        }
+
+        res
     }
+
+/*
+        match self {
+            Inst::Alu_RMI_R { is64, op, src, dst } => {
+            },
+            Inst::Imm_R { dstIs64, simm64, dst } => {
+            },
+            Inst::Mov_R_R { is64, src, dst } => {
+                ret.push((src, RegMode::Use));
+                ret.push((dst, RegMode::Def));
+            },
+            Inst::MovZX_M_R { extMode, addr, dst } => {
+            },
+            Inst::Mov64_M_R { addr, dst } => {
+            },
+            Inst::MovSX_M_R { extMode, addr, dst } => {
+            },
+            Inst::Mov_R_M { size, src, addr } => {
+            },
+            Inst::Shift_R { is64, kind, nBits, dst } => {
+            },
+            Inst::Cmp_RMI_R { size, src, dst } => {
+            },
+            Inst::Push { is64, src } => {
+            },
+            Inst::JmpKnown { simm32 } => {
+            },
+            Inst::JmpUnknown { target } => {
+            }
+            Inst::JmpCond { cc, tsimm32, fsimm32 } => {
+            },
+            Inst::CallKnown { target } => {
+            },
+            Inst::CallUnknown { target } => {
+            }
+        }
+*/
 
     fn map_regs(
         &mut self,
