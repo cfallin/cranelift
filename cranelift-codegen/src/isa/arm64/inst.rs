@@ -210,6 +210,11 @@ pub enum Inst {
     /// A 64-bit store.
     Store64 { rd: Reg, mem: MemArg },
 
+    /// A MOV instruction. These are encoded as ORR's (AluRRR form) but we
+    /// keep them separate at the `Inst` level for better pretty-printing
+    /// and faster `is_move()` logic.
+    Mov { rd: Reg, rm: Reg },
+
     /// A MOVZ with a 16-bit immediate.
     MovZ { rd: Reg, imm: MovZConst },
 
@@ -724,11 +729,9 @@ fn memarg_regs(memarg: &MemArg, set: &mut Set<Reg>) {
 impl Inst {
     /// Create a move instruction.
     pub fn mov(to_reg: Reg, from_reg: Reg) -> Inst {
-        Inst::AluRRR {
-            alu_op: ALUOp::Orr64,
+        Inst::Mov {
             rd: to_reg,
             rm: from_reg,
-            rn: zero_reg(),
         }
     }
 }
@@ -786,6 +789,10 @@ impl MachInst for Inst {
             | &Inst::Store64 { rd, ref mem, .. } => {
                 iru.used.insert(rd);
                 memarg_regs(mem, &mut iru.used);
+            }
+            &Inst::Mov { rd, rm } => {
+                iru.defined.insert(rd);
+                iru.used.insert(rm);
             }
             &Inst::MovZ { rd, .. } => {
                 iru.defined.insert(rd);
@@ -963,6 +970,10 @@ impl MachInst for Inst {
                 rd: map(u, rd),
                 mem: map_mem(u, mem),
             },
+            &mut Inst::Mov { rd, rm } => Inst::Mov {
+                rd: map(d, rd),
+                rm: map(u, rm),
+            },
             &mut Inst::MovZ { rd, ref imm } => Inst::MovZ {
                 rd: map(d, rd),
                 imm: imm.clone(),
@@ -1006,12 +1017,7 @@ impl MachInst for Inst {
 
     fn is_move(&self) -> Option<(Reg, Reg)> {
         match self {
-            &Inst::AluRRR { alu_op, rd, rn, rm } if alu_op == ALUOp::Add64 && rn == zero_reg() => {
-                Some((rd, rm))
-            }
-            &Inst::AluRRR { alu_op, rd, rn, rm } if alu_op == ALUOp::Orr64 && rn == zero_reg() => {
-                Some((rd, rm))
-            }
+            &Inst::Mov { rd, rm } => Some((rd, rm)),
             _ => None,
         }
     }
@@ -1418,6 +1424,10 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 /*ref*/ mem: _,
                 ..
             } => unimplemented!(),
+            &Inst::Mov { rd, rm } => {
+                // Encoded as ORR rd, rm, zero.
+                sink.put4(enc_arith_rrr(0b10101010_000, 0b000_000, rd, zero_reg(), rm));
+            }
             &Inst::MovZ { rd, imm } => {
                 sink.put4(enc_move_wide(MoveWideOpcode::MOVZ, rd, imm.shift, imm.bits))
             }
