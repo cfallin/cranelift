@@ -53,6 +53,8 @@ pub trait LowerCtx<I> {
     fn num_ebb_params(&self, ebb: Ebb) -> usize;
     /// Get the register for an EBB param.
     fn ebb_param(&self, ebb: Ebb, idx: usize) -> Reg;
+    /// Get the register for a return value.
+    fn retval(&self, idx: usize) -> Reg;
 }
 
 /// A machine backend.
@@ -74,12 +76,6 @@ pub trait LowerBackend {
         targets: &[BlockIndex],
         fallthrough: Option<BlockIndex>,
     );
-
-    /// Lower the entry point of the function. This allows the machine backend
-    /// an opportunity to emit any setup instructions (aside from the prologue),
-    /// for example initially assigning args from ABI regs and/or emitting
-    /// ghost instructions that define special (zero?) regs.
-    fn lower_entry<C: LowerCtx<Self::MInst>>(&self, ctx: &mut C, ebb: Ebb);
 }
 
 /// Machine-independent lowering driver / machine-instruction container. Maintains a correspondence
@@ -97,11 +93,14 @@ pub struct Lower<'a, I: VCodeInst> {
     // Mapping from `Value` (SSA value in IR) to virtual register.
     value_regs: SecondaryMap<Value, Reg>,
 
+    // Return-value vregs.
+    retval_regs: Vec<Reg>,
+
     // Next virtual register number to allocate.
     next_vreg: u32,
 
-    // Current IR instruction which we are lowering.
-    cur_inst: Option<Inst>,
+    // ABI object for the function body.
+    abi: Box<dyn ABIBody<I>>,
 }
 
 fn alloc_vreg(
@@ -163,13 +162,46 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             }
         }
 
+        // Assign a vreg to each return value.
+        let mut retval_regs = vec![];
+        for ret in &f.signature.returns {
+            let v = next_vreg;
+            next_vreg += 1;
+            let regclass = I::rc_for_type(ret.value_type);
+            retval_regs.push(Reg::new_virtual(regclass, v));
+        }
+
+        let vcode = VCodeBuilder::new(&*abi);
         Lower {
             f,
-            vcode: VCodeBuilder::new(abi),
+            vcode,
             num_uses,
             value_regs,
+            retval_regs,
             next_vreg,
-            cur_inst: None,
+            abi,
+        }
+    }
+
+    fn gen_prologue(&mut self) {
+        for insn in self.abi.gen_prologue().into_iter() {
+            self.vcode.push(insn);
+        }
+        if let Some(entry_ebb) = self.f.layout.entry_block() {
+            for (i, param) in self.f.dfg.ebb_params(entry_ebb).iter().enumerate() {
+                let reg = self.value_regs[*param];
+                self.abi.load_arg(i, reg, &mut self.vcode);
+            }
+        }
+    }
+
+    fn gen_epilogue(&mut self) {
+        for (i, r) in self.retval_regs.iter().enumerate() {
+            println!("gen_epilogue: store retval reg {:?} to retval {}", r, i);
+            self.abi.store_retval(i, *r, &mut self.vcode);
+        }
+        for insn in self.abi.gen_epilogue().into_iter() {
+            self.vcode.push(insn);
         }
     }
 
@@ -219,6 +251,14 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
         for ebb in ebbs.iter() {
             println!("lowering ebb: {}", ebb);
+
+            // If this is a return block, produce the epilogue.
+            let last_insn = self.f.layout.ebb_insts(*ebb).last().unwrap();
+            if self.f.dfg[last_insn].opcode().is_return() {
+                self.gen_epilogue();
+                self.vcode.end_ir_inst();
+            }
+
             // Find the branches at the end first, and process those, if any.
             let mut branches: SmallVec<[Inst; 2]> = SmallVec::new();
             let mut targets: SmallVec<[BlockIndex; 2]> = SmallVec::new();
@@ -250,9 +290,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                     let num_results = self.f.dfg.inst_results(inst).len();
                     let num_uses = self.num_uses[inst];
                     if num_results == 0 || num_uses > 0 {
-                        self.start_inst(inst);
                         backend.lower(&mut self, inst);
-                        self.end_inst();
                         self.vcode.end_ir_inst();
                     }
                 }
@@ -269,9 +307,9 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 targets.clear();
             }
 
-            // If this is the entry block, invoke the backend's lower_entry hook.
+            // If this is the entry block, produce the prologue.
             if Some(*ebb) == self.f.layout.entry_block() {
-                backend.lower_entry(&mut self, *ebb);
+                self.gen_prologue();
                 self.vcode.end_ir_inst();
             }
 
@@ -335,14 +373,6 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
         // Now that we've emitted all instructions into the VCodeBuilder, let's build the VCode.
         self.vcode.build()
-    }
-
-    fn start_inst(&mut self, inst: Inst) {
-        self.cur_inst = Some(inst);
-    }
-
-    fn end_inst(&mut self) {
-        self.cur_inst = None;
     }
 }
 
@@ -427,6 +457,11 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     fn ebb_param(&self, ebb: Ebb, idx: usize) -> Reg {
         let val = self.f.dfg.ebb_params(ebb)[idx];
         self.value_regs[val]
+    }
+
+    /// Get the register for a return value.
+    fn retval(&self, idx: usize) -> Reg {
+        self.retval_regs[idx]
     }
 }
 

@@ -498,15 +498,25 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
             });
         }
 
+        Opcode::FallthroughReturn => {
+            // What is this? The definition says it's a "special
+            // instruction" meant to allow falling through into an
+            // epilogue that will then return; that just sounds like a
+            // normal fallthrough. TODO: Do we need to handle this
+            // differently?
+            unimplemented!();
+        }
+
         Opcode::Return => {
-            // TODO: multiple return values.
-            assert!(inputs.len() <= 1);
-            if inputs.len() > 0 {
-                let retval = input_to_reg(ctx, inputs[0]);
-                let abi_reg = xreg(0);
-                ctx.emit(Inst::gen_move(abi_reg, retval));
+            for (i, input) in inputs.iter().enumerate() {
+                let reg = input_to_reg(ctx, *input);
+                let retval_reg = ctx.retval(i);
+                ctx.emit(Inst::gen_move(retval_reg, reg));
             }
-            ctx.emit(Inst::Ret {});
+            // N.B.: we do not actually emit the `Ret` here. That is generated
+            // by the epilogue, after the stackframe teardown code and the
+            // placement of the above return value(s) into the ABI-appropriate
+            // registers.
         }
 
         // TODO: cmp
@@ -570,16 +580,6 @@ fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
 
 impl LowerBackend for Arm64Backend {
     type MInst = Inst;
-
-    fn lower_entry<C: LowerCtx<Inst>>(&self, ctx: &mut C, ebb: Ebb) {
-        // TODO: ABI support for more than 8 args.
-        assert!(ctx.num_ebb_params(ebb) < 8);
-        for i in 0..ctx.num_ebb_params(ebb) {
-            let abi_reg = xreg(i as u8);
-            let ebb_reg = ctx.ebb_param(ebb, i);
-            ctx.emit(Inst::gen_move(ebb_reg, abi_reg));
-        }
-    }
 
     fn lower<C: LowerCtx<Inst>>(&self, ctx: &mut C, ir_inst: IRInst) {
         lower_insn_to_regs(ctx, ir_inst);
@@ -670,7 +670,7 @@ impl LowerBackend for Arm64Backend {
         } else {
             assert!(branches.len() == 1);
 
-            // Must be an unconditional branch, fallthrough, return, or trap.
+            // Must be an unconditional branch or trap.
             let op = ctx.data(branches[0]).opcode();
             match op {
                 Opcode::Jump => {
@@ -682,19 +682,6 @@ impl LowerBackend for Arm64Backend {
                     ctx.emit(Inst::Jump {
                         dest: BranchTarget::Block(targets[0]),
                     });
-                }
-
-                Opcode::FallthroughReturn => {
-                    // What is this? The definition says it's a "special
-                    // instruction" meant to allow falling through into an
-                    // epilogue that will then return; that just sounds like a
-                    // normal fallthrough. TODO: Do we need to handle this
-                    // differently?
-                    unimplemented!();
-                }
-
-                Opcode::Return => {
-                    ctx.emit(Inst::Ret {});
                 }
 
                 Opcode::Trap => unimplemented!(),

@@ -46,8 +46,11 @@ impl<I: MachInst + MachInstEmit<SizeCodeSink>> VCodeInst for I {}
 /// This is essentially a standard CFG of basic blocks, where each basic block
 /// consists of lowered instructions produced by the machine-specific backend.
 pub struct VCode<I: VCodeInst> {
-    /// Function-body ABI.
-    abi: Box<dyn ABIBody<I>>,
+    /// Function liveins.
+    liveins: RegallocSet<RealReg>,
+
+    /// Function liveouts.
+    liveouts: RegallocSet<RealReg>,
 
     /// Lowered machine instructions in order corresponding to the original IR.
     insts: Vec<I>,
@@ -111,7 +114,7 @@ pub struct VCodeBuilder<I: VCodeInst> {
 
 impl<I: VCodeInst> VCodeBuilder<I> {
     /// Create a new VCodeBuilder.
-    pub fn new(abi: Box<dyn ABIBody<I>>) -> VCodeBuilder<I> {
+    pub fn new(abi: &dyn ABIBody<I>) -> VCodeBuilder<I> {
         VCodeBuilder {
             vcode: VCode::new(abi),
             bb_insns: SmallVec::new(),
@@ -255,9 +258,10 @@ fn look_through_trivial_jumps<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex)
 
 impl<I: VCodeInst> VCode<I> {
     /// New empty VCode.
-    fn new(abi: Box<dyn ABIBody<I>>) -> VCode<I> {
+    fn new(abi: &dyn ABIBody<I>) -> VCode<I> {
         VCode {
-            abi,
+            liveins: abi.liveins(),
+            liveouts: abi.liveouts(),
             insts: vec![],
             entry: 0,
             block_ranges: vec![],
@@ -541,11 +545,11 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
     }
 
     fn func_liveins(&self) -> RegallocSet<RealReg> {
-        self.abi.liveins()
+        self.liveins.clone()
     }
 
     fn func_liveouts(&self) -> RegallocSet<RealReg> {
-        self.abi.liveouts()
+        self.liveouts.clone()
     }
 }
 

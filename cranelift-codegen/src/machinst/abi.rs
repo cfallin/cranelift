@@ -13,6 +13,12 @@ pub trait ABIBody<I: VCodeInst> {
     /// Get the liveouts of the function.
     fn liveouts(&self) -> Set<RealReg>;
 
+    /// Number of arguments.
+    fn num_args(&self) -> usize;
+
+    /// Number of return values.
+    fn num_retvals(&self) -> usize;
+
     /// Generate an argument load sequence, given a destination register.
     /// Note that this may store a fixup to be done once the final stack
     /// frame layout (including spill slots, etc.) is known, post-regalloc.
@@ -36,15 +42,18 @@ pub trait ABIBody<I: VCodeInst> {
     /// Update with the number of spillslots, post-regalloc.
     fn spillslots(&mut self, slots: usize);
 
-    /// Perform any fixups needed once the number of spill-slots is known.
-    fn fixup(&mut self);
+    // TODO: spillslot accesses! These are ABI-dependent, not just
+    // ISA-dependent.
 
-    // TODO: spillslot load/store, since the stack frame may be ABI-dependent?
-
-    /// Generate a prologue, post-regalloc.
+    /// Generate a prologue, post-regalloc. This should include any stack frame
+    /// or other setup necessary to use the other methods (`load_arg`,
+    /// `store_retval`, and spillslot accesses.)
     fn gen_prologue(&self) -> Vec<I>;
 
-    /// Generate an epilogue, post-regalloc.
+    /// Generate an epilogue, post-regalloc. Note that this must generate the
+    /// actual return instruction (rather than emitting this in the lowering
+    /// logic), because the epilogue code comes before the return and the two are
+    /// likely closely related.
     fn gen_epilogue(&self) -> Vec<I>;
 }
 

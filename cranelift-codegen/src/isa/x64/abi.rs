@@ -22,6 +22,14 @@ impl X64ABIBody {
 }
 
 impl ABIBody<Inst> for X64ABIBody {
+    fn num_args(&self) -> usize {
+        unimplemented!()
+    }
+
+    fn num_retvals(&self) -> usize {
+        unimplemented!()
+    }
+
     fn liveins(&self) -> Set<RealReg> {
         unimplemented!()
     }
@@ -39,10 +47,6 @@ impl ABIBody<Inst> for X64ABIBody {
     }
 
     fn spillslots(&mut self, _slots: usize) {
-        unimplemented!()
-    }
-
-    fn fixup(&mut self) {
         unimplemented!()
     }
 

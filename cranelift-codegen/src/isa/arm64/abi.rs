@@ -108,6 +108,14 @@ impl ABIBody<Inst> for ARM64ABIBody {
         set
     }
 
+    fn num_args(&self) -> usize {
+        self.args.len()
+    }
+
+    fn num_retvals(&self) -> usize {
+        self.rets.len()
+    }
+
     fn load_arg(&mut self, idx: usize, into_reg: Reg, vcode: &mut VCodeBuilder<Inst>) {
         match &self.args[idx] {
             &ABIArg::Reg(r) => {
@@ -131,16 +139,11 @@ impl ABIBody<Inst> for ARM64ABIBody {
         // TODO: compute some sort of stack-frame layout information
     }
 
-    fn fixup(&mut self) {
-        // TODO: update any instructions that need to refer to the stack frame, now
-        // that we know about the stack frame
-    }
-
     fn gen_prologue(&self) -> Vec<Inst> {
         vec![]
     }
 
     fn gen_epilogue(&self) -> Vec<Inst> {
-        vec![]
+        vec![Inst::Ret {}]
     }
 }

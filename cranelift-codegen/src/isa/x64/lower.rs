@@ -571,17 +571,6 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 impl LowerBackend for X64Backend {
     type MInst = Inst;
 
-    fn lower_entry<C: LowerCtx<Inst>>(&self, _ctx: &mut C, _ebb: Ebb) {
-        //zz         ctx.emit(Inst::LiveIns);
-        //zz         // TODO: ABI support for more than 8 args.
-        //zz         assert!(ctx.num_ebb_params(ebb) < 8);
-        //zz         for i in 0..ctx.num_ebb_params(ebb) {
-        //zz             let abi_reg = xreg(i as u8);
-        //zz             let ebb_reg = ctx.ebb_param(ebb, i);
-        //zz             ctx.emit(Inst::gen_move(ebb_reg, abi_reg));
-        //zz         }
-    }
-
     fn lower<C: LowerCtx<Inst>>(&self, _ctx: &mut C, _ir_inst: IRInst) {
         //zz         lower_insn_to_regs(ctx, ir_inst);
     }
