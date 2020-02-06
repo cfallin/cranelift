@@ -1,0 +1,33 @@
+function %a() -> i64 {
+ebb0:
+    v0 = iconst.i64 1 ; bin: d2800020
+    return v0
+}
+
+function %b() -> i64 {
+ebb0:
+    ; (2 ^ 16) - 1
+    v0 = iconst.i64 65535 ; bin: d29fffe0
+    return v0
+}
+
+function %c() -> i64 {
+ebb0:
+    ; ((2 ^ 16) - 1) << 16
+    v0 = iconst.i64 4294901760 ; bin: d2bfffe0
+    return v0
+}
+
+function %d() -> i64 {
+ebb0:
+    ; ((2 ^ 16) - 1) << 32
+    v0 = iconst.i64 281470681743360 ; bin: d2dfffe0
+    return v0
+}
+
+function %e() -> i64 {
+ebb0:
+    ; ((2 ^ 16) - 1) << 48
+    v0 = iconst.i64 18446462598732840960 ; bin: d2dfffe0
+    return v0
+}
