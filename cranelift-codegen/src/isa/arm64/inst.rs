@@ -12,10 +12,12 @@ use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
 use crate::machinst::*;
 
 use regalloc::Map as RegallocMap;
+use regalloc::{InstRegUses, Set};
 use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, NUM_REG_CLASSES};
 
 use smallvec::SmallVec;
 use std::mem;
+use std::string::{String, ToString};
 use std::sync::Once;
 
 // ------------- registers ----------------
@@ -32,26 +34,26 @@ pub fn xreg(num: u8) -> Reg {
 
 /// Get a reference to the zero-register.
 pub fn zero_reg() -> Reg {
-    xreg(31)
+    // This should be the same as what xreg(31) returns.
+    Reg::new_real(
+        RegClass::I64,
+        /* enc = */ 31,
+        /* index = */ 32u8 + 31,
+    )
 }
 
 /// Get a reference to the stack-pointer register.
 fn stack_reg() -> Reg {
-    // XSP (stack) and XZR (zero) are the same register, in different contexts.
-    zero_reg()
-}
-
-fn for_all_real_regs<F: FnMut(Reg)>(f: &mut F) {
-    // V-regs
-    for i in 0..32 {
-        let reg = Reg::new_real(RegClass::V128, i as u8, i as u8);
-        f(reg);
-    }
-    // X-regs, including zero reg.
-    for i in 0..32 {
-        let reg = Reg::new_real(RegClass::I64, i as u8, (i + 32) as u8);
-        f(reg);
-    }
+    // XSP (stack) and XZR (zero) are logically different registers which have
+    // the same hardware encoding, and whose meaning, in real arm64
+    // instructions, is context-dependent.  For convenience of
+    // universe-construction and for correct printing, we make them be two
+    // different real registers.
+    Reg::new_real(
+        RegClass::I64,
+        /* enc = */ 31,
+        /* index = */ 32u8 + 31 + 1,
+    )
 }
 
 /// Create the register universe for ARM64.
@@ -96,7 +98,15 @@ fn create_reg_universe() -> RealRegUniverse {
     allocable_by_class[RegClass::V128.rc_to_usize()] =
         Some((v_reg_base as usize, v_reg_last as usize));
 
+    // Other regs, not available to the allocator.
     let allocable = regs.len();
+    regs.push((zero_reg().to_real_reg(), "xzr".to_string()));
+    regs.push((stack_reg().to_real_reg(), "xsp".to_string()));
+    // FIXME JRS 2020Feb06: unfortunately this pushes the number of real regs
+    // to 65, which is potentially inconvenient from a compiler performance
+    // standpoint.  We could possibly drop back to 64 by "losing" a vector
+    // register in future.
+
     RealRegUniverse {
         regs,
         allocable,
@@ -698,14 +708,14 @@ pub fn u64_constant(bits: u64) -> ConstantData {
     ConstantData::from(&data[..])
 }
 
-fn memarg_regs(memarg: &MemArg, regs: &mut MachInstRegs) {
+fn memarg_regs(memarg: &MemArg, set: &mut Set<Reg>) {
     match memarg {
         &MemArg::Base(reg) | &MemArg::BaseSImm9(reg, ..) | &MemArg::BaseUImm12Scaled(reg, ..) => {
-            regs.push((reg.clone(), RegMode::Use));
+            set.insert(reg);
         }
         &MemArg::BasePlusReg(r1, r2) | &MemArg::BasePlusRegScaled(r1, r2, ..) => {
-            regs.push((r1.clone(), RegMode::Use));
-            regs.push((r2.clone(), RegMode::Use));
+            set.insert(r1);
+            set.insert(r2);
         }
         &MemArg::Label(..) => {}
     }
@@ -724,37 +734,41 @@ impl Inst {
 }
 
 impl MachInst for Inst {
-    fn regs(&self) -> MachInstRegs {
-        // FIXME JRS 2020Feb05: ensure we return no Modify uses.  Or more
-        // accurately, ensure that mod `intersect` (use `union` def) == empty.
-        let mut ret = SmallVec::new();
+    fn get_regs(&self) -> InstRegUses {
+        // One thing we need to enforce here is that if a register is in the
+        // modified set, then it may not be in either the use or def sets.  On
+        // this target we don't expect to have any registers used in a
+        // 'modify' role, so we do the obvious thing at the end and assert
+        // that the modify set is empty.
+        let mut iru = InstRegUses::new();
+
         match self {
             &Inst::AluRRR { rd, rn, rm, .. } => {
-                ret.push((rd.clone(), RegMode::Def));
-                ret.push((rn.clone(), RegMode::Use));
-                ret.push((rm.clone(), RegMode::Use));
+                iru.defined.insert(rd);
+                iru.used.insert(rn);
+                iru.used.insert(rm);
             }
             &Inst::AluRRImm12 { rd, rn, .. } => {
-                ret.push((rd.clone(), RegMode::Def));
-                ret.push((rn.clone(), RegMode::Use));
+                iru.defined.insert(rd);
+                iru.used.insert(rn);
             }
             &Inst::AluRRImmLogic { rd, rn, .. } => {
-                ret.push((rd.clone(), RegMode::Def));
-                ret.push((rn.clone(), RegMode::Use));
+                iru.defined.insert(rd);
+                iru.used.insert(rn);
             }
             &Inst::AluRRImmShift { rd, rn, .. } => {
-                ret.push((rd.clone(), RegMode::Def));
-                ret.push((rn.clone(), RegMode::Use));
+                iru.defined.insert(rd);
+                iru.used.insert(rn);
             }
             &Inst::AluRRRShift { rd, rn, rm, .. } => {
-                ret.push((rd.clone(), RegMode::Def));
-                ret.push((rn.clone(), RegMode::Use));
-                ret.push((rm.clone(), RegMode::Use));
+                iru.defined.insert(rd);
+                iru.used.insert(rn);
+                iru.used.insert(rm);
             }
             &Inst::AluRRRExtend { rd, rn, rm, .. } => {
-                ret.push((rd.clone(), RegMode::Def));
-                ret.push((rn.clone(), RegMode::Use));
-                ret.push((rm.clone(), RegMode::Use));
+                iru.defined.insert(rd);
+                iru.used.insert(rn);
+                iru.used.insert(rm);
             }
             &Inst::ULoad8 { rd, ref mem, .. }
             | &Inst::SLoad8 { rd, ref mem, .. }
@@ -763,34 +777,36 @@ impl MachInst for Inst {
             | &Inst::ULoad32 { rd, ref mem, .. }
             | &Inst::SLoad32 { rd, ref mem, .. }
             | &Inst::ULoad64 { rd, ref mem, .. } => {
-                ret.push((rd.clone(), RegMode::Def));
-                memarg_regs(mem, &mut ret);
+                iru.defined.insert(rd);
+                memarg_regs(mem, &mut iru.used);
             }
             &Inst::Store8 { rd, ref mem, .. }
             | &Inst::Store16 { rd, ref mem, .. }
             | &Inst::Store32 { rd, ref mem, .. }
             | &Inst::Store64 { rd, ref mem, .. } => {
-                ret.push((rd.clone(), RegMode::Use));
-                memarg_regs(mem, &mut ret);
+                iru.used.insert(rd);
+                memarg_regs(mem, &mut iru.used);
             }
             &Inst::MovZ { rd, .. } => {
-                ret.push((rd.clone(), RegMode::Def));
+                iru.defined.insert(rd);
             }
             &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => {}
             &Inst::CallInd { rn, .. } => {
-                ret.push((rn.clone(), RegMode::Use));
+                iru.used.insert(rn);
             }
             &Inst::CondBr { ref kind, .. }
             | &Inst::CondBrLowered { ref kind, .. }
             | &Inst::CondBrLoweredCompound { ref kind, .. } => match kind {
                 CondBrKind::Zero(rt) | CondBrKind::NotZero(rt) => {
-                    ret.push((rt.clone(), RegMode::Use));
+                    iru.used.insert(*rt);
                 }
                 CondBrKind::Cond(_) => {}
             },
             &Inst::Nop | Inst::Nop4 => {}
         }
-        ret
+
+        debug_assert!(iru.modified.is_empty());
+        iru
     }
 
     fn map_regs(
@@ -1158,10 +1174,6 @@ impl MachInst for Inst {
 
     fn reg_universe() -> RealRegUniverse {
         create_reg_universe()
-    }
-
-    fn is_special_reg(reg: RealReg) -> bool {
-        reg == zero_reg().to_real_reg()
     }
 }
 

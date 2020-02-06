@@ -11,6 +11,7 @@ use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I6
 use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
 use crate::machinst::*;
 
+use regalloc::InstRegUses;
 use regalloc::Map as RegallocMap;
 use regalloc::Set;
 use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, NUM_REG_CLASSES};
@@ -804,14 +805,12 @@ impl RM {
     }
 }
 
-fn x64_get_regs(inst: &Inst) -> MachInstRegs {
+fn x64_get_regs(inst: &Inst) -> InstRegUses {
     // This is a bit subtle.  If some register is in the modified set, then it
     // may not be in either the use or def sets.  However, enforcing that
     // directly is somewhat difficult.  Hence we postprocess the sets at the
     // end of this function.
-    let mut def = Set::<Reg>::empty();
-    let mut m0d = Set::<Reg>::empty();
-    let mut uce = Set::<Reg>::empty();
+    let mut iru = InstRegUses::new();
 
     match inst {
         Inst::Alu_RMI_R {
@@ -820,43 +819,43 @@ fn x64_get_regs(inst: &Inst) -> MachInstRegs {
             src,
             dst,
         } => {
-            src.get_regs(&mut uce);
-            m0d.insert(*dst);
+            src.get_regs(&mut iru.used);
+            iru.modified.insert(*dst);
         }
         Inst::Imm_R {
             dstIs64: _,
             simm64: _,
             dst,
         } => {
-            def.insert(*dst);
+            iru.defined.insert(*dst);
         }
         Inst::Mov_R_R { is64: _, src, dst } => {
-            uce.insert(*src);
-            def.insert(*dst);
+            iru.used.insert(*src);
+            iru.defined.insert(*dst);
         }
         Inst::MovZX_M_R {
             extMode: _,
             addr,
             dst,
         } => {
-            addr.get_regs(&mut uce);
-            def.insert(*dst);
+            addr.get_regs(&mut iru.used);
+            iru.defined.insert(*dst);
         }
         Inst::Mov64_M_R { addr, dst } => {
-            addr.get_regs(&mut uce);
-            def.insert(*dst);
+            addr.get_regs(&mut iru.used);
+            iru.defined.insert(*dst);
         }
         Inst::MovSX_M_R {
             extMode: _,
             addr,
             dst,
         } => {
-            addr.get_regs(&mut uce);
-            def.insert(*dst);
+            addr.get_regs(&mut iru.used);
+            iru.defined.insert(*dst);
         }
         Inst::Mov_R_M { size: _, src, addr } => {
-            uce.insert(*src);
-            addr.get_regs(&mut uce);
+            iru.used.insert(*src);
+            addr.get_regs(&mut iru.used);
         }
         Inst::Shift_R {
             is64: _,
@@ -865,20 +864,20 @@ fn x64_get_regs(inst: &Inst) -> MachInstRegs {
             dst,
         } => {
             if *nBits == 0 {
-                uce.insert(reg_RCX());
+                iru.used.insert(reg_RCX());
             }
-            m0d.insert(*dst);
+            iru.modified.insert(*dst);
         }
         Inst::Cmp_RMI_R { size: _, src, dst } => {
-            src.get_regs(&mut uce);
-            uce.insert(*dst); // yes, really |uce|
+            src.get_regs(&mut iru.used);
+            iru.used.insert(*dst); // yes, really |iru.used|
         }
         Inst::Push { is64: _, src } => {
-            src.get_regs(&mut uce);
+            src.get_regs(&mut iru.used);
         }
         Inst::JmpKnown { simm32: _ } => {}
         Inst::JmpUnknown { target } => {
-            target.get_regs(&mut uce);
+            target.get_regs(&mut iru.used);
         }
         Inst::JmpCond {
             cc: _,
@@ -886,31 +885,19 @@ fn x64_get_regs(inst: &Inst) -> MachInstRegs {
             fsimm32: _,
         } => {}
         Inst::CallKnown { target: _ } => {
-            // FIXME add arg regs (uce) and caller-saved regs (def)
+            // FIXME add arg regs (iru.used) and caller-saved regs (iru.defined)
             unimplemented!();
         }
         Inst::CallUnknown { target } => {
-            target.get_regs(&mut uce);
+            target.get_regs(&mut iru.used);
         }
     }
 
     // Enforce invariants described above.
-    def.remove(&m0d);
-    uce.remove(&m0d);
+    iru.defined.remove(&iru.modified);
+    iru.used.remove(&iru.modified);
 
-    // (Interim) translate to the expected format
-    let mut res = SmallVec::new();
-    for r in def.iter() {
-        res.push((*r, RegMode::Def));
-    }
-    for r in m0d.iter() {
-        res.push((*r, RegMode::Modify));
-    }
-    for r in uce.iter() {
-        res.push((*r, RegMode::Use));
-    }
-
-    res
+    iru
 }
 
 //=============================================================================
@@ -1077,7 +1064,7 @@ fn x64_map_regs(
 // Instructions: misc functions (and external interface)
 
 impl MachInst for Inst {
-    fn regs(&self) -> MachInstRegs {
+    fn get_regs(&self) -> InstRegUses {
         x64_get_regs(&self)
     }
 
@@ -1243,10 +1230,6 @@ impl MachInst for Inst {
 
     fn reg_universe() -> RealRegUniverse {
         create_reg_universe()
-    }
-
-    fn is_special_reg(_reg: RealReg) -> bool {
-        false
     }
 }
 

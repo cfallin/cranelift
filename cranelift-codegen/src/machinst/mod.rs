@@ -113,6 +113,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::iter::Sum;
+use regalloc::InstRegUses;
 use regalloc::Map as RegallocMap;
 use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg};
 use smallvec::SmallVec;
@@ -129,27 +130,11 @@ pub use blockorder::*;
 pub mod abi;
 pub use abi::*;
 
-/// The mode in which a register is used or defined.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RegMode {
-    /// Read (used) by the instruction.
-    Use,
-    /// Written (defined) by the instruction.
-    Def,
-    /// Both read and written by the instruction.
-    Modify,
-}
-
-/// A list of Regs used/def'd by a MachInst.
-pub type MachInstRegs = SmallVec<[(Reg, RegMode); 4]>;
-
 /// A machine instruction.
 pub trait MachInst: Clone + Debug {
-    /// Return the registers referenced by this machine instruction along with the modes of
-    /// reference (use, def, modify).
-    ///
-    /// TODO: rework this to return the minira InstRegUses directly.
-    fn regs(&self) -> MachInstRegs;
+    /// Return the registers referenced by this machine instruction along with
+    /// the modes of reference (use, def, modify).
+    fn get_regs(&self) -> InstRegUses;
 
     /// Map virtual registers to physical registers using the given virt->phys
     /// maps corresponding to the program points prior to, and after, this instruction.
@@ -210,19 +195,6 @@ pub trait MachInst: Clone + Debug {
 
     /// Get the register universe for this backend.
     fn reg_universe() -> RealRegUniverse;
-
-    /// Determine whether `reg` is a special register that should not
-    /// participate in the regalloc's def/use analysis (in other words, should
-    /// properly be considered part of the instruction opcode, not program
-    /// dataflow).
-    ///
-    /// Note that returning `true` here does *not* automatically exclude the
-    /// register from the allocator's pool of registers; the machine backend
-    /// should still be careful to exclude any special registers from the
-    /// register universe. This simply serves to provide a layer of filtering so
-    /// that the instructions may use RealRegs that refer to "special" registers
-    /// but are not actually in the universe.
-    fn is_special_reg(reg: RealReg) -> bool;
 
     /// Align a basic block offset (from start of function).  By default, no
     /// alignment occurs.

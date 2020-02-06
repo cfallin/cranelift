@@ -7,7 +7,7 @@ use crate::entity::SecondaryMap;
 use crate::ir::{Ebb, Function, Inst, InstructionData, Opcode, Type, Value, ValueDef};
 use crate::isa::registers::RegUnit;
 use crate::machinst::{
-    ABIBody, BlockIndex, MachInst, MachInstEmit, MachInstRegs, VCode, VCodeBuilder, VCodeInst,
+    ABIBody, BlockIndex, MachInst, MachInstEmit, VCode, VCodeBuilder, VCodeInst,
 };
 use crate::num_uses::NumUses;
 

@@ -491,25 +491,7 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
     }
 
     fn get_regs(&self, insn: &I) -> InstRegUses {
-        let mut used = RegallocSet::empty();
-        let mut defined = RegallocSet::empty();
-        let mut modified = RegallocSet::empty();
-
-        for (reg, regmode) in insn.regs().into_iter() {
-            if !reg.is_real() || !I::is_special_reg(reg.to_real_reg()) {
-                match regmode {
-                    RegMode::Use => used.insert(reg),
-                    RegMode::Def => defined.insert(reg),
-                    RegMode::Modify => modified.insert(reg),
-                }
-            }
-        }
-
-        InstRegUses {
-            used,
-            defined,
-            modified,
-        }
+        insn.get_regs()
     }
 
     fn map_regs(
