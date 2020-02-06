@@ -22,6 +22,11 @@ TODO:
     instruction set.
   - 8/16-bit ops? Widening for legalization?
 
+- Limits (handle gracefully / return error from lowering)
+  - Jump offsets (19, 26-bit forms)
+  - Spill-slot and argument offsets from FP
+    - reserve a temp register for address computation?
+
 - Post-MVP:
 
   - better block reordering: heuristically place after `from` or before `to` if

@@ -52,6 +52,9 @@ pub struct VCode<I: VCodeInst> {
     /// Function liveouts.
     liveouts: RegallocSet<RealReg>,
 
+    /// VReg IR-level types.
+    vreg_types: Vec<Type>,
+
     /// Lowered machine instructions in order corresponding to the original IR.
     insts: Vec<I>,
 
@@ -110,17 +113,35 @@ pub struct VCodeBuilder<I: VCodeInst> {
 
     /// Start of succs for the current block in the concatenated succs list.
     succ_start: usize,
+
+    // ABI object for the function body.
+    abi: Box<dyn ABIBody<I>>,
 }
 
 impl<I: VCodeInst> VCodeBuilder<I> {
     /// Create a new VCodeBuilder.
-    pub fn new(abi: &dyn ABIBody<I>) -> VCodeBuilder<I> {
+    pub fn new(abi: Box<dyn ABIBody<I>>) -> VCodeBuilder<I> {
+        let vcode = VCode::new(&*abi);
         VCodeBuilder {
-            vcode: VCode::new(abi),
+            vcode,
             bb_insns: SmallVec::new(),
             ir_inst_insns: SmallVec::new(),
             succ_start: 0,
+            abi,
         }
+    }
+
+    /// Access the ABI object.
+    pub fn abi(&mut self) -> &mut dyn ABIBody<I> {
+        &mut *self.abi
+    }
+
+    /// Set the type of a VReg.
+    pub fn set_vreg_type(&mut self, vreg: VirtualReg, ty: Type) {
+        while self.vcode.vreg_types.len() <= vreg.get_index() {
+            self.vcode.vreg_types.push(ir::types::I8); // Default type.
+        }
+        self.vcode.vreg_types[vreg.get_index()] = ty;
     }
 
     /// Return the underlying Ebb-to-BlockIndex map.
@@ -262,6 +283,7 @@ impl<I: VCodeInst> VCode<I> {
         VCode {
             liveins: abi.liveins(),
             liveouts: abi.liveouts(),
+            vreg_types: vec![],
             insts: vec![],
             entry: 0,
             block_ranges: vec![],
@@ -272,6 +294,11 @@ impl<I: VCodeInst> VCode<I> {
             final_block_offsets: vec![],
             code_size: 0,
         }
+    }
+
+    /// Get the IR-level type of a VReg.
+    pub fn vreg_type(&self, vreg: VirtualReg) -> Type {
+        self.vreg_types[vreg.get_index()]
     }
 
     /// Get the entry block.
@@ -505,16 +532,19 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
         insn.is_move()
     }
 
-    fn get_spillslot_size(&self, regclass: RegClass, _vreg: VirtualReg) -> u32 {
-        I::get_spillslot_size(regclass)
+    fn get_spillslot_size(&self, regclass: RegClass, vreg: VirtualReg) -> u32 {
+        let ty = self.vreg_type(vreg);
+        I::get_spillslot_size(regclass, ty)
     }
 
-    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, _vreg: VirtualReg) -> I {
-        I::gen_spill(to_slot, from_reg)
+    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, vreg: VirtualReg) -> I {
+        let ty = self.vreg_type(vreg);
+        I::gen_spill(to_slot, from_reg, ty)
     }
 
-    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, _vreg: VirtualReg) -> I {
-        I::gen_reload(to_reg, from_slot)
+    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, vreg: VirtualReg) -> I {
+        let ty = self.vreg_type(vreg);
+        I::gen_reload(to_reg, from_slot, ty)
     }
 
     fn gen_move(&self, to_reg: RealReg, from_reg: RealReg, _vreg: VirtualReg) -> I {

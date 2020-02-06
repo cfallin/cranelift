@@ -48,7 +48,7 @@ pub trait LowerCtx<I> {
     /// Get the type for an instruction's output.
     fn output_ty(&self, ir_inst: Inst, idx: usize) -> Type;
     /// Get a new temp.
-    fn tmp(&mut self, rc: RegClass) -> Reg;
+    fn tmp(&mut self, rc: RegClass, ty: Type) -> Reg;
     /// Get the number of EBB params.
     fn num_ebb_params(&self, ebb: Ebb) -> usize;
     /// Get the register for an EBB param.
@@ -98,9 +98,6 @@ pub struct Lower<'a, I: VCodeInst> {
 
     // Next virtual register number to allocate.
     next_vreg: u32,
-
-    // ABI object for the function body.
-    abi: Box<dyn ABIBody<I>>,
 }
 
 fn alloc_vreg(
@@ -108,18 +105,21 @@ fn alloc_vreg(
     regclass: RegClass,
     value: Value,
     next_vreg: &mut u32,
-) {
+) -> VirtualReg {
     if value_regs[value].get_index() == 0 {
         // default value in map.
         let v = *next_vreg;
         *next_vreg += 1;
         value_regs[value] = Reg::new_virtual(regclass, v);
     }
+    value_regs[value].as_virtual_reg().unwrap()
 }
 
 impl<'a, I: VCodeInst> Lower<'a, I> {
     /// Prepare a new lowering context for the given IR function.
     pub fn new(f: &'a Function, abi: Box<dyn ABIBody<I>>) -> Lower<'a, I> {
+        let mut vcode = VCodeBuilder::new(abi);
+
         let num_uses = NumUses::compute(f).take_uses();
 
         let mut next_vreg: u32 = 1;
@@ -135,29 +135,32 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         // Assign a vreg to each value.
         for ebb in f.layout.ebbs() {
             for param in f.dfg.ebb_params(ebb) {
-                alloc_vreg(
+                let vreg = alloc_vreg(
                     &mut value_regs,
                     I::rc_for_type(f.dfg.value_type(*param)),
                     *param,
                     &mut next_vreg,
                 );
+                vcode.set_vreg_type(vreg, f.dfg.value_type(*param));
             }
             for inst in f.layout.ebb_insts(ebb) {
                 for arg in f.dfg.inst_args(inst) {
-                    alloc_vreg(
+                    let vreg = alloc_vreg(
                         &mut value_regs,
                         I::rc_for_type(f.dfg.value_type(*arg)),
                         *arg,
                         &mut next_vreg,
                     );
+                    vcode.set_vreg_type(vreg, f.dfg.value_type(*arg));
                 }
                 for result in f.dfg.inst_results(inst) {
-                    alloc_vreg(
+                    let vreg = alloc_vreg(
                         &mut value_regs,
                         I::rc_for_type(f.dfg.value_type(*result)),
                         *result,
                         &mut next_vreg,
                     );
+                    vcode.set_vreg_type(vreg, f.dfg.value_type(*result));
                 }
             }
         }
@@ -168,10 +171,11 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             let v = next_vreg;
             next_vreg += 1;
             let regclass = I::rc_for_type(ret.value_type);
-            retval_regs.push(Reg::new_virtual(regclass, v));
+            let vreg = Reg::new_virtual(regclass, v);
+            retval_regs.push(vreg);
+            vcode.set_vreg_type(vreg.as_virtual_reg().unwrap(), ret.value_type);
         }
 
-        let vcode = VCodeBuilder::new(&*abi);
         Lower {
             f,
             vcode,
@@ -179,18 +183,19 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             value_regs,
             retval_regs,
             next_vreg,
-            abi,
         }
     }
 
     fn gen_prologue(&mut self) {
-        for insn in self.abi.gen_prologue().into_iter() {
+        for insn in self.vcode.abi().gen_prologue().into_iter() {
             self.vcode.push(insn);
         }
         if let Some(entry_ebb) = self.f.layout.entry_block() {
             for (i, param) in self.f.dfg.ebb_params(entry_ebb).iter().enumerate() {
                 let reg = self.value_regs[*param];
-                self.abi.load_arg(i, reg, &mut self.vcode);
+                for insn in self.vcode.abi().load_arg(i, reg).into_iter() {
+                  self.vcode.push(insn);
+                }
             }
         }
     }
@@ -198,9 +203,11 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
     fn gen_epilogue(&mut self) {
         for (i, r) in self.retval_regs.iter().enumerate() {
             println!("gen_epilogue: store retval reg {:?} to retval {}", r, i);
-            self.abi.store_retval(i, *r, &mut self.vcode);
+            for insn in self.vcode.abi().store_retval(i, *r).into_iter() {
+              self.vcode.push(insn);
+            }
         }
-        for insn in self.abi.gen_epilogue().into_iter() {
+        for insn in self.vcode.abi().gen_epilogue().into_iter() {
             self.vcode.push(insn);
         }
     }
@@ -329,17 +336,17 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 inst, edge_block, orig_block
             );
             // Create a temporary for each block parameter.
-            let phi_classes: Vec<RegClass> = self
+            let phi_classes: Vec<(Type, RegClass)> = self
                 .f
                 .dfg
                 .ebb_params(orig_block)
                 .iter()
                 .map(|p| self.f.dfg.value_type(*p))
-                .map(I::rc_for_type)
+                .map(|ty| (ty, I::rc_for_type(ty)))
                 .collect();
             let phi_temps: Vec<Reg> = phi_classes
                 .into_iter()
-                .map(|rc| self.tmp(rc)) // borrows `self` mutably.
+                .map(|(ty, rc)| self.tmp(rc, ty)) // borrows `self` mutably.
                 .collect();
 
             println!("phi_temps = {:?}", phi_temps);
@@ -422,10 +429,12 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     }
 
     /// Get a new temp.
-    fn tmp(&mut self, rc: RegClass) -> Reg {
+    fn tmp(&mut self, rc: RegClass, ty: Type) -> Reg {
         let v = self.next_vreg;
         self.next_vreg += 1;
-        Reg::new_virtual(rc, v)
+        let vreg = Reg::new_virtual(rc, v);
+        self.vcode.set_vreg_type(vreg.as_virtual_reg().unwrap(), ty);
+        vreg
     }
 
     /// Get the number of inputs for the given IR instruction.

@@ -56,18 +56,28 @@ fn stack_reg() -> Reg {
     )
 }
 
+/// Get a reference to the link register (x30).
+pub fn link_reg() -> Reg {
+    xreg(30)
+}
+
+/// Get a reference to the frame pointer (x29).
+pub fn fp_reg() -> Reg {
+    xreg(29)
+}
+
 /// Create the register universe for ARM64.
 fn create_reg_universe() -> RealRegUniverse {
     let mut regs = vec![];
     let mut allocable_by_class = [None; NUM_REG_CLASSES];
 
-    // Numbering Scheme: we put V-regs first, then X-regs, so that X31 (the
-    // zero register or stack pointer, depending on context) is excluded from
-    // the contiguous range of allocatable registers.
+    // Numbering Scheme: we put V-regs first, then X-regs. The X-regs
+    // exclude several registers: x18 (globally reserved for platform-specific
+    // purposes), x29 (frame pointer), x30 (link register), x31 (stack pointer
+    // or zero register, depending on context).
 
     let v_reg_base = 0u8; // in contiguous real-register index space
-    let v_reg_count = 32u8;
-    let v_reg_last = v_reg_base + v_reg_count - 1;
+    let v_reg_count = 32;
     for i in 0u8..v_reg_count {
         let reg = Reg::new_real(
             RegClass::V128,
@@ -78,20 +88,25 @@ fn create_reg_universe() -> RealRegUniverse {
         let name = format!("v{}", i);
         regs.push((reg, name));
     }
+    let v_reg_last = v_reg_base + v_reg_count - 1;
 
     let x_reg_base = 32u8; // in contiguous real-register index space
-    let x_reg_count = 31u8;
-    let x_reg_last = x_reg_base + x_reg_count - 1;
-    for i in 0u8..x_reg_count {
+    let mut x_reg_count = 0;
+    for i in 0u8..32u8 {
+        if i == 18 || i == 29 || i == 30 || i == 31 {
+            continue;
+        }
         let reg = Reg::new_real(
             RegClass::I64,
             /* enc = */ i,
-            /* index = */ x_reg_base + i,
+            /* index = */ x_reg_base + x_reg_count,
         )
         .to_real_reg();
         let name = format!("x{}", i);
         regs.push((reg, name));
+        x_reg_count += 1;
     }
+    let x_reg_last = x_reg_base + x_reg_count - 1;
 
     allocable_by_class[RegClass::I64.rc_to_usize()] =
         Some((x_reg_base as usize, x_reg_last as usize));
@@ -100,6 +115,9 @@ fn create_reg_universe() -> RealRegUniverse {
 
     // Other regs, not available to the allocator.
     let allocable = regs.len();
+    regs.push((xreg(18).to_real_reg(), "x18".to_string()));
+    regs.push((fp_reg().to_real_reg(), "fp".to_string()));
+    regs.push((link_reg().to_real_reg(), "lr".to_string()));
     regs.push((zero_reg().to_real_reg(), "xzr".to_string()));
     regs.push((stack_reg().to_real_reg(), "xsp".to_string()));
     // FIXME JRS 2020Feb06: unfortunately this pushes the number of real regs
@@ -209,6 +227,11 @@ pub enum Inst {
     Store32 { rd: Reg, mem: MemArg },
     /// A 64-bit store.
     Store64 { rd: Reg, mem: MemArg },
+
+    /// A store of a pair of registers.
+    StoreP64 { rt: Reg, rt2: Reg, mem: PairMemArg },
+    /// A load of a pair of registers.
+    LoadP64 { rt: Reg, rt2: Reg, mem: PairMemArg },
 
     /// A MOV instruction. These are encoded as ORR's (AluRRR form) but we
     /// keep them separate at the `Inst` level for better pretty-printing
@@ -469,7 +492,17 @@ pub enum MemArg {
     BasePlusReg(Reg, Reg),
     BasePlusRegScaled(Reg, Reg, Type),
     Label(MemLabel),
-    // TODO: use pre-indexed and post-indexed modes
+    PreIndexed(Reg, SImm9),
+    PostIndexed(Reg, SImm9),
+}
+
+/// A memory argument to a load/store-pair.
+#[derive(Clone, Debug)]
+pub enum PairMemArg {
+    Base(Reg),
+    BaseSImm7(Reg, SImm7),
+    PreIndexed(Reg, SImm7),
+    PostIndexed(Reg, SImm7),
 }
 
 /// a 9-bit signed offset.
@@ -483,6 +516,23 @@ impl SImm9 {
     pub fn maybe_from_i64(value: i64) -> Option<SImm9> {
         if value >= -256 && value <= 255 {
             Some(SImm9 { bits: value as i16 })
+        } else {
+            None
+        }
+    }
+}
+
+/// A 7-bit signed offset.
+#[derive(Clone, Copy, Debug)]
+pub struct SImm7 {
+    bits: i16,
+}
+
+impl SImm7 {
+    /// Create a signed 7-bit offset from a full-range value, if possible.
+    pub fn maybe_from_i64(value: i64) -> Option<SImm7> {
+        if value >= -128 && value <= 127 {
+            Some(SImm7 { bits: value as i16 })
         } else {
             None
         }
@@ -583,18 +633,6 @@ impl MemArg {
     /// Memory reference to a label: a global function or value, or data in the constant pool.
     pub fn label(label: MemLabel) -> MemArg {
         MemArg::Label(label)
-    }
-
-    pub const MAX_STACKSLOT: u32 = 0xfff;
-
-    /// Memory reference to a stack slot relative to the frame pointer.
-    /// `off` is the Nth slot up from SP, i.e., `[sp, #8*off]`.
-    /// `off` can be up to `MemArg::MAX_STACKSLOT`.
-    pub fn stackslot(off: u32) -> MemArg {
-        assert!(off <= MemArg::MAX_STACKSLOT);
-        let uimm12 = UImm12Scaled::maybe_from_i64((8 * off) as i64, I64);
-        assert!(uimm12.is_some());
-        MemArg::BaseUImm12Scaled(stack_reg(), uimm12.unwrap())
     }
 }
 
@@ -713,16 +751,30 @@ pub fn u64_constant(bits: u64) -> ConstantData {
     ConstantData::from(&data[..])
 }
 
-fn memarg_regs(memarg: &MemArg, set: &mut Set<Reg>) {
+fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Reg>) {
     match memarg {
         &MemArg::Base(reg) | &MemArg::BaseSImm9(reg, ..) | &MemArg::BaseUImm12Scaled(reg, ..) => {
-            set.insert(reg);
+            used.insert(reg);
         }
         &MemArg::BasePlusReg(r1, r2) | &MemArg::BasePlusRegScaled(r1, r2, ..) => {
-            set.insert(r1);
-            set.insert(r2);
+            used.insert(r1);
+            used.insert(r2);
         }
         &MemArg::Label(..) => {}
+        &MemArg::PreIndexed(reg, ..) | &MemArg::PostIndexed(reg, ..) => {
+            modified.insert(reg);
+        }
+    }
+}
+
+fn pairmemarg_regs(pairmemarg: &PairMemArg, used: &mut Set<Reg>, modified: &mut Set<Reg>) {
+    match pairmemarg {
+        &PairMemArg::Base(reg) | &PairMemArg::BaseSImm7(reg, ..) => {
+            used.insert(reg);
+        }
+        &PairMemArg::PreIndexed(reg, ..) | &PairMemArg::PostIndexed(reg, ..) => {
+            modified.insert(reg);
+        }
     }
 }
 
@@ -781,14 +833,28 @@ impl MachInst for Inst {
             | &Inst::SLoad32 { rd, ref mem, .. }
             | &Inst::ULoad64 { rd, ref mem, .. } => {
                 iru.defined.insert(rd);
-                memarg_regs(mem, &mut iru.used);
+                memarg_regs(mem, &mut iru.used, &mut iru.modified);
             }
             &Inst::Store8 { rd, ref mem, .. }
             | &Inst::Store16 { rd, ref mem, .. }
             | &Inst::Store32 { rd, ref mem, .. }
             | &Inst::Store64 { rd, ref mem, .. } => {
                 iru.used.insert(rd);
-                memarg_regs(mem, &mut iru.used);
+                memarg_regs(mem, &mut iru.used, &mut iru.modified);
+            }
+            &Inst::StoreP64 {
+                rt, rt2, ref mem, ..
+            } => {
+                iru.used.insert(rt);
+                iru.used.insert(rt2);
+                pairmemarg_regs(mem, &mut iru.used, &mut iru.modified);
+            }
+            &Inst::LoadP64 {
+                rt, rt2, ref mem, ..
+            } => {
+                iru.defined.insert(rt);
+                iru.defined.insert(rt2);
+                pairmemarg_regs(mem, &mut iru.used, &mut iru.modified);
             }
             &Inst::Mov { rd, rm } => {
                 iru.defined.insert(rd);
@@ -832,9 +898,8 @@ impl MachInst for Inst {
         fn map_mem(u: &RegallocMap<VirtualReg, RealReg>, mem: &MemArg) -> MemArg {
             // N.B.: we take only the pre-map here, but this is OK because the
             // only addressing modes that update registers (pre/post-increment on
-            // ARM64, which we don't use yet but we may someday) both read and
-            // write registers, so they are "mods" rather than "defs", so must be
-            // the same in both the pre- and post-map.
+            // ARM64) both read and write registers, so they are "mods" rather
+            // than "defs", so must be the same in both the pre- and post-map.
             match mem {
                 &MemArg::Base(reg) => MemArg::Base(map(u, reg)),
                 &MemArg::BaseSImm9(reg, simm9) => MemArg::BaseSImm9(map(u, reg), simm9),
@@ -846,6 +911,17 @@ impl MachInst for Inst {
                     MemArg::BasePlusRegScaled(map(u, r1), map(u, r2), ty)
                 }
                 &MemArg::Label(ref l) => MemArg::Label(l.clone()),
+                &MemArg::PreIndexed(r, simm9) => MemArg::PreIndexed(map(u, r), simm9),
+                &MemArg::PostIndexed(r, simm9) => MemArg::PostIndexed(map(u, r), simm9),
+            }
+        }
+
+        fn map_pairmem(u: &RegallocMap<VirtualReg, RealReg>, mem: &PairMemArg) -> PairMemArg {
+            match mem {
+                &PairMemArg::Base(reg) => PairMemArg::Base(map(u, reg)),
+                &PairMemArg::BaseSImm7(reg, simm7) => PairMemArg::BaseSImm7(map(u, reg), simm7),
+                &PairMemArg::PreIndexed(reg, simm7) => PairMemArg::PreIndexed(map(u, reg), simm7),
+                &PairMemArg::PostIndexed(reg, simm7) => PairMemArg::PostIndexed(map(u, reg), simm7),
             }
         }
 
@@ -970,6 +1046,16 @@ impl MachInst for Inst {
                 rd: map(u, rd),
                 mem: map_mem(u, mem),
             },
+            &mut Inst::StoreP64 { rt, rt2, ref mem } => Inst::StoreP64 {
+                rt: map(u, rt),
+                rt2: map(u, rt2),
+                mem: map_pairmem(u, mem),
+            },
+            &mut Inst::LoadP64 { rt, rt2, ref mem } => Inst::LoadP64 {
+                rt: map(d, rt),
+                rt2: map(d, rt2),
+                mem: map_pairmem(u, mem),
+            },
             &mut Inst::Mov { rd, rm } => Inst::Mov {
                 rd: map(d, rd),
                 rm: map(u, rm),
@@ -1039,37 +1125,22 @@ impl MachInst for Inst {
         }
     }
 
-    fn get_spillslot_size(rc: RegClass) -> u32 {
+    fn get_spillslot_size(rc: RegClass, ty: Type) -> u32 {
         // We allocate in terms of 8-byte slots.
-        match rc {
-            RegClass::I64 => 1,
-            RegClass::V128 => 2,
+        match (rc, ty) {
+            (RegClass::I64, _) => 1,
+            (RegClass::V128, F32) | (RegClass::V128, F64) => 1,
+            (RegClass::V128, _) => 2,
             _ => panic!("Unexpected register class!"),
         }
     }
 
-    fn gen_spill(to_slot: SpillSlot, from_reg: RealReg) -> Inst {
-        let mem = MemArg::stackslot(to_slot.get());
-        match from_reg.get_class() {
-            RegClass::I64 => Inst::Store64 {
-                rd: from_reg.to_reg(),
-                mem,
-            },
-            RegClass::V128 => unimplemented!(),
-            _ => panic!("Unexpected register class!"),
-        }
+    fn gen_spill(_to_slot: SpillSlot, _from_reg: RealReg, _ty: Type) -> Inst {
+        unimplemented!()
     }
 
-    fn gen_reload(to_reg: RealReg, from_slot: SpillSlot) -> Inst {
-        let mem = MemArg::stackslot(from_slot.get());
-        match to_reg.get_class() {
-            RegClass::I64 => Inst::ULoad64 {
-                rd: to_reg.to_reg(),
-                mem,
-            },
-            RegClass::V128 => unimplemented!(),
-            _ => panic!("Unexpected register class!"),
-        }
+    fn gen_reload(_to_reg: RealReg, _from_slot: SpillSlot, _ty: Type) -> Inst {
+        unimplemented!()
     }
 
     fn gen_move(to_reg: Reg, from_reg: Reg) -> Inst {
@@ -1424,6 +1495,8 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 /*ref*/ mem: _,
                 ..
             } => unimplemented!(),
+            &Inst::StoreP64 { .. } => unimplemented!(),
+            &Inst::LoadP64 { .. } => unimplemented!(),
             &Inst::Mov { rd, rm } => {
                 // Encoded as ORR rd, rm, zero.
                 sink.put4(enc_arith_rrr(0b10101010_000, 0b000_000, rd, zero_reg(), rm));

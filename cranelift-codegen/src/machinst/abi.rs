@@ -1,8 +1,9 @@
 //! ABI definitions.
 
 use crate::ir;
+use crate::ir::StackSlot;
 use crate::machinst::*;
-use regalloc::{Reg, Set, VirtualReg};
+use regalloc::{Reg, Set, SpillSlot, VirtualReg};
 
 /// Trait implemented by an object that tracks ABI-related state (e.g., stack
 /// layout) and can generate code while emitting the *body* of a function.
@@ -19,18 +20,14 @@ pub trait ABIBody<I: VCodeInst> {
     /// Number of return values.
     fn num_retvals(&self) -> usize;
 
+    /// Number of stack slots (not spill slots).
+    fn num_stackslots(&self) -> usize;
+
     /// Generate an argument load sequence, given a destination register.
-    /// Note that this may store a fixup to be done once the final stack
-    /// frame layout (including spill slots, etc.) is known, post-regalloc.
-    ///
-    /// Requires the `vcode` so that it can save the instruction indices for
-    /// later fixups. Will generate instruction(s) as part of a single
-    /// conceptual IR instruction and will not end the IR-instruction sequence.
-    fn load_arg(&mut self, idx: usize, into_reg: Reg, vcode: &mut VCodeBuilder<I>);
+    fn load_arg(&self, idx: usize, into_reg: Reg) -> Vec<I>;
 
     /// Generate a return-value store sequence, given a source register.
-    /// Like `load_arg` above, this may store a fixup for post-regalloc.
-    fn store_retval(&mut self, idx: usize, from_reg: Reg, vcode: &mut VCodeBuilder<I>);
+    fn store_retval(&self, idx: usize, from_reg: Reg) -> Vec<I>;
 
     // -----------------------------------------------------------------
     // Every function above this line may only be called pre-regalloc.
@@ -40,10 +37,19 @@ pub trait ABIBody<I: VCodeInst> {
     // ----------------------------------------------------------------
 
     /// Update with the number of spillslots, post-regalloc.
-    fn spillslots(&mut self, slots: usize);
+    fn set_num_spillslots(&mut self, slots: usize);
 
-    // TODO: spillslot accesses! These are ABI-dependent, not just
-    // ISA-dependent.
+    /// Load from a stackslot.
+    fn load_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, into_reg: Reg) -> Vec<I>;
+
+    /// Store to a stackslot.
+    fn store_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, from_reg: Reg) -> Vec<I>;
+
+    /// Load from a spillslot.
+    fn load_spillslot(&self, slot: SpillSlot, ty: Type, into_reg: Reg) -> Vec<I>;
+
+    /// Store to a spillslot.
+    fn store_spillslot(&self, slot: SpillSlot, ty: Type, from_reg: Reg) -> Vec<I>;
 
     /// Generate a prologue, post-regalloc. This should include any stack frame
     /// or other setup necessary to use the other methods (`load_arg`,

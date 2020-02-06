@@ -152,13 +152,13 @@ pub trait MachInst: Clone + Debug {
     fn is_term(&self) -> MachTerminator;
 
     /// Get the spill-slot size.
-    fn get_spillslot_size(rc: RegClass) -> u32;
+    fn get_spillslot_size(rc: RegClass, ty: Type) -> u32;
 
     /// Generate a spill.
-    fn gen_spill(to_slot: SpillSlot, from_reg: RealReg) -> Self;
+    fn gen_spill(to_slot: SpillSlot, from_reg: RealReg, ty: Type) -> Self;
 
     /// Generate a reload (fill).
-    fn gen_reload(to_reg: RealReg, from_slot: SpillSlot) -> Self;
+    fn gen_reload(to_reg: RealReg, from_slot: SpillSlot, ty: Type) -> Self;
 
     /// Generate a move.
     fn gen_move(to_reg: Reg, from_reg: Reg) -> Self;

@@ -319,7 +319,7 @@ fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset:
     }
 
     // Otherwise, generate add instructions.
-    let addr = ctx.tmp(RegClass::I64);
+    let addr = ctx.tmp(RegClass::I64, I64);
 
     // Get the const into a reg.
     lower_constant(ctx, addr.clone(), offset as u64);

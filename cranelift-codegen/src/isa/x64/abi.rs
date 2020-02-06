@@ -4,13 +4,15 @@
 
 use crate::ir;
 use crate::ir::types;
+use crate::ir::StackSlot;
+use crate::ir::Type;
 use crate::isa::x64::inst::*;
 use crate::isa::x64::*;
 use crate::machinst::*;
 
 use alloc::vec::Vec;
 
-use regalloc::{RealReg, Reg, Set};
+use regalloc::{RealReg, Reg, Set, SpillSlot};
 
 pub struct X64ABIBody {}
 
@@ -30,6 +32,10 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
+    fn num_stackslots(&self) -> usize {
+        unimplemented!()
+    }
+
     fn liveins(&self) -> Set<RealReg> {
         unimplemented!()
     }
@@ -38,15 +44,43 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn load_arg(&mut self, _idx: usize, _into_reg: Reg, _vcode: &mut VCodeBuilder<Inst>) {
+    fn load_arg(&self, _idx: usize, _into_reg: Reg) -> Vec<Inst> {
         unimplemented!()
     }
 
-    fn store_retval(&mut self, _idx: usize, _from_reg: Reg, _vcode: &mut VCodeBuilder<Inst>) {
+    fn store_retval(&self, _idx: usize, _from_reg: Reg) -> Vec<Inst> {
         unimplemented!()
     }
 
-    fn spillslots(&mut self, _slots: usize) {
+    fn set_num_spillslots(&mut self, _slots: usize) {
+        unimplemented!()
+    }
+
+    fn load_stackslot(
+        &self,
+        _slot: StackSlot,
+        _offset: usize,
+        _ty: Type,
+        _into_reg: Reg,
+    ) -> Vec<Inst> {
+        unimplemented!()
+    }
+
+    fn store_stackslot(
+        &self,
+        _slot: StackSlot,
+        _offset: usize,
+        _ty: Type,
+        _from_reg: Reg,
+    ) -> Vec<Inst> {
+        unimplemented!()
+    }
+
+    fn load_spillslot(&self, _slot: SpillSlot, _ty: Type, _into_reg: Reg) -> Vec<Inst> {
+        unimplemented!()
+    }
+
+    fn store_spillslot(&self, _slot: SpillSlot, _ty: Type, _from_reg: Reg) -> Vec<Inst> {
         unimplemented!()
     }
 
