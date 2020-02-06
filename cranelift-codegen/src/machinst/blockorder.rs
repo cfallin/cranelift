@@ -14,7 +14,7 @@ struct BlockRPO {
 impl BlockRPO {
     fn new<I: VCodeInst>(vcode: &VCode<I>) -> BlockRPO {
         BlockRPO {
-            visited: std::iter::repeat(false).take(vcode.num_blocks()).collect(),
+            visited: vec![false; vcode.num_blocks()],
             postorder: vec![],
         }
     }
