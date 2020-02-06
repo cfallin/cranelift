@@ -1280,6 +1280,23 @@ fn enc_cbr(op_31_24: u32, off_18_0: u32, op_4: u32, cond: u32) -> u32 {
     (op_31_24 << 24) | (off_18_0 << 5) | (op_4 << 4) | cond
 }
 
+const MOVE_WIDE_FIXED: u32 = 0x92800000;
+
+#[repr(u32)]
+enum MoveWideOpcode {
+    MOVZ = 0b10,
+}
+
+// TODO: Pass imm_shift / imm16 in a struct?
+fn enc_move_wide(opc: MoveWideOpcode, rd: Reg, imm_shift: u8, imm16: u16) -> u32 {
+    assert!(imm_shift <= 0b11);
+    MOVE_WIDE_FIXED
+        | (opc as u32) << 29
+        | (imm_shift as u32) << 21
+        | (imm16 as u32) << 5
+        | machreg_to_gpr(rd)
+}
+
 impl<CS: CodeSink> MachInstEmit<CS> for Inst {
     fn emit(&self, sink: &mut CS) {
         match self {
@@ -1401,7 +1418,9 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 /*ref*/ mem: _,
                 ..
             } => unimplemented!(),
-            &Inst::MovZ { rd: _, .. } => unimplemented!(),
+            &Inst::MovZ { rd, imm } => {
+                sink.put4(enc_move_wide(MoveWideOpcode::MOVZ, rd, imm.shift, imm.bits))
+            }
             &Inst::Jump { ref dest } => {
                 // TODO: differentiate between as_off26() returning `None` for
                 // out-of-range vs. not-yet-finalized. The latter happens when we

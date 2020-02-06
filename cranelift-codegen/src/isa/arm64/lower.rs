@@ -339,14 +339,9 @@ fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset:
 }
 
 fn lower_constant<'a>(ctx: Ctx<'a>, rd: Reg, value: u64) {
-    if let Some(imm12) = Imm12::maybe_from_u64(value) {
-        // 12-bit immediate (shifted by 0 or 12 bits) in ADDI using zero register
-        ctx.emit(Inst::AluRRImm12 {
-            alu_op: ALUOp::Add64,
-            rd,
-            rn: zero_reg(),
-            imm12,
-        });
+    if let Some(imm) = MovZConst::maybe_from_u64(value) {
+        // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVZ
+        ctx.emit(Inst::MovZ { rd, imm });
     } else if let Some(imml) = ImmLogic::maybe_from_u64(value) {
         // Weird logical-instruction immediate in ORI using zero register
         ctx.emit(Inst::AluRRImmLogic {
@@ -355,9 +350,6 @@ fn lower_constant<'a>(ctx: Ctx<'a>, rd: Reg, value: u64) {
             rn: zero_reg(),
             imml,
         });
-    } else if let Some(imm) = MovZConst::maybe_from_u64(value) {
-        // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVZ
-        ctx.emit(Inst::MovZ { rd, imm });
     } else {
         // 64-bit constant in constant pool
         let const_data = u64_constant(value);
