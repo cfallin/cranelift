@@ -301,11 +301,10 @@ impl<I: VCodeInst> VCode<I> {
         let block_ranges: Vec<(usize, usize)> =
             block_ranges(result.target_map.elems(), result.insns.len());
         let mut final_insns = vec![];
-        let mut final_block_ranges: Vec<(InsnIndex, InsnIndex)> =
-            iter::repeat((0, 0)).take(self.num_blocks()).collect();
+        let mut final_block_ranges = vec![(0, 0); self.num_blocks()];
 
         for block in &self.final_block_order {
-            let (start, end) = block_ranges[*block as usize].clone();
+            let (start, end) = block_ranges[*block as usize];
             let final_start = final_insns.len() as InsnIndex;
             for i in start..end {
                 let insn = &result.insns[i];
@@ -374,7 +373,7 @@ impl<I: VCodeInst> VCode<I> {
         // one-way branches with fallthrough.
         for block in 0..self.num_blocks() {
             let next_block = block_fallthrough[block];
-            let (start, end) = self.block_ranges[block].clone();
+            let (start, end) = self.block_ranges[block];
 
             for iix in start..end {
                 let insn = &mut self.insts[iix as usize];
@@ -388,7 +387,7 @@ impl<I: VCodeInst> VCode<I> {
         for block in &self.final_block_order {
             offset = I::align_basic_block(offset);
             block_offsets[*block as usize] = offset;
-            let (start, end) = self.block_ranges[*block as usize].clone();
+            let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
                 offset += inst_size(&self.insts[iix as usize]) as CodeOffset;
             }
@@ -398,10 +397,10 @@ impl<I: VCodeInst> VCode<I> {
         // traversal above, but (i) does not update block_offsets, rather uses
         // it (so forward references are now possible), and (ii) mutates the
         // instructions.
-        offset = 0;
+        let mut offset = 0;
         for block in &self.final_block_order {
             offset = I::align_basic_block(offset);
-            let (start, end) = self.block_ranges[*block as usize].clone();
+            let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
                 self.insts[iix as usize].with_block_offsets(offset, &block_offsets[..]);
                 offset += inst_size(&self.insts[iix as usize]) as CodeOffset;
@@ -430,9 +429,9 @@ impl<I: VCodeInst> VCode<I> {
                 let nop = I::gen_nop((new_offset - cs.offset()) as usize);
                 nop.emit(cs);
             }
-            assert!(cs.offset() == new_offset);
+            assert_eq!(cs.offset(), new_offset);
 
-            let (start, end) = self.block_ranges[*block as usize].clone();
+            let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
                 self.insts[iix as usize].emit(cs);
             }
@@ -567,7 +566,7 @@ impl<I: VCodeInst> fmt::Debug for VCode<I> {
             for succ in self.succs(block as BlockIndex) {
                 writeln!(f, "    (successor: Block {})", succ)?;
             }
-            let (start, end) = self.block_ranges[block].clone();
+            let (start, end) = self.block_ranges[block];
             writeln!(f, "    (instruction range: {} .. {})", start, end)?;
             for inst in start..end {
                 writeln!(f, "  Inst {}: {:?}", inst, self.insts[inst as usize])?;
