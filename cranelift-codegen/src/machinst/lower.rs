@@ -194,7 +194,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             for (i, param) in self.f.dfg.ebb_params(entry_ebb).iter().enumerate() {
                 let reg = self.value_regs[*param];
                 for insn in self.vcode.abi().load_arg(i, reg).into_iter() {
-                  self.vcode.push(insn);
+                    self.vcode.push(insn);
                 }
             }
         }
@@ -204,7 +204,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         for (i, r) in self.retval_regs.iter().enumerate() {
             println!("gen_epilogue: store retval reg {:?} to retval {}", r, i);
             for insn in self.vcode.abi().store_retval(i, *r).into_iter() {
-              self.vcode.push(insn);
+                self.vcode.push(insn);
             }
         }
         for insn in self.vcode.abi().gen_epilogue().into_iter() {
