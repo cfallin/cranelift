@@ -248,30 +248,41 @@ fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, is32: bool) -> St
 //=============================================================================
 // Instruction sub-components (immediates and offsets): definitions
 
-/// A 7-bit signed offset.
+/// A signed, scaled 7-bit offset.
 #[derive(Clone, Copy, Debug)]
-pub struct SImm7 {
-    bits: i16,
+pub struct SImm7Scaled {
+    value: i16,
+    scale_ty: Type, // multiplied by the size of this type
 }
 
-impl SImm7 {
-    /// Create a signed 7-bit offset from a full-range value, if possible.
-    pub fn maybe_from_i64(value: i64) -> Option<SImm7> {
-        if value >= -128 && value <= 127 {
-            Some(SImm7 { bits: value as i16 })
+impl SImm7Scaled {
+    /// Create a SImm7Scaled from a raw offset and the known scale type, if
+    /// possible.
+    pub fn maybe_from_i64(value: i64, scale_ty: Type) -> Option<SImm7Scaled> {
+        assert!(scale_ty == I64 || scale_ty == I32);
+        let scale = scale_ty.bytes();
+        assert!(scale.is_power_of_two());
+        let scale = scale as i64;
+        let upper_limit = 63 * scale;
+        let lower_limit = -(64 * scale);
+        if value >= lower_limit && value <= upper_limit && (value & (scale - 1)) == 0 {
+            Some(SImm7Scaled {
+                value: value as i16,
+                scale_ty,
+            })
         } else {
             None
         }
     }
 
     /// Create a zero immediate of this format.
-    pub fn zero() -> SImm7 {
-        SImm7 { bits: 0 }
+    pub fn zero(scale_ty: Type) -> SImm7Scaled {
+        SImm7Scaled { value: 0, scale_ty }
     }
 
     /// Bits for encoding.
     pub fn bits(&self) -> u32 {
-        (self.bits as u32) & 0x7f
+        ((self.value / self.scale_ty.bytes() as i16) as u32) & 0x7f
     }
 }
 
@@ -302,10 +313,10 @@ impl SImm9 {
     }
 }
 
-/// an unsigned, scaled 12-bit offset.
+/// An unsigned, scaled 12-bit offset.
 #[derive(Clone, Copy, Debug)]
 pub struct UImm12Scaled {
-    bits: u16,
+    value: u16,
     scale_ty: Type, // multiplied by the size of this type
 }
 
@@ -313,12 +324,13 @@ impl UImm12Scaled {
     /// Create a UImm12Scaled from a raw offset and the known scale type, if
     /// possible.
     pub fn maybe_from_i64(value: i64, scale_ty: Type) -> Option<UImm12Scaled> {
-        let scale = scale_ty.bytes() as i64;
-        assert!((scale & (scale - 1)) == 0); // must be a power of 2.
+        let scale = scale_ty.bytes();
+        assert!(scale.is_power_of_two());
+        let scale = scale as i64;
         let limit = 4095 * scale;
         if value >= 0 && value <= limit && (value & (scale - 1)) == 0 {
             Some(UImm12Scaled {
-                bits: (value / scale) as u16,
+                value: value as u16,
                 scale_ty,
             })
         } else {
@@ -328,7 +340,7 @@ impl UImm12Scaled {
 
     /// Encoded bits.
     pub fn bits(&self) -> u32 {
-        (self.bits as u32) & 0xfff
+        (self.value as u32 / self.scale_ty.bytes()) & 0xfff
     }
 }
 
@@ -637,9 +649,9 @@ impl MemArg {
 #[derive(Clone, Debug)]
 pub enum PairMemArg {
     Base(Reg),
-    BaseSImm7(Reg, SImm7),
-    PreIndexed(WritableReg<Reg>, SImm7),
-    PostIndexed(WritableReg<Reg>, SImm7),
+    BaseSImm7Scaled(Reg, SImm7Scaled),
+    PreIndexed(WritableReg<Reg>, SImm7Scaled),
+    PostIndexed(WritableReg<Reg>, SImm7Scaled),
 }
 
 //=============================================================================
@@ -1008,7 +1020,7 @@ fn pairmemarg_regs(
     modified: &mut Set<WritableReg<Reg>>,
 ) {
     match pairmemarg {
-        &PairMemArg::Base(reg) | &PairMemArg::BaseSImm7(reg, ..) => {
+        &PairMemArg::Base(reg) | &PairMemArg::BaseSImm7Scaled(reg, ..) => {
             used.insert(reg);
         }
         &PairMemArg::PreIndexed(reg, ..) | &PairMemArg::PostIndexed(reg, ..) => {
@@ -1153,7 +1165,9 @@ fn arm64_map_regs(
     fn map_pairmem(u: &RegallocMap<VirtualReg, RealReg>, mem: &PairMemArg) -> PairMemArg {
         match mem {
             &PairMemArg::Base(reg) => PairMemArg::Base(map(u, reg)),
-            &PairMemArg::BaseSImm7(reg, simm7) => PairMemArg::BaseSImm7(map(u, reg), simm7),
+            &PairMemArg::BaseSImm7Scaled(reg, simm7) => {
+                PairMemArg::BaseSImm7Scaled(map(u, reg), simm7)
+            }
             &PairMemArg::PreIndexed(reg, simm7) => PairMemArg::PreIndexed(map_wr(u, reg), simm7),
             &PairMemArg::PostIndexed(reg, simm7) => PairMemArg::PostIndexed(map_wr(u, reg), simm7),
         }
@@ -1465,7 +1479,7 @@ fn enc_move_wide(op: MoveWideOpcode, rd: WritableReg<Reg>, imm: MoveWideConst) -
         | machreg_to_gpr(rd.to_reg())
 }
 
-fn enc_ldst_pair(op_31_22: u32, simm7: SImm7, rn: Reg, rt: Reg, rt2: Reg) -> u32 {
+fn enc_ldst_pair(op_31_22: u32, simm7: SImm7Scaled, rn: Reg, rt: Reg, rt2: Reg) -> u32 {
     (op_31_22 << 22)
         | (simm7.bits() << 15)
         | (machreg_to_gpr(rt2) << 10)
@@ -1709,18 +1723,26 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     &MemArg::StackOffset(..) => panic!("Should not see StackOffset here!"),
                 }
             }
-
             &Inst::StoreP64 { rt, rt2, ref mem } => match mem {
                 &PairMemArg::Base(reg) => {
-                    sink.put4(enc_ldst_pair(0b1010100100, SImm7::zero(), reg, rt, rt2));
+                    sink.put4(enc_ldst_pair(
+                        0b1010100100,
+                        SImm7Scaled::zero(I64),
+                        reg,
+                        rt,
+                        rt2,
+                    ));
                 }
-                &PairMemArg::BaseSImm7(reg, simm7) => {
+                &PairMemArg::BaseSImm7Scaled(reg, simm7) => {
+                    assert_eq!(simm7.scale_ty, I64);
                     sink.put4(enc_ldst_pair(0b1010100100, simm7, reg, rt, rt2));
                 }
                 &PairMemArg::PreIndexed(reg, simm7) => {
+                    assert_eq!(simm7.scale_ty, I64);
                     sink.put4(enc_ldst_pair(0b1010100110, simm7, reg.to_reg(), rt, rt2));
                 }
                 &PairMemArg::PostIndexed(reg, simm7) => {
+                    assert_eq!(simm7.scale_ty, I64);
                     sink.put4(enc_ldst_pair(0b1010100010, simm7, reg.to_reg(), rt, rt2));
                 }
             },
@@ -1729,15 +1751,24 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                 let rt2 = rt2.to_reg();
                 match mem {
                     &PairMemArg::Base(reg) => {
-                        sink.put4(enc_ldst_pair(0b1010100101, SImm7::zero(), reg, rt, rt2));
+                        sink.put4(enc_ldst_pair(
+                            0b1010100101,
+                            SImm7Scaled::zero(I64),
+                            reg,
+                            rt,
+                            rt2,
+                        ));
                     }
-                    &PairMemArg::BaseSImm7(reg, simm7) => {
+                    &PairMemArg::BaseSImm7Scaled(reg, simm7) => {
+                        assert_eq!(simm7.scale_ty, I64);
                         sink.put4(enc_ldst_pair(0b1010100101, simm7, reg, rt, rt2));
                     }
                     &PairMemArg::PreIndexed(reg, simm7) => {
+                        assert_eq!(simm7.scale_ty, I64);
                         sink.put4(enc_ldst_pair(0b1010100111, simm7, reg.to_reg(), rt, rt2));
                     }
                     &PairMemArg::PostIndexed(reg, simm7) => {
+                        assert_eq!(simm7.scale_ty, I64);
                         sink.put4(enc_ldst_pair(0b1010100011, simm7, reg.to_reg(), rt, rt2));
                     }
                 }
@@ -2005,13 +2036,9 @@ impl ShowWithRRU for Imm12 {
     }
 }
 
-impl ShowWithRRU for SImm7 {
+impl ShowWithRRU for SImm7Scaled {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
-        format!("#{}", self.bits)
-    }
-
-    fn show_rru_sized(&self, _mb_rru: Option<&RealRegUniverse>, size: u8) -> String {
-        format!("#{}", self.bits * (size as i16))
+        format!("#{}", self.value)
     }
 }
 
@@ -2023,8 +2050,7 @@ impl ShowWithRRU for SImm9 {
 
 impl ShowWithRRU for UImm12Scaled {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
-        let scale = self.scale_ty.bytes();
-        format!("#{}", self.bits * scale as u16)
+        format!("#{}", self.value)
     }
 }
 
@@ -2123,7 +2149,7 @@ impl ShowWithRRU for PairMemArg {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
             &PairMemArg::Base(reg) => format!("[{}]", reg.show_rru(mb_rru)),
-            &PairMemArg::BaseSImm7(reg, simm7) => {
+            &PairMemArg::BaseSImm7Scaled(reg, simm7) => {
                 format!("[{}, {}]", reg.show_rru(mb_rru), simm7.show_rru(mb_rru))
             }
             &PairMemArg::PreIndexed(reg, simm7) => format!(
@@ -2135,27 +2161,6 @@ impl ShowWithRRU for PairMemArg {
                 "[{}], {}",
                 reg.to_reg().show_rru(mb_rru),
                 simm7.show_rru(mb_rru)
-            ),
-        }
-    }
-
-    fn show_rru_sized(&self, mb_rru: Option<&RealRegUniverse>, size: u8) -> String {
-        match self {
-            &PairMemArg::Base(reg) => format!("[{}]", reg.show_rru(mb_rru)),
-            &PairMemArg::BaseSImm7(reg, simm7) => format!(
-                "[{}, {}]",
-                reg.show_rru(mb_rru),
-                simm7.show_rru_sized(mb_rru, size)
-            ),
-            &PairMemArg::PreIndexed(reg, simm7) => format!(
-                "[{}, {}]!",
-                reg.to_reg().show_rru(mb_rru),
-                simm7.show_rru_sized(mb_rru, size)
-            ),
-            &PairMemArg::PostIndexed(reg, simm7) => format!(
-                "[{}], {}",
-                reg.to_reg().show_rru(mb_rru),
-                simm7.show_rru_sized(mb_rru, size)
             ),
         }
     }
@@ -3005,7 +3010,10 @@ mod test {
             Inst::StoreP64 {
                 rt: xreg(8),
                 rt2: xreg(9),
-                mem: PairMemArg::BaseSImm7(xreg(10), SImm7::maybe_from_i64(63).unwrap()),
+                mem: PairMemArg::BaseSImm7Scaled(
+                    xreg(10),
+                    SImm7Scaled::maybe_from_i64(504, I64).unwrap(),
+                ),
             },
             "48A51FA9",
             "stp x8, x9, [x10, #504]",
@@ -3014,28 +3022,49 @@ mod test {
             Inst::StoreP64 {
                 rt: xreg(8),
                 rt2: xreg(9),
-                mem: PairMemArg::BaseSImm7(xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
+                mem: PairMemArg::BaseSImm7Scaled(
+                    xreg(10),
+                    SImm7Scaled::maybe_from_i64(-64, I64).unwrap(),
+                ),
             },
-            "482520A9",
-            "stp x8, x9, [x10, #-512]",
+            "48253CA9",
+            "stp x8, x9, [x10, #-64]",
+        ));
+        insns.push((
+            Inst::StoreP64 {
+                rt: xreg(21),
+                rt2: xreg(28),
+                mem: PairMemArg::BaseSImm7Scaled(
+                    xreg(1),
+                    SImm7Scaled::maybe_from_i64(-512, I64).unwrap(),
+                ),
+            },
+            "357020A9",
+            "stp x21, x28, [x1, #-512]",
         ));
         insns.push((
             Inst::StoreP64 {
                 rt: xreg(8),
                 rt2: xreg(9),
-                mem: PairMemArg::PreIndexed(writable_xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
+                mem: PairMemArg::PreIndexed(
+                    writable_xreg(10),
+                    SImm7Scaled::maybe_from_i64(-64, I64).unwrap(),
+                ),
             },
-            "4825A0A9",
-            "stp x8, x9, [x10, #-512]!",
+            "4825BCA9",
+            "stp x8, x9, [x10, #-64]!",
         ));
         insns.push((
             Inst::StoreP64 {
-                rt: xreg(8),
-                rt2: xreg(9),
-                mem: PairMemArg::PostIndexed(writable_xreg(10), SImm7::maybe_from_i64(63).unwrap()),
+                rt: xreg(15),
+                rt2: xreg(16),
+                mem: PairMemArg::PostIndexed(
+                    writable_xreg(20),
+                    SImm7Scaled::maybe_from_i64(504, I64).unwrap(),
+                ),
             },
-            "48A59FA8",
-            "stp x8, x9, [x10], #504",
+            "8FC29FA8",
+            "stp x15, x16, [x20], #504",
         ));
 
         insns.push((
@@ -3051,7 +3080,10 @@ mod test {
             Inst::LoadP64 {
                 rt: writable_xreg(8),
                 rt2: writable_xreg(9),
-                mem: PairMemArg::BaseSImm7(xreg(10), SImm7::maybe_from_i64(63).unwrap()),
+                mem: PairMemArg::BaseSImm7Scaled(
+                    xreg(10),
+                    SImm7Scaled::maybe_from_i64(504, I64).unwrap(),
+                ),
             },
             "48A55FA9",
             "ldp x8, x9, [x10, #504]",
@@ -3060,7 +3092,22 @@ mod test {
             Inst::LoadP64 {
                 rt: writable_xreg(8),
                 rt2: writable_xreg(9),
-                mem: PairMemArg::BaseSImm7(xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
+                mem: PairMemArg::BaseSImm7Scaled(
+                    xreg(10),
+                    SImm7Scaled::maybe_from_i64(-64, I64).unwrap(),
+                ),
+            },
+            "48257CA9",
+            "ldp x8, x9, [x10, #-64]",
+        ));
+        insns.push((
+            Inst::LoadP64 {
+                rt: writable_xreg(8),
+                rt2: writable_xreg(9),
+                mem: PairMemArg::BaseSImm7Scaled(
+                    xreg(10),
+                    SImm7Scaled::maybe_from_i64(-512, I64).unwrap(),
+                ),
             },
             "482560A9",
             "ldp x8, x9, [x10, #-512]",
@@ -3069,19 +3116,25 @@ mod test {
             Inst::LoadP64 {
                 rt: writable_xreg(8),
                 rt2: writable_xreg(9),
-                mem: PairMemArg::PreIndexed(writable_xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
+                mem: PairMemArg::PreIndexed(
+                    writable_xreg(10),
+                    SImm7Scaled::maybe_from_i64(-64, I64).unwrap(),
+                ),
             },
-            "4825E0A9",
-            "ldp x8, x9, [x10, #-512]!",
+            "4825FCA9",
+            "ldp x8, x9, [x10, #-64]!",
         ));
         insns.push((
             Inst::LoadP64 {
                 rt: writable_xreg(8),
-                rt2: writable_xreg(9),
-                mem: PairMemArg::PostIndexed(writable_xreg(10), SImm7::maybe_from_i64(63).unwrap()),
+                rt2: writable_xreg(25),
+                mem: PairMemArg::PostIndexed(
+                    writable_xreg(12),
+                    SImm7Scaled::maybe_from_i64(504, I64).unwrap(),
+                ),
             },
-            "48A5DFA8",
-            "ldp x8, x9, [x10], #504",
+            "88E5DFA8",
+            "ldp x8, x25, [x12], #504",
         ));
 
         insns.push((

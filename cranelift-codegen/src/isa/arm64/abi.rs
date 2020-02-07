@@ -298,7 +298,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
             rt2: link_reg(),
             mem: PairMemArg::PreIndexed(
                 writable_stack_reg(),
-                SImm7::maybe_from_i64(-16 / 8).unwrap(),
+                SImm7Scaled::maybe_from_i64(-16, types::I64).unwrap(),
             ),
         });
         // mov fp (x29), sp. This uses the ADDI rd, rs, 0 form of `MOV` because
@@ -356,7 +356,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
                 rt2: r2,
                 mem: PairMemArg::PreIndexed(
                     writable_stack_reg(),
-                    SImm7::maybe_from_i64(-16 / 8).unwrap(),
+                    SImm7Scaled::maybe_from_i64(-16, types::I64).unwrap(),
                 ),
             });
         }
@@ -384,7 +384,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
                 rt2: r2,
                 mem: PairMemArg::PostIndexed(
                     writable_stack_reg(),
-                    SImm7::maybe_from_i64(16 / 8).unwrap(),
+                    SImm7Scaled::maybe_from_i64(16, types::I64).unwrap(),
                 ),
             });
         }
@@ -405,7 +405,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
             rt2: writable_link_reg(),
             mem: PairMemArg::PostIndexed(
                 writable_stack_reg(),
-                SImm7::maybe_from_i64(16 / 8).unwrap(),
+                SImm7Scaled::maybe_from_i64(16, types::I64).unwrap(),
             ),
         });
         insts.push(Inst::Ret {});
