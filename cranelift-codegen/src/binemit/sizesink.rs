@@ -44,7 +44,7 @@ impl CodeSink for SizeCodeSink {
         self.offset += 8;
     }
 
-    fn reloc_ebb(&mut self, _rel: Reloc, _ebb_offset: CodeOffset) {}
+    fn reloc_block(&mut self, _rel: Reloc, _block_offset: CodeOffset) {}
 
     fn reloc_external(&mut self, _rel: Reloc, _name: &ExternalName, _addend: Addend) {}
 

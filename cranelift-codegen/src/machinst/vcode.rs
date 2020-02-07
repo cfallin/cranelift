@@ -72,8 +72,8 @@ pub struct VCode<I: VCodeInst> {
     /// correspond to each basic block's successors.
     block_succs: Vec<BlockIndex>,
 
-    /// Block indices by Ebb.
-    block_by_ebb: SecondaryMap<ir::Ebb, BlockIndex>,
+    /// Block indices by IR block.
+    block_by_bb: SecondaryMap<ir::Block, BlockIndex>,
 
     /// Order of block IDs in final generated code.
     final_block_order: Vec<BlockIndex>,
@@ -143,25 +143,25 @@ impl<I: VCodeInst> VCodeBuilder<I> {
         self.vcode.vreg_types[vreg.get_index()] = ty;
     }
 
-    /// Return the underlying Ebb-to-BlockIndex map.
-    pub fn blocks_by_ebb(&self) -> &SecondaryMap<ir::Ebb, BlockIndex> {
-        &self.vcode.block_by_ebb
+    /// Return the underlying bb-to-BlockIndex map.
+    pub fn blocks_by_bb(&self) -> &SecondaryMap<ir::Block, BlockIndex> {
+        &self.vcode.block_by_bb
     }
 
-    /// Initialize the Ebb-to-BlockIndex map. Returns the first free
+    /// Initialize the bb-to-BlockIndex map. Returns the first free
     /// BlockIndex.
-    pub fn init_ebb_map(&mut self, blocks: &[ir::Ebb]) -> BlockIndex {
+    pub fn init_bb_map(&mut self, blocks: &[ir::Block]) -> BlockIndex {
         let mut bindex: BlockIndex = 0;
-        for ebb in blocks.iter() {
-            self.vcode.block_by_ebb[*ebb] = bindex;
+        for bb in blocks.iter() {
+            self.vcode.block_by_bb[*bb] = bindex;
             bindex += 1;
         }
         bindex
     }
 
-    /// Get the BlockIndex for an Ebb.
-    pub fn ebb_to_bindex(&self, ebb: ir::Ebb) -> BlockIndex {
-        self.vcode.block_by_ebb[ebb]
+    /// Get the BlockIndex for an IR block.
+    pub fn bb_to_bindex(&self, bb: ir::Block) -> BlockIndex {
+        self.vcode.block_by_bb[bb]
     }
 
     /// Set the current block as the entry block.
@@ -288,7 +288,7 @@ impl<I: VCodeInst> VCode<I> {
             block_ranges: vec![],
             block_succ_range: vec![],
             block_succs: vec![],
-            block_by_ebb: SecondaryMap::with_default(0),
+            block_by_bb: SecondaryMap::with_default(0),
             final_block_order: vec![],
             final_block_offsets: vec![],
             code_size: 0,

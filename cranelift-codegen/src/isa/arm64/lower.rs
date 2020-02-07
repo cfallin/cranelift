@@ -5,7 +5,7 @@
 use crate::ir::condcodes::IntCC;
 use crate::ir::types::*;
 use crate::ir::Inst as IRInst;
-use crate::ir::{Ebb, InstructionData, Opcode, Type};
+use crate::ir::{Block, InstructionData, Opcode, Type};
 use crate::machinst::lower::*;
 use crate::machinst::*;
 
@@ -530,7 +530,7 @@ fn choose_32_64(ty: Type, op32: ALUOp, op64: ALUOp) -> ALUOp {
     }
 }
 
-fn branch_target(data: &InstructionData) -> Option<Ebb> {
+fn branch_target(data: &InstructionData) -> Option<Block> {
     match data {
         &InstructionData::BranchIcmp { destination, .. }
         | &InstructionData::Branch { destination, .. }

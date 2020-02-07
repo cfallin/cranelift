@@ -31,8 +31,8 @@ impl NumUses {
     /// Compute the NumUses analysis result for a function.
     pub fn compute(func: &Function) -> NumUses {
         let mut uses = NumUses::new();
-        for ebb in func.layout.ebbs() {
-            for inst in func.layout.ebb_insts(ebb) {
+        for bb in func.layout.blocks() {
+            for inst in func.layout.block_insts(bb) {
                 // A side-effecting instruction has an implicit use.
                 if has_side_effect(func, inst) {
                     uses.add_inst(inst);

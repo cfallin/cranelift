@@ -8,7 +8,7 @@
 use crate::binemit::{CodeOffset, CodeSink};
 //zz use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
-use crate::ir::{Ebb, FuncRef, GlobalValue, Type};
+use crate::ir::{FuncRef, GlobalValue, Type};
 use crate::machinst::*;
 
 use regalloc::InstRegUses;

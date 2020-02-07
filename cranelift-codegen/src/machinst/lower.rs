@@ -4,7 +4,7 @@
 
 use crate::binemit::CodeSink;
 use crate::entity::SecondaryMap;
-use crate::ir::{Ebb, Function, Inst, InstructionData, Opcode, Type, Value, ValueDef};
+use crate::ir::{Block, Function, Inst, InstructionData, Opcode, Type, Value, ValueDef};
 use crate::isa::registers::RegUnit;
 use crate::machinst::{
     ABIBody, BlockIndex, MachInst, MachInstEmit, VCode, VCodeBuilder, VCodeInst,
@@ -49,10 +49,10 @@ pub trait LowerCtx<I> {
     fn output_ty(&self, ir_inst: Inst, idx: usize) -> Type;
     /// Get a new temp.
     fn tmp(&mut self, rc: RegClass, ty: Type) -> Reg;
-    /// Get the number of EBB params.
-    fn num_ebb_params(&self, ebb: Ebb) -> usize;
-    /// Get the register for an EBB param.
-    fn ebb_param(&self, ebb: Ebb, idx: usize) -> Reg;
+    /// Get the number of block params.
+    fn num_bb_params(&self, bb: Block) -> usize;
+    /// Get the register for a block param.
+    fn bb_param(&self, bb: Block, idx: usize) -> Reg;
     /// Get the register for a return value.
     fn retval(&self, idx: usize) -> Reg;
 }
@@ -126,15 +126,15 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
         // Default register should never be seen, but the `value_regs` map needs a default and we
         // don't want to push `Option` everywhere. All values will be assigned registers by the
-        // loops over EBB parameters and instruction results below.
+        // loops over block parameters and instruction results below.
         //
         // We do not use vreg 0 so that we can detect any unassigned register that leaks through.
         let default_register = Reg::new_virtual(RegClass::I32, 0);
         let mut value_regs = SecondaryMap::with_default(default_register);
 
         // Assign a vreg to each value.
-        for ebb in f.layout.ebbs() {
-            for param in f.dfg.ebb_params(ebb) {
+        for bb in f.layout.blocks() {
+            for param in f.dfg.block_params(bb) {
                 let vreg = alloc_vreg(
                     &mut value_regs,
                     I::rc_for_type(f.dfg.value_type(*param)),
@@ -143,7 +143,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 );
                 vcode.set_vreg_type(vreg, f.dfg.value_type(*param));
             }
-            for inst in f.layout.ebb_insts(ebb) {
+            for inst in f.layout.block_insts(bb) {
                 for arg in f.dfg.inst_args(inst) {
                     let vreg = alloc_vreg(
                         &mut value_regs,
@@ -187,8 +187,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
     }
 
     fn gen_arg_setup(&mut self) {
-        if let Some(entry_ebb) = self.f.layout.entry_block() {
-            for (i, param) in self.f.dfg.ebb_params(entry_ebb).iter().enumerate() {
+        if let Some(entry_bb) = self.f.layout.entry_block() {
+            for (i, param) in self.f.dfg.block_params(entry_bb).iter().enumerate() {
                 let reg = self.value_regs[*param];
                 for insn in self.vcode.abi().load_arg(i, reg).into_iter() {
                     self.vcode.push(insn);
@@ -207,33 +207,33 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
     /// Lower the function.
     pub fn lower<B: LowerBackend<MInst = I>>(mut self, backend: &B) -> VCode<I> {
-        // Work backward (reverse EBB order, reverse through each EBB), skipping insns with zero
+        // Work backward (reverse block order, reverse through each block), skipping insns with zero
         // uses.
-        let mut ebbs: SmallVec<[Ebb; 16]> = self.f.layout.ebbs().collect();
-        ebbs.reverse();
+        let mut bbs: SmallVec<[Block; 16]> = self.f.layout.blocks().collect();
+        bbs.reverse();
 
-        // This records an Ebb-to-BlockIndex map so that branch targets can be resolved.
-        let mut next_bindex = self.vcode.init_ebb_map(&ebbs[..]);
+        // This records a Block-to-BlockIndex map so that branch targets can be resolved.
+        let mut next_bindex = self.vcode.init_bb_map(&bbs[..]);
 
         // Allocate a separate BlockIndex for each control-flow instruction so that we can create
         // the edge blocks later. Each entry for a control-flow inst is the edge block; the list
         // has (cf-inst, edge block, orig block) tuples.
         let mut edge_blocks_by_inst: SecondaryMap<Inst, Option<BlockIndex>> =
             SecondaryMap::with_default(None);
-        let mut edge_blocks: Vec<(Inst, BlockIndex, Ebb)> = vec![];
+        let mut edge_blocks: Vec<(Inst, BlockIndex, Block)> = vec![];
 
         println!("about to lower function: {:?}", self.f);
-        println!("ebb map: {:?}", self.vcode.blocks_by_ebb());
+        println!("bb map: {:?}", self.vcode.blocks_by_bb());
 
-        for ebb in ebbs.iter() {
-            for inst in self.f.layout.ebb_insts(*ebb) {
+        for bb in bbs.iter() {
+            for inst in self.f.layout.block_insts(*bb) {
                 let op = self.f.dfg[inst].opcode();
                 if op.is_branch() {
                     // Find the original target.
                     let instdata = &self.f.dfg[inst];
-                    let next_ebb = match op {
+                    let next_bb = match op {
                         Opcode::Fallthrough | Opcode::FallthroughReturn => {
-                            self.f.layout.next_ebb(*ebb).unwrap()
+                            self.f.layout.next_block(*bb).unwrap()
                         }
                         Opcode::Trap | Opcode::IndirectJumpTableBr => unimplemented!(),
                         _ => branch_target(instdata).unwrap(),
@@ -244,16 +244,16 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                     next_bindex += 1;
 
                     edge_blocks_by_inst[inst] = Some(edge_block);
-                    edge_blocks.push((inst, edge_block, next_ebb));
+                    edge_blocks.push((inst, edge_block, next_bb));
                 }
             }
         }
 
-        for ebb in ebbs.iter() {
-            println!("lowering ebb: {}", ebb);
+        for bb in bbs.iter() {
+            println!("lowering bb: {}", bb);
 
             // If this is a return block, produce the return value setup.
-            let last_insn = self.f.layout.ebb_insts(*ebb).last().unwrap();
+            let last_insn = self.f.layout.block_insts(*bb).last().unwrap();
             if self.f.dfg[last_insn].opcode().is_return() {
                 self.gen_retval_setup();
                 self.vcode.end_ir_inst();
@@ -263,7 +263,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             let mut branches: SmallVec<[Inst; 2]> = SmallVec::new();
             let mut targets: SmallVec<[BlockIndex; 2]> = SmallVec::new();
 
-            for inst in self.f.layout.ebb_insts(*ebb).rev() {
+            for inst in self.f.layout.block_insts(*bb).rev() {
                 if edge_blocks_by_inst[inst].is_some() {
                     let target = edge_blocks_by_inst[inst].clone().unwrap();
                     branches.push(inst);
@@ -271,8 +271,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 } else {
                     // We've reached the end of the branches -- process all as a group, first.
                     if branches.len() > 0 {
-                        let fallthrough = self.f.layout.next_ebb(*ebb);
-                        let fallthrough = fallthrough.map(|ebb| self.vcode.ebb_to_bindex(ebb));
+                        let fallthrough = self.f.layout.next_block(*bb);
+                        let fallthrough = fallthrough.map(|bb| self.vcode.bb_to_bindex(bb));
                         branches.reverse();
                         backend.lower_branch_group(
                             &mut self,
@@ -298,8 +298,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
             // There are possibly some branches left if the block contained only branches.
             if branches.len() > 0 {
-                let fallthrough = self.f.layout.next_ebb(*ebb);
-                let fallthrough = fallthrough.map(|ebb| self.vcode.ebb_to_bindex(ebb));
+                let fallthrough = self.f.layout.next_block(*bb);
+                let fallthrough = fallthrough.map(|bb| self.vcode.bb_to_bindex(bb));
                 branches.reverse();
                 backend.lower_branch_group(&mut self, &branches[..], &targets[..], fallthrough);
                 self.vcode.end_ir_inst();
@@ -308,17 +308,17 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             }
 
             // If this is the entry block, produce the argument setup.
-            if Some(*ebb) == self.f.layout.entry_block() {
+            if Some(*bb) == self.f.layout.entry_block() {
                 self.gen_arg_setup();
                 self.vcode.end_ir_inst();
             }
 
-            let bb = self.vcode.end_bb();
-            println!("finished building bb: BlockIndex {}", bb);
-            println!("ebb_to_bindex map says: {}", self.vcode.ebb_to_bindex(*ebb));
-            assert!(bb == self.vcode.ebb_to_bindex(*ebb));
-            if Some(*ebb) == self.f.layout.entry_block() {
-                self.vcode.set_entry(bb);
+            let vcode_bb = self.vcode.end_bb();
+            println!("finished building bb: BlockIndex {}", vcode_bb);
+            println!("bb_to_bindex map says: {}", self.vcode.bb_to_bindex(*bb));
+            assert!(vcode_bb == self.vcode.bb_to_bindex(*bb));
+            if Some(*bb) == self.f.layout.entry_block() {
+                self.vcode.set_entry(vcode_bb);
             }
         }
 
@@ -332,7 +332,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             let phi_classes: Vec<(Type, RegClass)> = self
                 .f
                 .dfg
-                .ebb_params(orig_block)
+                .block_params(orig_block)
                 .iter()
                 .map(|p| self.f.dfg.value_type(*p))
                 .map(|ty| (ty, I::rc_for_type(ty)))
@@ -353,8 +353,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             }
 
             // Create all of the phi defs (writes) from temps to block params.
-            for (i, param) in self.f.dfg.ebb_params(orig_block).iter().enumerate() {
-                println!("ebb arg {} is {}", i, param);
+            for (i, param) in self.f.dfg.block_params(orig_block).iter().enumerate() {
+                println!("bb arg {} is {}", i, param);
                 let src_reg = phi_temps[i];
                 let dst_reg = self.value_regs[*param];
                 self.vcode.push(I::gen_move(dst_reg, src_reg));
@@ -362,7 +362,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
             // Create the unconditional jump to the original target block.
             self.vcode
-                .push(I::gen_jump(self.vcode.ebb_to_bindex(orig_block)));
+                .push(I::gen_jump(self.vcode.bb_to_bindex(orig_block)));
 
             // End the IR inst and block. (We lower this as if it were one IR instruction so that
             // we can emit machine instructions in forward order.)
@@ -450,14 +450,14 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
         self.f.dfg.value_type(self.f.dfg.inst_results(ir_inst)[idx])
     }
 
-    /// Get the number of EBB params.
-    fn num_ebb_params(&self, ebb: Ebb) -> usize {
-        self.f.dfg.ebb_params(ebb).len()
+    /// Get the number of block params.
+    fn num_bb_params(&self, bb: Block) -> usize {
+        self.f.dfg.block_params(bb).len()
     }
 
-    /// Get the register for an EBB param.
-    fn ebb_param(&self, ebb: Ebb, idx: usize) -> Reg {
-        let val = self.f.dfg.ebb_params(ebb)[idx];
+    /// Get the register for a block param.
+    fn bb_param(&self, bb: Block, idx: usize) -> Reg {
+        let val = self.f.dfg.block_params(bb)[idx];
         self.value_regs[val]
     }
 
@@ -467,7 +467,7 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     }
 }
 
-fn branch_target(inst: &InstructionData) -> Option<Ebb> {
+fn branch_target(inst: &InstructionData) -> Option<Block> {
     match inst {
         &InstructionData::Jump { destination, .. }
         | &InstructionData::Branch { destination, .. }

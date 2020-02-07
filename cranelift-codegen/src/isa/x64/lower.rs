@@ -5,7 +5,7 @@
 //zz use crate::ir::condcodes::IntCC;
 //zz use crate::ir::types::*;
 use crate::ir::Inst as IRInst;
-use crate::ir::{Ebb, InstructionData, Opcode, Type};
+use crate::ir::{Block, InstructionData, Opcode, Type};
 use crate::machinst::lower::*;
 use crate::machinst::*;
 
@@ -528,7 +528,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz     }
 //zz }
 //zz
-//zz fn branch_target(data: &InstructionData) -> Option<Ebb> {
+//zz fn branch_target(data: &InstructionData) -> Option<Block> {
 //zz     match data {
 //zz         &InstructionData::BranchIcmp { destination, .. }
 //zz         | &InstructionData::Branch { destination, .. }
