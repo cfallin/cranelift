@@ -306,9 +306,16 @@ impl ABIBody<Inst> for ARM64ABIBody {
         let mut insts = vec![];
 
         // TODO: restore clobbered registers
-        insts.push(Inst::Mov {
+        // The MOV (alias of ORR) interprets x31 as XZR, so use an ADD here.
+        // MOV to SP is an alias of ADD.
+        insts.push(Inst::AluRRImm12 {
+            alu_op: ALUOp::Add64,
             rd: stack_reg(),
-            rm: fp_reg(),
+            rn: fp_reg(),
+            imm12: Imm12 {
+                bits: 0,
+                shift12: false,
+            },
         });
         insts.push(Inst::LoadP64 {
             rt: fp_reg(),
