@@ -43,7 +43,7 @@ pub fn zero_reg() -> Reg {
 }
 
 /// Get a reference to the stack-pointer register.
-fn stack_reg() -> Reg {
+pub fn stack_reg() -> Reg {
     // XSP (stack) and XZR (zero) are logically different registers which have
     // the same hardware encoding, and whose meaning, in real arm64
     // instructions, is context-dependent.  For convenience of
@@ -64,6 +64,16 @@ pub fn link_reg() -> Reg {
 /// Get a reference to the frame pointer (x29).
 pub fn fp_reg() -> Reg {
     xreg(29)
+}
+
+/// Get a reference to the "spill temp" register. This register is used to
+/// compute the address of a spill slot when a direct offset addressing mode from
+/// FP is not sufficient (+/- 2^11 words). We exclude this register from regalloc
+/// and reserve it for this purpose for simplicity; otherwise we need a
+/// multi-stage analysis where we first determine how many spill slots we have,
+/// then perhaps remove the reg from the pool and recompute regalloc.
+pub fn spilltmp_reg() -> Reg {
+    xreg(15)
 }
 
 /// Create the register universe for ARM64.
@@ -93,7 +103,8 @@ fn create_reg_universe() -> RealRegUniverse {
     let x_reg_base = 32u8; // in contiguous real-register index space
     let mut x_reg_count = 0;
     for i in 0u8..32u8 {
-        if i == 18 || i == 29 || i == 30 || i == 31 {
+        // See above for excluded registers.
+        if i == 15 || i == 18 || i == 29 || i == 30 || i == 31 {
             continue;
         }
         let reg = Reg::new_real(
@@ -115,6 +126,7 @@ fn create_reg_universe() -> RealRegUniverse {
 
     // Other regs, not available to the allocator.
     let allocable = regs.len();
+    regs.push((xreg(15).to_real_reg(), "x15".to_string()));
     regs.push((xreg(18).to_real_reg(), "x18".to_string()));
     regs.push((fp_reg().to_real_reg(), "fp".to_string()));
     regs.push((link_reg().to_real_reg(), "lr".to_string()));

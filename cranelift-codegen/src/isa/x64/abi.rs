@@ -56,6 +56,10 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
+    fn set_clobbered(&mut self, _clobbered: Set<RealReg>) {
+        unimplemented!()
+    }
+
     fn load_stackslot(
         &self,
         _slot: StackSlot,

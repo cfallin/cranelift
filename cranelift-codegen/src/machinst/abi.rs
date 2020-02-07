@@ -39,6 +39,9 @@ pub trait ABIBody<I: VCodeInst> {
     /// Update with the number of spillslots, post-regalloc.
     fn set_num_spillslots(&mut self, slots: usize);
 
+    /// Update with the clobbered registers, post-regalloc.
+    fn set_clobbered(&mut self, clobbered: Set<RealReg>);
+
     /// Load from a stackslot.
     fn load_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, into_reg: Reg) -> Vec<I>;
 
