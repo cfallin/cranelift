@@ -34,6 +34,11 @@ use smallvec::SmallVec;
 // least one onward call.  It'll be a net loss for leaf functions, and we
 // should change the ordering in that case, so as to make caller-save regs
 // available first.
+//
+// FIXME JRS 2020Feb07: maybe have two different universes, one for leaf
+// functions and one for non-leaf functions?  Also, they will have to be ABI
+// dependent.  Need to find a way to avoid constructing a universe for each
+// function we compile.
 
 fn info_R12() -> (RealReg, String) {
     (
@@ -296,14 +301,17 @@ fn create_reg_universe() -> RealRegUniverse {
 }
 
 //=============================================================================
-// Instructions: definitions, also of supporting types
+// Instruction sub-components: definitions and printing
 
+// A Memory Address.  These denote a 64-bit value only.
 #[derive(Clone)]
-pub enum AMode {
+pub enum Addr {
+    // sign-extend-32-to-64(Immediate) + Register
     IR {
         simm32: u32,
         base: Reg,
     },
+    // sign-extend-32-to-64(Immediate) + Register1 + (Register2 << Shift)
     IRRS {
         simm32: u32,
         base: Reg,
@@ -311,11 +319,11 @@ pub enum AMode {
         shift: u8, /* 0 .. 3 only */
     },
 }
-impl fmt::Debug for AMode {
+impl fmt::Debug for Addr {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            AMode::IR { simm32, base } => write!(fmt, "{}({:?})", *simm32 as i32, base),
-            AMode::IRRS {
+            Addr::IR { simm32, base } => write!(fmt, "{}({:?})", *simm32 as i32, base),
+            Addr::IRRS {
                 simm32,
                 base,
                 index,
@@ -332,10 +340,15 @@ impl fmt::Debug for AMode {
     }
 }
 
+// An operand which is either an integer Register, a value in Memory or an
+// Immediate.  This can denote an 8, 16, 32 or 64 bit value.  For the
+// Immediate form, in the 8- and 16-bit case, only the lower 8 or 16 bits of
+// |simm32| is relevant.  In the 64-bit case, the value denoted by |simm32| is
+// its sign-extension out to 64 bits.
 #[derive(Clone)]
 pub enum RMI {
     R { reg: Reg },
-    M { amode: AMode },
+    M { amode: Addr },
     I { simm32: u32 },
 }
 impl fmt::Debug for RMI {
@@ -348,10 +361,12 @@ impl fmt::Debug for RMI {
     }
 }
 
+// An operand which is either an integer Register or a value in Memory.  This
+// can denote an 8, 16, 32 or 64 bit value.
 #[derive(Clone)]
 pub enum RM {
     R { reg: Reg },
-    M { amode: AMode },
+    M { amode: Addr },
 }
 impl fmt::Debug for RM {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -363,6 +378,7 @@ impl fmt::Debug for RM {
 }
 
 #[derive(Clone)]
+// Some basic ALU operations.  TODO: maybe add Adc, Sbb.
 pub enum RMI_R_Op {
     Add,
     Sub,
@@ -370,7 +386,7 @@ pub enum RMI_R_Op {
     Or,
     Xor,
     Mul,
-} // Also Adc, Sbb ?
+}
 impl RMI_R_Op {
     fn to_string(&self) -> String {
         match self {
@@ -390,12 +406,14 @@ impl fmt::Debug for RMI_R_Op {
 }
 
 #[derive(Clone)]
+// These indicate ways of extending (widening) a value, using the Intel
+// naming: B(yte) = u8, W(ord) = u16, L(ong)word = u32, Q(uad)word = u64
 pub enum ExtMode {
-    BL,
-    BQ,
-    WL,
-    WQ,
-    LQ,
+    BL, // B -> L
+    BQ, // B -> Q
+    WL, // W -> L
+    WQ, // W -> Q
+    LQ, // L -> Q
 }
 impl ExtMode {
     fn to_string(&self) -> String {
@@ -414,6 +432,8 @@ impl fmt::Debug for ExtMode {
     }
 }
 
+// These indicate the form of a scalar shift: left, signed right, unsigned
+// right.
 #[derive(Clone)]
 pub enum ShiftKind {
     Left,
@@ -435,6 +455,8 @@ impl fmt::Debug for ShiftKind {
     }
 }
 
+// These indicate condition code tests.  Not all are represented since not all
+// are useful in compiler-generated code.
 #[derive(Clone)]
 pub enum CC {
     Z,
@@ -453,6 +475,9 @@ impl fmt::Debug for CC {
         write!(fmt, "{}", self.to_string())
     }
 }
+
+//=============================================================================
+// Instructions: definition
 
 /// Instructions.  Destinations are on the RIGHT (a la AT&T syntax).
 #[derive(Clone)]
@@ -482,20 +507,20 @@ pub enum Inst {
     /// movz (bl bq wl wq lq) amode reg (good for all ZX loads except 64->64)
     MovZX_M_R {
         extMode: ExtMode,
-        addr: AMode,
+        addr: Addr,
         dst: Reg,
     },
 
     /// A plain 64-bit integer load, since MovXZ_M_R can't represent that
     Mov64_M_R {
-        addr: AMode,
+        addr: Addr,
         dst: Reg,
     },
 
     /// movs (bl bq wl wq lq) amode reg (good for all SX loads)
     MovSX_M_R {
         extMode: ExtMode,
-        addr: AMode,
+        addr: Addr,
         dst: Reg,
     },
 
@@ -503,7 +528,7 @@ pub enum Inst {
     Mov_R_M {
         size: u8, // 1, 2, 4 or 8
         src: Reg,
-        addr: AMode,
+        addr: Addr,
     },
 
     /// (shl shr sar) (l q) imm reg
@@ -761,17 +786,17 @@ impl fmt::Debug for Inst {
 }
 
 //=============================================================================
-// Instructions: get regs
+// Instructions and subcomponents: get_regs
 
-impl AMode {
+impl Addr {
     // Add the regs mentioned by |self| to |set|.  The role in which they
     // appear (def/mod/use) is meaningless here, hence the use of plain |set|.
     fn get_regs(&self, set: &mut Set<Reg>) {
         match self {
-            AMode::IR { simm32: _, base } => {
+            Addr::IR { simm32: _, base } => {
                 set.insert(*base);
             }
-            AMode::IRRS {
+            Addr::IRRS {
                 simm32: _,
                 base,
                 index,
@@ -901,7 +926,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
 }
 
 //=============================================================================
-// Instructions: map regs
+// Instructions and subcomponents: map_regs
 
 fn apply_map(reg: &mut Reg, map: &RegallocMap<VirtualReg, RealReg>) {
     // The allocator interface conveniently does this for us.
@@ -913,18 +938,20 @@ fn apply_maps(
     pre_map__aka__map_uses: &RegallocMap<VirtualReg, RealReg>,
     post_map__aka__map_defs: &RegallocMap<VirtualReg, RealReg>,
 ) {
-    // The allocator interface conveniently does this for us.
+    // The allocator interface conveniently does this for us.  It also,
+    // conveniently, panics if the two maps disagree -- that would imply a
+    // serious error in the allocator or in our |get_regs| function.
     reg.apply_mods(post_map__aka__map_defs, pre_map__aka__map_uses)
 }
 
-impl AMode {
+impl Addr {
     fn apply_map(&mut self, map: &RegallocMap<VirtualReg, RealReg>) {
         match self {
-            AMode::IR {
+            Addr::IR {
                 simm32: _,
                 ref mut base,
             } => apply_map(base, map),
-            AMode::IRRS {
+            Addr::IRRS {
                 simm32: _,
                 ref mut base,
                 ref mut index,
@@ -1061,7 +1088,10 @@ fn x64_map_regs(
 }
 
 //=============================================================================
-// Instructions: misc functions (and external interface)
+// Instructions and subcomponents: emission
+
+//=============================================================================
+// Instructions: misc functions and external interface
 
 impl MachInst for Inst {
     fn get_regs(&self) -> InstRegUses {
