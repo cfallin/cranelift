@@ -22,7 +22,6 @@
 //! ```
 //! # extern crate cranelift_codegen;
 //! # #[macro_use] extern crate target_lexicon;
-//! # fn main() {
 //! use cranelift_codegen::isa;
 //! use cranelift_codegen::settings::{self, Configurable};
 //! use std::str::FromStr;
@@ -40,7 +39,6 @@
 //!         let isa = isa_builder.finish(shared_flags);
 //!     }
 //! }
-//! # }
 //! ```
 //!
 //! The configured target ISA trait object is a `Box<TargetIsa>` which can be used for multiple
@@ -66,7 +64,6 @@ use crate::settings::SetResult;
 use crate::timing;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use core::fmt;
 use target_lexicon::{triple, Architecture, PointerWidth, Triple};
 use thiserror::Error;
@@ -227,7 +224,7 @@ impl TargetFrontendConfig {
 
 /// Methods that are specialized to a target ISA. Implies a Display trait that shows the
 /// shared flags, as well as any isa-specific flags.
-pub trait TargetIsa: fmt::Display + Sync {
+pub trait TargetIsa: fmt::Display + Send + Sync {
     /// Get the name of this ISA.
     fn name(&self) -> &'static str;
 
@@ -411,7 +408,12 @@ pub trait TargetIsa: fmt::Display + Sync {
     /// Emit unwind information for the given function.
     ///
     /// Only some calling conventions (e.g. Windows fastcall) will have unwind information.
-    fn emit_unwind_info(&self, _func: &ir::Function, _mem: &mut Vec<u8>) {
+    fn emit_unwind_info(
+        &self,
+        _func: &ir::Function,
+        _kind: binemit::FrameUnwindKind,
+        _sink: &mut dyn binemit::FrameUnwindSink,
+    ) {
         // No-op by default
     }
 }

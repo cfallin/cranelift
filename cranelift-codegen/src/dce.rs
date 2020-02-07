@@ -54,8 +54,8 @@ pub fn do_dce(func: &mut Function, domtree: &mut DominatorTree) {
     debug_assert!(domtree.is_valid());
 
     let mut live = vec![false; func.dfg.num_values()];
-    for &ebb in domtree.cfg_postorder() {
-        let mut pos = FuncCursor::new(func).at_bottom(ebb);
+    for &block in domtree.cfg_postorder() {
+        let mut pos = FuncCursor::new(func).at_bottom(block);
         while let Some(inst) = pos.prev_inst() {
             {
                 if has_side_effect(pos.func, inst)

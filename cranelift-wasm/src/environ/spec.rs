@@ -36,6 +36,9 @@ pub enum GlobalVariable {
         /// The global variable's type.
         ty: ir::Type,
     },
+
+    /// This is a global variable that needs to be handled by the environment.
+    Custom,
 }
 
 /// A WebAssembly translation error.
@@ -103,12 +106,8 @@ pub enum ReturnMode {
     FallthroughReturn,
 }
 
-/// Environment affecting the translation of a single WebAssembly function.
-///
-/// A `FuncEnvironment` trait object is required to translate a WebAssembly function to Cranelift
-/// IR. The function environment provides information about the WebAssembly module as well as the
-/// runtime environment.
-pub trait FuncEnvironment {
+/// Environment affecting the translation of a WebAssembly.
+pub trait TargetEnvironment {
     /// Get the information needed to produce Cranelift IR for the given target.
     fn target_config(&self) -> TargetFrontendConfig;
 
@@ -124,13 +123,6 @@ pub trait FuncEnvironment {
         self.target_config().pointer_bytes()
     }
 
-    /// Should the code be structured to use a single `fallthrough_return` instruction at the end
-    /// of the function body, rather than `return` instructions as needed? This is used by VMs
-    /// to append custom epilogues.
-    fn return_mode(&self) -> ReturnMode {
-        ReturnMode::NormalReturns
-    }
-
     /// Get the Cranelift reference type to use for native references.
     ///
     /// This returns `R64` for 64-bit architectures and `R32` for 32-bit architectures.
@@ -140,6 +132,32 @@ pub trait FuncEnvironment {
             ir::types::I64 => ir::types::R64,
             _ => panic!("unsupported pointer type"),
         }
+    }
+}
+
+/// Environment affecting the translation of a single WebAssembly function.
+///
+/// A `FuncEnvironment` trait object is required to translate a WebAssembly function to Cranelift
+/// IR. The function environment provides information about the WebAssembly module as well as the
+/// runtime environment.
+pub trait FuncEnvironment: TargetEnvironment {
+    /// Is the given parameter of the given function a wasm-level parameter, as opposed to a hidden
+    /// parameter added for use by the implementation?
+    fn is_wasm_parameter(&self, signature: &ir::Signature, index: usize) -> bool {
+        signature.params[index].purpose == ir::ArgumentPurpose::Normal
+    }
+
+    /// Is the given return of the given function a wasm-level parameter, as
+    /// opposed to a hidden parameter added for use by the implementation?
+    fn is_wasm_return(&self, signature: &ir::Signature, index: usize) -> bool {
+        signature.returns[index].purpose == ir::ArgumentPurpose::Normal
+    }
+
+    /// Should the code be structured to use a single `fallthrough_return` instruction at the end
+    /// of the function body, rather than `return` instructions as needed? This is used by VMs
+    /// to append custom epilogues.
+    fn return_mode(&self) -> ReturnMode {
+        ReturnMode::NormalReturns
     }
 
     /// Set up the necessary preamble definitions in `func` to access the global variable
@@ -266,6 +284,148 @@ pub trait FuncEnvironment {
         heap: ir::Heap,
     ) -> WasmResult<ir::Value>;
 
+    /// Translate a `memory.copy` WebAssembly instruction.
+    ///
+    /// The `index` provided identifies the linear memory to query, and `heap` is the heap reference
+    /// returned by `make_heap` for the same index.
+    fn translate_memory_copy(
+        &mut self,
+        pos: FuncCursor,
+        index: MemoryIndex,
+        heap: ir::Heap,
+        dst: ir::Value,
+        src: ir::Value,
+        len: ir::Value,
+    ) -> WasmResult<()>;
+
+    /// Translate a `memory.fill` WebAssembly instruction.
+    ///
+    /// The `index` provided identifies the linear memory to query, and `heap` is the heap reference
+    /// returned by `make_heap` for the same index.
+    fn translate_memory_fill(
+        &mut self,
+        pos: FuncCursor,
+        index: MemoryIndex,
+        heap: ir::Heap,
+        dst: ir::Value,
+        val: ir::Value,
+        len: ir::Value,
+    ) -> WasmResult<()>;
+
+    /// Translate a `memory.init` WebAssembly instruction.
+    ///
+    /// The `index` provided identifies the linear memory to query, and `heap` is the heap reference
+    /// returned by `make_heap` for the same index. `seg_index` is the index of the segment to copy
+    /// from.
+    #[allow(clippy::too_many_arguments)]
+    fn translate_memory_init(
+        &mut self,
+        pos: FuncCursor,
+        index: MemoryIndex,
+        heap: ir::Heap,
+        seg_index: u32,
+        dst: ir::Value,
+        src: ir::Value,
+        len: ir::Value,
+    ) -> WasmResult<()>;
+
+    /// Translate a `data.drop` WebAssembly instruction.
+    fn translate_data_drop(&mut self, pos: FuncCursor, seg_index: u32) -> WasmResult<()>;
+
+    /// Translate a `table.size` WebAssembly instruction.
+    fn translate_table_size(
+        &mut self,
+        pos: FuncCursor,
+        index: TableIndex,
+        table: ir::Table,
+    ) -> WasmResult<ir::Value>;
+
+    /// Translate a `table.grow` WebAssembly instruction.
+    fn translate_table_grow(
+        &mut self,
+        pos: FuncCursor,
+        table_index: u32,
+        delta: ir::Value,
+        init_value: ir::Value,
+    ) -> WasmResult<ir::Value>;
+
+    /// Translate a `table.get` WebAssembly instruction.
+    fn translate_table_get(
+        &mut self,
+        pos: FuncCursor,
+        table_index: u32,
+        index: ir::Value,
+    ) -> WasmResult<ir::Value>;
+
+    /// Translate a `table.set` WebAssembly instruction.
+    fn translate_table_set(
+        &mut self,
+        pos: FuncCursor,
+        table_index: u32,
+        value: ir::Value,
+        index: ir::Value,
+    ) -> WasmResult<()>;
+
+    /// Translate a `table.copy` WebAssembly instruction.
+    #[allow(clippy::too_many_arguments)]
+    fn translate_table_copy(
+        &mut self,
+        pos: FuncCursor,
+        dst_table_index: TableIndex,
+        dst_table: ir::Table,
+        src_table_index: TableIndex,
+        src_table: ir::Table,
+        dst: ir::Value,
+        src: ir::Value,
+        len: ir::Value,
+    ) -> WasmResult<()>;
+
+    /// Translate a `table.fill` WebAssembly instruction.
+    fn translate_table_fill(
+        &mut self,
+        pos: FuncCursor,
+        table_index: u32,
+        dst: ir::Value,
+        val: ir::Value,
+        len: ir::Value,
+    ) -> WasmResult<()>;
+
+    /// Translate a `table.init` WebAssembly instruction.
+    #[allow(clippy::too_many_arguments)]
+    fn translate_table_init(
+        &mut self,
+        pos: FuncCursor,
+        seg_index: u32,
+        table_index: TableIndex,
+        table: ir::Table,
+        dst: ir::Value,
+        src: ir::Value,
+        len: ir::Value,
+    ) -> WasmResult<()>;
+
+    /// Translate a `elem.drop` WebAssembly instruction.
+    fn translate_elem_drop(&mut self, pos: FuncCursor, seg_index: u32) -> WasmResult<()>;
+
+    /// Translate a `ref.func` WebAssembly instruction.
+    fn translate_ref_func(&mut self, pos: FuncCursor, func_index: u32) -> WasmResult<ir::Value>;
+
+    /// Translate a `global.get` WebAssembly instruction at `pos` for a global
+    /// that is custom.
+    fn translate_custom_global_get(
+        &mut self,
+        pos: FuncCursor,
+        global_index: GlobalIndex,
+    ) -> WasmResult<ir::Value>;
+
+    /// Translate a `global.set` WebAssembly instruction at `pos` for a global
+    /// that is custom.
+    fn translate_custom_global_set(
+        &mut self,
+        pos: FuncCursor,
+        global_index: GlobalIndex,
+        val: ir::Value,
+    ) -> WasmResult<()>;
+
     /// Emit code at the beginning of every wasm loop.
     ///
     /// This can be used to insert explicit interrupt or safepoint checking at
@@ -301,10 +461,7 @@ pub trait FuncEnvironment {
 /// An object satisfying the `ModuleEnvironment` trait can be passed as argument to the
 /// [`translate_module`](fn.translate_module.html) function. These methods should not be called
 /// by the user, they are only for `cranelift-wasm` internal use.
-pub trait ModuleEnvironment<'data> {
-    /// Get the information needed to produce Cranelift IR for the current target.
-    fn target_config(&self) -> TargetFrontendConfig;
-
+pub trait ModuleEnvironment<'data>: TargetEnvironment {
     /// Provides the number of signatures up front. By default this does nothing, but
     /// implementations can use this to preallocate memory if desired.
     fn reserve_signatures(&mut self, _num: u32) -> WasmResult<()> {

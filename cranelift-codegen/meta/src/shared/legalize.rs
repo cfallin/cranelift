@@ -139,6 +139,7 @@ pub(crate) fn define(insts: &InstructionGroup, imm: &Immediates) -> TransformGro
     expand.custom_legalize(trapnz, "expand_cond_trap");
     expand.custom_legalize(br_table, "expand_br_table");
     expand.custom_legalize(select, "expand_select");
+    widen.custom_legalize(select, "expand_select"); // small ints
 
     // Custom expansions for floating point constants.
     // These expansions require bit-casting or creating constant pool entries.
@@ -148,6 +149,10 @@ pub(crate) fn define(insts: &InstructionGroup, imm: &Immediates) -> TransformGro
     // Custom expansions for stack memory accesses.
     expand.custom_legalize(insts.by_name("stack_load"), "expand_stack_load");
     expand.custom_legalize(insts.by_name("stack_store"), "expand_stack_store");
+
+    // Custom expansions for small stack memory acccess.
+    widen.custom_legalize(insts.by_name("stack_load"), "expand_stack_load");
+    widen.custom_legalize(insts.by_name("stack_store"), "expand_stack_store");
 
     // List of variables to reuse in patterns.
     let x = var("x");
@@ -192,9 +197,9 @@ pub(crate) fn define(insts: &InstructionGroup, imm: &Immediates) -> TransformGro
     let al = var("al");
     let ah = var("ah");
     let cc = var("cc");
-    let ebb = var("ebb");
-    let ebb1 = var("ebb1");
-    let ebb2 = var("ebb2");
+    let block = var("block");
+    let block1 = var("block1");
+    let block2 = var("block2");
     let ptr = var("ptr");
     let flags = var("flags");
     let offset = var("off");
@@ -264,7 +269,7 @@ pub(crate) fn define(insts: &InstructionGroup, imm: &Immediates) -> TransformGro
     );
 
     narrow.legalize(
-        def!(brz.I128(x, ebb, vararg)),
+        def!(brz.I128(x, block, vararg)),
         vec![
             def!((xl, xh) = isplit(x)),
             def!(
@@ -282,18 +287,18 @@ pub(crate) fn define(insts: &InstructionGroup, imm: &Immediates) -> TransformGro
                 )
             ),
             def!(c = band(a, b)),
-            def!(brnz(c, ebb, vararg)),
+            def!(brnz(c, block, vararg)),
         ],
     );
 
     narrow.legalize(
-        def!(brnz.I128(x, ebb1, vararg)),
+        def!(brnz.I128(x, block1, vararg)),
         vec![
             def!((xl, xh) = isplit(x)),
-            def!(brnz(xl, ebb1, vararg)),
-            def!(jump(ebb2, Literal::empty_vararg())),
-            ebb!(ebb2),
-            def!(brnz(xh, ebb1, vararg)),
+            def!(brnz(xl, block1, vararg)),
+            def!(jump(block2, Literal::empty_vararg())),
+            block!(block2),
+            def!(brnz(xh, block1, vararg)),
         ],
     );
 
@@ -610,6 +615,18 @@ pub(crate) fn define(insts: &InstructionGroup, imm: &Immediates) -> TransformGro
                 ],
             );
         }
+    }
+
+    for &ty in &[I8, I16] {
+        widen.legalize(
+            def!(brz.ty(x, block, vararg)),
+            vec![def!(a = uextend.I32(x)), def!(brz(a, block, vararg))],
+        );
+
+        widen.legalize(
+            def!(brnz.ty(x, block, vararg)),
+            vec![def!(a = uextend.I32(x)), def!(brnz(a, block, vararg))],
+        );
     }
 
     // Expand integer operations with carry for RISC architectures that don't have

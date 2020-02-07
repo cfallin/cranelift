@@ -2,6 +2,7 @@
 
 use crate::container;
 use crate::traps::{FaerieTrapManifest, FaerieTrapSink};
+use anyhow::Error;
 use cranelift_codegen::binemit::{
     Addend, CodeOffset, NullStackmapSink, NullTrapSink, Reloc, RelocSink, Stackmap, StackmapSink,
 };
@@ -12,7 +13,6 @@ use cranelift_module::{
     ModuleNamespace, ModuleResult,
 };
 use faerie;
-use failure::Error;
 use std::fs::File;
 use target_lexicon::Triple;
 
@@ -387,7 +387,7 @@ struct FaerieRelocSink<'a> {
 }
 
 impl<'a> RelocSink for FaerieRelocSink<'a> {
-    fn reloc_ebb(&mut self, _offset: CodeOffset, _reloc: Reloc, _ebb_offset: CodeOffset) {
+    fn reloc_block(&mut self, _offset: CodeOffset, _reloc: Reloc, _block_offset: CodeOffset) {
         unimplemented!();
     }
 

@@ -1359,9 +1359,18 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 rd: _,
                 /*ref*/ mem: _,
                 ..
-            } => unimplemented!(),
-            &Inst::StoreP64 { .. } => unimplemented!(),
-            &Inst::LoadP64 { .. } => unimplemented!(),
+            } => {
+              // TODO.
+              sink.put4(0);
+            }
+            &Inst::StoreP64 { .. } => {
+              // TODO.
+              sink.put4(0);
+            }
+            &Inst::LoadP64 { .. } => {
+              // TODO.
+              sink.put4(0);
+            }
             &Inst::Mov { rd, rm } => {
                 // Encoded as ORR rd, rm, zero.
                 sink.put4(enc_arith_rrr(0b10101010_000, 0b000_000, rd, zero_reg(), rm));

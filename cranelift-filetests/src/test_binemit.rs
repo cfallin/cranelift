@@ -73,8 +73,8 @@ impl binemit::CodeSink for TextSink {
         self.offset += 8;
     }
 
-    fn reloc_ebb(&mut self, reloc: binemit::Reloc, ebb_offset: binemit::CodeOffset) {
-        write!(self.text, "{}({}) ", reloc, ebb_offset).unwrap();
+    fn reloc_block(&mut self, reloc: binemit::Reloc, block_offset: binemit::CodeOffset) {
+        write!(self.text, "{}({}) ", reloc, block_offset).unwrap();
     }
 
     fn reloc_external(
@@ -142,15 +142,18 @@ impl SubTest for TestBinEmit {
             .values()
             .map(|slot| slot.offset.unwrap())
             .min();
-        func.stack_slots.frame_size = min_offset.map(|off| (-off) as u32);
+        func.stack_slots.layout_info = min_offset.map(|off| ir::StackLayoutInfo {
+            frame_size: (-off) as u32,
+            inbound_args_size: 0,
+        });
 
         let opt_level = isa.flags().opt_level();
 
         // Give an encoding to any instruction that doesn't already have one.
         let mut divert = RegDiversions::new();
-        for ebb in func.layout.ebbs() {
+        for block in func.layout.blocks() {
             divert.clear();
-            for inst in func.layout.ebb_insts(ebb) {
+            for inst in func.layout.block_insts(block) {
                 if !func.encodings[inst].is_legal() {
                     // Find an encoding that satisfies both immediate field and register
                     // constraints.
@@ -178,7 +181,7 @@ impl SubTest for TestBinEmit {
             }
         }
 
-        // Relax branches and compute EBB offsets based on the encodings.
+        // Relax branches and compute block offsets based on the encodings.
         let mut cfg = ControlFlowGraph::with_function(&func);
         let mut domtree = DominatorTree::with_function(&func, &cfg);
         let CodeInfo { total_size, .. } =
@@ -215,15 +218,15 @@ impl SubTest for TestBinEmit {
 
         // Now emit all instructions.
         let mut sink = TextSink::new();
-        for ebb in func.layout.ebbs() {
+        for block in func.layout.blocks() {
             divert.clear();
             // Correct header offsets should have been computed by `relax_branches()`.
             assert_eq!(
-                sink.offset, func.offsets[ebb],
+                sink.offset, func.offsets[block],
                 "Inconsistent {} header offset",
-                ebb
+                block
             );
-            for (offset, inst, enc_bytes) in func.inst_offsets(ebb, &encinfo) {
+            for (offset, inst, enc_bytes) in func.inst_offsets(block, &encinfo) {
                 assert_eq!(sink.offset, offset);
                 sink.text.clear();
                 let enc = func.encodings[inst];
@@ -231,18 +234,8 @@ impl SubTest for TestBinEmit {
                 // Send legal encodings into the emitter.
                 if enc.is_legal() {
                     // Generate a better error message if output locations are not specified.
-                    if let Some(&v) = func
-                        .dfg
-                        .inst_results(inst)
-                        .iter()
-                        .find(|&&v| !func.locations[v].is_assigned())
-                    {
-                        return Err(format!(
-                            "Missing register/stack slot for {} in {}",
-                            v,
-                            func.dfg.display_inst(inst, isa)
-                        ));
-                    }
+                    validate_location_annotations(&func, inst, isa, false)?;
+
                     let before = sink.offset;
                     isa.emit_inst(&func, inst, &mut divert, &mut sink);
                     let emitted = sink.offset - before;
@@ -260,19 +253,9 @@ impl SubTest for TestBinEmit {
                 if let Some(want) = bins.remove(&inst) {
                     if !enc.is_legal() {
                         // A possible cause of an unencoded instruction is a missing location for
-                        // one of the input operands.
-                        if let Some(&v) = func
-                            .dfg
-                            .inst_args(inst)
-                            .iter()
-                            .find(|&&v| !func.locations[v].is_assigned())
-                        {
-                            return Err(format!(
-                                "Missing register/stack slot for {} in {}",
-                                v,
-                                func.dfg.display_inst(inst, isa)
-                            ));
-                        }
+                        // one of the input/output operands.
+                        validate_location_annotations(&func, inst, isa, true)?;
+                        validate_location_annotations(&func, inst, isa, false)?;
 
                         // Do any encodings exist?
                         let encodings = isa
@@ -310,8 +293,8 @@ impl SubTest for TestBinEmit {
 
         for (jt, jt_data) in func.jump_tables.iter() {
             let jt_offset = func.jt_offsets[jt];
-            for ebb in jt_data.iter() {
-                let rel_offset: i32 = func.offsets[*ebb] as i32 - jt_offset as i32;
+            for block in jt_data.iter() {
+                let rel_offset: i32 = func.offsets[*block] as i32 - jt_offset as i32;
                 sink.put4(rel_offset as u32)
             }
         }
@@ -334,6 +317,30 @@ impl SubTest for TestBinEmit {
             ));
         }
 
+        Ok(())
+    }
+}
+
+/// Validate registers/stack slots are correctly annotated.
+fn validate_location_annotations(
+    func: &ir::Function,
+    inst: ir::Inst,
+    isa: &dyn isa::TargetIsa,
+    validate_inputs: bool,
+) -> SubtestResult<()> {
+    let values = if validate_inputs {
+        func.dfg.inst_args(inst)
+    } else {
+        func.dfg.inst_results(inst)
+    };
+
+    if let Some(&v) = values.iter().find(|&&v| !func.locations[v].is_assigned()) {
+        Err(format!(
+            "Need register/stack slot annotation for {} in {}",
+            v,
+            func.dfg.display_inst(inst, isa)
+        ))
+    } else {
         Ok(())
     }
 }
