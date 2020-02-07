@@ -301,6 +301,36 @@ fn create_reg_universe() -> RealRegUniverse {
 }
 
 //=============================================================================
+// Printing support.  FIXME JRS 2020Feb07: this isn't x64-specific.  Move it
+// somewhere else (to the RA interface, I think)
+
+// A trait for printing instruction bits and pieces, with the the ability to
+// take a contextualising RealRegUniverse that is used to give proper names to
+// registers.
+trait ShowWithRRU {
+    fn show(&self, mb_rru: Option<&RealRegUniverse>) -> String;
+}
+
+fn show_reg(reg: &Reg, mb_rru: Option<&RealRegUniverse>) -> String {
+    if reg.is_real() {
+        if let Some(rru) = mb_rru {
+            let reg_ix = reg.get_index();
+            if reg_ix < rru.regs.len() {
+                return "%".to_string() + &rru.regs[reg_ix].1;
+            } else {
+                // We have a real reg which isn't listed in the universe.  Per
+                // the regalloc.rs interface requirements, this is Totally Not
+                // Allowed.  Print it generically anyway, so we have something
+                // to debug.
+                return format!("!!{:?}!!", reg);
+            }
+        }
+    }
+    // The reg is virtual, or we have no universe.  Be generic.
+    format!("{:?}", reg)
+}
+
+//=============================================================================
 // Instruction sub-components: definitions and printing
 
 // A Memory Address.  These denote a 64-bit value only.
@@ -308,32 +338,43 @@ fn create_reg_universe() -> RealRegUniverse {
 pub enum Addr {
     // sign-extend-32-to-64(Immediate) + Register
     IR {
-        simm32: u32,
+        simm32: i32,
         base: Reg,
     },
     // sign-extend-32-to-64(Immediate) + Register1 + (Register2 << Shift)
     IRRS {
-        simm32: u32,
+        simm32: i32,
         base: Reg,
         index: Reg,
         shift: u8, /* 0 .. 3 only */
     },
 }
-impl fmt::Debug for Addr {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+pub fn Addr_IR(simm32: i32, base: Reg) -> Addr {
+    Addr::IR { simm32, base }
+}
+pub fn Addr_IRRS(simm32: i32, base: Reg, index: Reg, shift: u8) -> Addr {
+    debug_assert!(shift <= 3);
+    Addr::IRRS {
+        simm32,
+        base,
+        index,
+        shift,
+    }
+}
+impl ShowWithRRU for Addr {
+    fn show(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            Addr::IR { simm32, base } => write!(fmt, "{}({:?})", *simm32 as i32, base),
+            Addr::IR { simm32, base } => format!("{}({})", *simm32, show_reg(base, mb_rru)),
             Addr::IRRS {
                 simm32,
                 base,
                 index,
                 shift,
-            } => write!(
-                fmt,
-                "{}({:?},{:?},{})",
-                *simm32 as i32,
-                base,
-                index,
+            } => format!(
+                "{}({},{},{})",
+                *simm32,
+                show_reg(base, mb_rru),
+                show_reg(index, mb_rru),
                 1 << shift
             ),
         }
@@ -349,14 +390,23 @@ impl fmt::Debug for Addr {
 pub enum RMI {
     R { reg: Reg },
     M { addr: Addr },
-    I { simm32: u32 },
+    I { simm32: i32 },
 }
-impl fmt::Debug for RMI {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+pub fn RMI_R(reg: Reg) -> RMI {
+    RMI::R { reg }
+}
+pub fn RMI_M(addr: Addr) -> RMI {
+    RMI::M { addr }
+}
+pub fn RMI_I(simm32: i32) -> RMI {
+    RMI::I { simm32 }
+}
+impl ShowWithRRU for RMI {
+    fn show(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            RMI::R { reg } => reg.fmt(fmt),
-            RMI::M { addr } => addr.fmt(fmt),
-            RMI::I { simm32 } => write!(fmt, "{}", *simm32 as i32),
+            RMI::R { reg } => show_reg(reg, mb_rru),
+            RMI::M { addr } => addr.show(mb_rru),
+            RMI::I { simm32 } => format!("${}", *simm32),
         }
     }
 }
@@ -368,11 +418,17 @@ pub enum RM {
     R { reg: Reg },
     M { addr: Addr },
 }
-impl fmt::Debug for RM {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+pub fn RM_R(reg: Reg) -> RM {
+    RM::R { reg }
+}
+pub fn RM_M(addr: Addr) -> RM {
+    RM::M { addr }
+}
+impl ShowWithRRU for RM {
+    fn show(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            RM::R { reg } => reg.fmt(fmt),
-            RM::M { addr } => addr.fmt(fmt),
+            RM::R { reg } => show_reg(reg, mb_rru),
+            RM::M { addr } => addr.show(mb_rru),
         }
     }
 }
@@ -493,7 +549,7 @@ pub enum Inst {
     /// (imm32 imm64) reg
     Imm_R {
         dstIs64: bool,
-        simm64: u64,
+        simm64: i64,
         dst: Reg,
     },
 
@@ -554,7 +610,7 @@ pub enum Inst {
 
     /// jmp simm32
     JmpKnown {
-        simm32: u32,
+        simm32: i32,
     },
 
     /// jmpq (reg mem)
@@ -565,8 +621,8 @@ pub enum Inst {
     /// jcond cond simm32 simm32
     JmpCond {
         cc: CC,
-        tsimm32: u32,
-        fsimm32: u32,
+        tsimm32: i32,
+        fsimm32: i32,
     },
 
     /// call simm32
@@ -617,11 +673,110 @@ pub enum Inst {
     //zz     },
 }
 
+// Handy constructors for Insts.
+
+// Will the lower 32 bits of the given value sign-extend back to the same value?
+fn fitsIn32bits(x: i64) -> bool {
+    x == ((x << 32) >> 32)
+}
+
+pub fn i_Alu_RMI_R(is64: bool, op: RMI_R_Op, src: RMI, dst: Reg) -> Inst {
+    Inst::Alu_RMI_R { is64, op, src, dst }
+}
+
+pub fn i_Imm_R(dstIs64: bool, simm64: i64, dst: Reg) -> Inst {
+    if !dstIs64 {
+        debug_assert!(fitsIn32bits(simm64));
+    }
+    Inst::Imm_R {
+        dstIs64,
+        simm64,
+        dst,
+    }
+}
+
+pub fn i_Mov_R_R(is64: bool, src: Reg, dst: Reg) -> Inst {
+    Inst::Mov_R_R { is64, src, dst }
+}
+
+pub fn i_MovZX_M_R(extMode: ExtMode, addr: Addr, dst: Reg) -> Inst {
+    Inst::MovZX_M_R { extMode, addr, dst }
+}
+
+pub fn i_Mov64_M_R(addr: Addr, dst: Reg) -> Inst {
+    Inst::Mov64_M_R { addr, dst }
+}
+
+pub fn i_MovSX_M_R(extMode: ExtMode, addr: Addr, dst: Reg) -> Inst {
+    Inst::MovSX_M_R { extMode, addr, dst }
+}
+
+pub fn i_Mov_R_M(
+    size: u8, // 1, 2, 4 or 8
+    src: Reg,
+    addr: Addr,
+) -> Inst {
+    debug_assert!(size == 8 || size == 4 || size == 2 || size == 1);
+    Inst::Mov_R_M { size, src, addr }
+}
+
+pub fn i_Shift_R(
+    is64: bool,
+    kind: ShiftKind,
+    nBits: u8, // 1 .. #bits-in-type - 1, or 0 to mean "%cl"
+    dst: Reg,
+) -> Inst {
+    debug_assert!(nBits < if is64 { 64 } else { 32 });
+    Inst::Shift_R {
+        is64,
+        kind,
+        nBits,
+        dst,
+    }
+}
+
+pub fn i_Cmp_RMI_R(
+    size: u8, // 1, 2, 4 or 8
+    src: RMI,
+    dst: Reg,
+) -> Inst {
+    debug_assert!(size == 8 || size == 4 || size == 2 || size == 1);
+    Inst::Cmp_RMI_R { size, src, dst }
+}
+
+pub fn i_Push(is64: bool, src: RMI) -> Inst {
+    Inst::Push { is64, src }
+}
+
+pub fn i_JmpKnown(simm32: i32) -> Inst {
+    Inst::JmpKnown { simm32 }
+}
+
+pub fn i_JmpUnknown(target: RM) -> Inst {
+    Inst::JmpUnknown { target }
+}
+
+pub fn i_JmpCond(cc: CC, tsimm32: i32, fsimm32: i32) -> Inst {
+    Inst::JmpCond {
+        cc,
+        tsimm32,
+        fsimm32,
+    }
+}
+
+pub fn i_CallKnown(target: FuncRef) -> Inst {
+    Inst::CallKnown { target }
+}
+
+pub fn i_CallUnknown(target: RM) -> Inst {
+    Inst::CallUnknown { target }
+}
+
 //=============================================================================
 // Instructions: printing
 
-impl fmt::Debug for Inst {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+impl ShowWithRRU for Inst {
+    fn show(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         fn ljustify(s: String) -> String {
             let w = 7;
             if s.len() >= w {
@@ -649,75 +804,59 @@ impl fmt::Debug for Inst {
                 2 => "2".to_string(),
                 4 => "4".to_string(),
                 8 => "8".to_string(),
-                _ => panic!("Inst(x64).fmt.suffixBWLQ"),
+                _ => panic!("Inst(x64).show.suffixBWLQ"),
             }
         }
 
         match self {
-            Inst::Alu_RMI_R { is64, op, src, dst } => write!(
-                fmt,
-                "{} {:?}, {:?}",
+            Inst::Alu_RMI_R { is64, op, src, dst } => format!(
+                "{} {}, {}",
                 ljustify2(op.to_string(), suffixLQ(*is64)),
-                src,
-                dst
+                src.show(mb_rru),
+                show_reg(dst, mb_rru),
             ),
             Inst::Imm_R {
                 dstIs64,
                 simm64,
                 dst,
             } => {
-                if *dstIs64 {
-                    write!(
-                        fmt,
-                        "{} ${:?},{:?}",
-                        ljustify("movabsq".to_string()),
-                        simm64,
-                        dst
-                    )
-                } else {
-                    write!(
-                        fmt,
-                        "{} ${:?},{:?}",
-                        ljustify("movl".to_string()),
-                        simm64,
-                        dst
-                    )
-                }
+                let name = if *dstIs64 { "movabsq" } else { "movl" };
+                format!(
+                    "{} ${}, {}",
+                    ljustify(name.to_string()),
+                    simm64,
+                    show_reg(dst, mb_rru)
+                )
             }
-            Inst::Mov_R_R { is64, src, dst } => write!(
-                fmt,
-                "{} {:?}, {:?}",
+            Inst::Mov_R_R { is64, src, dst } => format!(
+                "{} {}, {}",
                 ljustify2("mov".to_string(), suffixLQ(*is64)),
-                src,
-                dst
+                show_reg(src, mb_rru),
+                show_reg(dst, mb_rru)
             ),
-            Inst::MovZX_M_R { extMode, addr, dst } => write!(
-                fmt,
+            Inst::MovZX_M_R { extMode, addr, dst } => format!(
                 "{} {:?}, {:?}",
                 ljustify2("movz".to_string(), extMode.to_string()),
-                addr,
-                dst
+                addr.show(mb_rru),
+                show_reg(dst, mb_rru)
             ),
-            Inst::Mov64_M_R { addr, dst } => write!(
-                fmt,
-                "{} {:?}, {:?}",
+            Inst::Mov64_M_R { addr, dst } => format!(
+                "{} {}, {}",
                 ljustify("movq".to_string()),
-                addr,
-                dst
+                addr.show(mb_rru),
+                show_reg(dst, mb_rru)
             ),
-            Inst::MovSX_M_R { extMode, addr, dst } => write!(
-                fmt,
-                "{} {:?}, {:?}",
+            Inst::MovSX_M_R { extMode, addr, dst } => format!(
+                "{} {}, {}",
                 ljustify2("movs".to_string(), extMode.to_string()),
-                addr,
-                dst
+                addr.show(mb_rru),
+                show_reg(dst, mb_rru)
             ),
-            Inst::Mov_R_M { size, src, addr } => write!(
-                fmt,
-                "{} {:?}. {:?}",
+            Inst::Mov_R_M { size, src, addr } => format!(
+                "{} {}. {}",
                 ljustify2("mov".to_string(), suffixBWLQ(*size)),
-                src,
-                addr
+                show_reg(src, mb_rru),
+                addr.show(mb_rru)
             ),
             Inst::Shift_R {
                 is64,
@@ -726,62 +865,60 @@ impl fmt::Debug for Inst {
                 dst,
             } => {
                 if *nBits == 0 {
-                    write!(
-                        fmt,
-                        "{} %cl, {:?}",
+                    format!(
+                        "{} %cl, {}",
                         ljustify2(kind.to_string(), suffixLQ(*is64)),
-                        dst
+                        show_reg(dst, mb_rru)
                     )
                 } else {
-                    write!(
-                        fmt,
-                        "{} ${}, {:?}",
+                    format!(
+                        "{} ${}, {}",
                         ljustify2(kind.to_string(), suffixLQ(*is64)),
                         nBits,
-                        dst
+                        show_reg(dst, mb_rru)
                     )
                 }
             }
-            Inst::Cmp_RMI_R { size, src, dst } => write!(
-                fmt,
-                "{} {:?}, {:?}",
+            Inst::Cmp_RMI_R { size, src, dst } => format!(
+                "{} {}, {}",
                 ljustify2("cmp".to_string(), suffixBWLQ(*size)),
-                src,
-                dst
+                src.show(mb_rru),
+                show_reg(dst, mb_rru)
             ),
-            Inst::Push { is64, src } => write!(
-                fmt,
-                "{} {:?}",
+            Inst::Push { is64, src } => format!(
+                "{} {}",
                 ljustify2("push".to_string(), suffixLQ(*is64)),
-                src
+                src.show(mb_rru)
             ),
-            Inst::JmpKnown { simm32 } => write!(
-                fmt,
-                "{} simm32={}",
-                ljustify("jmp".to_string()),
-                *simm32 as i32
-            ),
+            Inst::JmpKnown { simm32 } => {
+                format!("{} simm32={}", ljustify("jmp".to_string()), *simm32)
+            }
             Inst::JmpUnknown { target } => {
-                write!(fmt, "{} {:?}", ljustify("jmp".to_string()), target)
+                format!("{} {}", ljustify("jmp".to_string()), target.show(mb_rru))
             }
             Inst::JmpCond {
                 cc,
                 tsimm32,
                 fsimm32,
-            } => write!(
-                fmt,
+            } => format!(
                 "{} tsimm32={} fsimm32={}",
                 ljustify2("j".to_string(), cc.to_string()),
-                *tsimm32 as i32,
-                *fsimm32 as i32
+                *tsimm32,
+                *fsimm32
             ),
-            Inst::CallKnown { target } => {
-                write!(fmt, "{} {:?}", ljustify("call".to_string()), target)
-            }
+            Inst::CallKnown { target } => format!("{} {:?}", ljustify("call".to_string()), target),
             Inst::CallUnknown { target } => {
-                write!(fmt, "{} {:?}", ljustify("call".to_string()), target)
+                format!("{} {}", ljustify("call".to_string()), target.show(mb_rru))
             }
         }
+    }
+}
+
+// Temp hook for legacy printing machinery
+impl fmt::Debug for Inst {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        // Print the insn without a Universe :-(
+        write!(fmt, "{}", self.show(None))
     }
 }
 
@@ -1090,6 +1227,10 @@ fn x64_map_regs(
 //=============================================================================
 // Instructions and subcomponents: emission
 
+fn x64_emit<CS: CodeSink>(_inst: &Inst, _sink: &mut CS) {
+    unimplemented!()
+}
+
 //=============================================================================
 // Instructions: misc functions and external interface
 
@@ -1119,17 +1260,6 @@ impl MachInst for Inst {
 
     fn is_term(&self) -> MachTerminator {
         unimplemented!()
-        //zz         match self {
-        //zz             &Inst::Ret {} => MachTerminator::Ret,
-        //zz             &Inst::Jump { dest } => MachTerminator::Uncond(dest.as_block_index().unwrap()),
-        //zz             &Inst::CondBr {
-        //zz                 taken, not_taken, ..
-        //zz             } => MachTerminator::Cond(
-        //zz                 taken.as_block_index().unwrap(),
-        //zz                 not_taken.as_block_index().unwrap(),
-        //zz             ),
-        //zz             _ => MachTerminator::None,
-        //zz         }
     }
 
     fn get_spillslot_size(rc: RegClass, ty: Type) -> u32 {
@@ -1170,14 +1300,10 @@ impl MachInst for Inst {
 
     fn gen_move(_to_reg: Reg, _from_reg: Reg) -> Inst {
         unimplemented!()
-        //zz         Inst::mov(to_reg, from_reg)
     }
 
     fn gen_nop(_preferred_size: usize) -> Inst {
         unimplemented!()
-        //zz         // We can't give a NOP (or any insn) < 4 bytes.
-        //zz         assert!(preferred_size >= 4);
-        //zz         Inst::Nop4
     }
 
     fn maybe_direct_reload(&self, _reg: VirtualReg, _slot: SpillSlot) -> Option<Inst> {
@@ -1202,61 +1328,11 @@ impl MachInst for Inst {
     }
 
     fn with_fallthrough_block(&mut self, _fallthrough: Option<BlockIndex>) {
-        //zz         match self {
-        //zz             &mut Inst::CondBr {
-        //zz                 taken,
-        //zz                 not_taken,
-        //zz                 kind,
-        //zz             } => {
-        //zz                 if taken.as_block_index() == fallthrough {
-        //zz                     *self = Inst::CondBrLowered {
-        //zz                         target: not_taken,
-        //zz                         inverted: true,
-        //zz                         kind,
-        //zz                     };
-        //zz                 } else if not_taken.as_block_index() == fallthrough {
-        //zz                     *self = Inst::CondBrLowered {
-        //zz                         target: taken,
-        //zz                         inverted: false,
-        //zz                         kind,
-        //zz                     };
-        //zz                 } else {
-        //zz                     // We need a compound sequence (condbr / uncond-br).
-        //zz                     *self = Inst::CondBrLoweredCompound {
-        //zz                         taken,
-        //zz                         not_taken,
-        //zz                         kind,
-        //zz                     };
-        //zz                 }
-        //zz             }
-        //zz             &mut Inst::Jump { dest } => {
-        //zz                 if dest.as_block_index() == fallthrough {
-        //zz                     *self = Inst::Nop;
-        //zz                 }
-        //zz             }
-        //zz             _ => {}
-        //zz         }
+        unimplemented!()
     }
 
     fn with_block_offsets(&mut self, _my_offset: CodeOffset, _targets: &[CodeOffset]) {
         unimplemented!()
-        //zz         match self {
-        //zz             &mut Inst::CondBrLowered { ref mut target, .. } => {
-        //zz                 target.lower(targets, my_offset);
-        //zz             }
-        //zz             &mut Inst::CondBrLoweredCompound {
-        //zz                 ref mut taken,
-        //zz                 ref mut not_taken,
-        //zz                 ..
-        //zz             } => {
-        //zz                 taken.lower(targets, my_offset);
-        //zz                 not_taken.lower(targets, my_offset);
-        //zz             }
-        //zz             &mut Inst::Jump { ref mut dest } => {
-        //zz                 dest.lower(targets, my_offset);
-        //zz             }
-        //zz             _ => {}
-        //zz         }
     }
 
     fn reg_universe() -> RealRegUniverse {
@@ -1264,164 +1340,60 @@ impl MachInst for Inst {
     }
 }
 
-//zz impl BranchTarget {
-//zz     fn lower(&mut self, targets: &[CodeOffset], my_offset: CodeOffset) {
-//zz         match self {
-//zz             &mut BranchTarget::Block(bix) => {
-//zz                 let bix = bix as usize;
-//zz                 assert!(bix < targets.len());
-//zz                 let block_offset_in_func = targets[bix];
-//zz                 let branch_offset = (block_offset_in_func as isize) - (my_offset as isize);
-//zz                 *self = BranchTarget::ResolvedOffset(branch_offset);
-//zz             }
-//zz             &mut BranchTarget::ResolvedOffset(..) => {}
-//zz         }
-//zz     }
-//zz
-//zz     fn as_block_index(&self) -> Option<BlockIndex> {
-//zz         match self {
-//zz             &BranchTarget::Block(bix) => Some(bix),
-//zz             _ => None,
-//zz         }
-//zz     }
-//zz
-//zz     fn as_offset(&self) -> Option<isize> {
-//zz         match self {
-//zz             &BranchTarget::ResolvedOffset(off) => Some(off),
-//zz             _ => None,
-//zz         }
-//zz     }
-//zz
-//zz     fn as_off26(&self) -> Option<u32> {
-//zz         self.as_offset().and_then(|i| {
-//zz             if (i < (1 << 26)) && (i >= -(1 << 26)) {
-//zz                 Some((i as u32) & ((1 << 26) - 1))
-//zz             } else {
-//zz                 None
-//zz             }
-//zz         })
-//zz     }
-//zz }
-//zz
-//zz fn machreg_to_gpr(m: Reg) -> u32 {
-//zz     assert!(m.is_real());
-//zz     m.to_real_reg().get_hw_encoding() as u32
-//zz }
-//zz
-//zz fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: Reg, rn: Reg, rm: Reg) -> u32 {
-//zz     ((bits_31_21 as u32) << 21)
-//zz         | ((bits_15_10 as u32) << 10)
-//zz         | machreg_to_gpr(rd)
-//zz         | (machreg_to_gpr(rn) << 5)
-//zz         | (machreg_to_gpr(rm) << 16)
-//zz }
-//zz
-//zz fn enc_arith_rr_imm12(bits_31_24: u8, immshift: u8, imm12: u16, rn: Reg, rd: Reg) -> u32 {
-//zz     ((bits_31_24 as u32) << 24)
-//zz         | ((immshift as u32) << 22)
-//zz         | ((imm12 as u32) << 10)
-//zz         | (machreg_to_gpr(rn) << 5)
-//zz         | machreg_to_gpr(rd)
-//zz }
-//zz
-//zz fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: Reg) -> u32 {
-//zz     ((bits_31_23 as u32) << 23)
-//zz         | ((imm_bits as u32) << 10)
-//zz         | (machreg_to_gpr(rn) << 5)
-//zz         | machreg_to_gpr(rd)
-//zz }
-//zz
-//zz fn enc_jump26(off_26_0: u32) -> u32 {
-//zz     assert!(off_26_0 < (1 << 26));
-//zz     (0b000101u32 << 26) | off_26_0
-//zz }
-
 impl<CS: CodeSink> MachInstEmit<CS> for Inst {
-    fn emit(&self, _sink: &mut CS) {
-        unimplemented!()
-        //zz         match self {
-        //zz             &Inst::AluRRR { alu_op, rd, rn, rm } => {
-        //zz                 let top11 = match alu_op {
-        //zz                     ALUOp::Add32 => 0b00001011_001,
-        //zz                     ALUOp::Add64 => 0b10001011_001,
-        //zz                     ALUOp::Sub32 => 0b01001011_001,
-        //zz                     ALUOp::Sub64 => 0b11001011_001,
-        //zz                     ALUOp::Orr32 => 0b00101010_000,
-        //zz                     ALUOp::Orr64 => 0b10101010_000,
-        //zz                     ALUOp::SubS32 => 0b01101011_001,
-        //zz                     ALUOp::SubS64 => 0b11101011_001,
-        //zz                     _ => unimplemented!(),
-        //zz                 };
-        //zz                 sink.put4(enc_arith_rrr(top11, 0b000_000, rd, rn, rm));
-        //zz             }
-        //zz             &Inst::AluRRImm12 {
-        //zz                 alu_op,
-        //zz                 rd,
-        //zz                 rn,
-        //zz                 ref imm12,
-        //zz             } => {
-        //zz                 let top8 = match alu_op {
-        //zz                     ALUOp::Add32 => 0b000_10001,
-        //zz                     ALUOp::Add64 => 0b100_10001,
-        //zz                     ALUOp::Sub32 => 0b010_10001,
-        //zz                     ALUOp::Sub64 => 0b010_10001,
-        //zz                     _ => unimplemented!(),
-        //zz                 };
-        //zz                 sink.put4(enc_arith_rr_imm12(
-        //zz                     top8,
-        //zz                     imm12.shift_bits(),
-        //zz                     imm12.imm_bits(),
-        //zz                     rn,
-        //zz                     rd,
-        //zz                 ));
-        //zz             }
-        //zz             &Inst::AluRRImmLogic {
-        //zz                 alu_op,
-        //zz                 rd,
-        //zz                 rn,
-        //zz                 ref imml,
-        //zz             } => {
-        //zz                 let top9 = match alu_op {
-        //zz                     ALUOp::Orr32 => 0b001_100100,
-        //zz                     ALUOp::Orr64 => 0b101_100100,
-        //zz                     ALUOp::And32 => 0b000_100100,
-        //zz                     ALUOp::And64 => 0b100_100100,
-        //zz                     _ => unimplemented!(),
-        //zz                 };
-        //zz                 sink.put4(enc_arith_rr_imml(top9, imml.enc_bits(), rn, rd));
-        //zz             }
-        //zz             &Inst::AluRRImmShift { rd: _, rn: _, .. } => unimplemented!(),
-        //zz             &Inst::AluRRRShift { rd: _, rn: _, rm: _, .. } => unimplemented!(),
-        //zz             &Inst::AluRRRExtend { rd: _, rn: _, rm: _, .. } => unimplemented!(),
-        //zz             &Inst::ULoad8 { rd: _, /*ref*/ mem: _, .. }
-        //zz             | &Inst::SLoad8 { rd: _, /*ref*/ mem: _, .. }
-        //zz             | &Inst::ULoad16 { rd: _, /*ref*/ mem: _, .. }
-        //zz             | &Inst::SLoad16 { rd: _, /*ref*/ mem: _, .. }
-        //zz             | &Inst::ULoad32 { rd: _, /*ref*/ mem: _, .. }
-        //zz             | &Inst::SLoad32 { rd: _, /*ref*/ mem: _, .. }
-        //zz             | &Inst::ULoad64 { rd: _, /*ref*/ mem: _, .. } => unimplemented!(),
-        //zz             &Inst::Store8 { rd: _, /*ref*/ mem: _, .. }
-        //zz             | &Inst::Store16 { rd: _, /*ref*/ mem: _, .. }
-        //zz             | &Inst::Store32 { rd: _, /*ref*/ mem: _, .. }
-        //zz             | &Inst::Store64 { rd: _, /*ref*/ mem: _, .. } => unimplemented!(),
-        //zz             &Inst::MovZ { rd: _, .. } => unimplemented!(),
-        //zz             &Inst::Jump { ref dest } => {
-        //zz                 assert!(dest.as_off26().is_some());
-        //zz                 sink.put4(enc_jump26(dest.as_off26().unwrap()));
-        //zz             }
-        //zz             &Inst::Ret {} => {
-        //zz                 sink.put4(0xd65f03c0);
-        //zz             }
-        //zz             &Inst::Call { .. } => unimplemented!(),
-        //zz             &Inst::CallInd { rn: _, .. } => unimplemented!(),
-        //zz             &Inst::CondBr { .. } => panic!("Unlowered CondBr during binemit!"),
-        //zz             &Inst::CondBrLowered { .. } => unimplemented!(),
-        //zz             &Inst::CondBrLoweredCompound { .. } => unimplemented!(),
-        //zz             &Inst::Nop => {}
-        //zz             &Inst::Nop4 => {
-        //zz                 sink.put4(0xd503201f);
-        //zz             }
-        //zz             &Inst::LiveIns => {}
-        //zz         }
+    fn emit(&self, sink: &mut CS) {
+        x64_emit(self, sink);
     }
+}
+
+//=============================================================================
+// Tests for the emitter
+
+// to see stdout: cargo test -- --nocapture
+
+#[cfg(test)]
+mod test_utils {
+    use super::*;
+}
+
+#[test]
+fn i_am_a_test() {
+    println!("QQQQ BEGIN I am a test");
+
+    let rax = info_RAX().0.to_reg();
+    let rbx = info_RBX().0.to_reg();
+    let rcx = info_RCX().0.to_reg();
+    let rdx = info_RDX().0.to_reg();
+    let rsi = info_RSI().0.to_reg();
+    let rdi = info_RDI().0.to_reg();
+    let rsp = info_RSP().0.to_reg();
+    let rbp = info_RBP().0.to_reg();
+    let r8 = info_R8().0.to_reg();
+    let r15 = info_R15().0.to_reg();
+
+    let mut insts = Vec::<Inst>::new();
+
+    // Cases aimed at checking Addr-esses
+
+    // Is choice of imm size correct, for the IR form?
+    insts.push(i_Mov64_M_R(Addr_IR(-0x8000_0000, rax), r15));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x81, rax), r15));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x80, rax), r15));
+    insts.push(i_Mov64_M_R(Addr_IR(0x7F, rax), r15));
+    insts.push(i_Mov64_M_R(Addr_IR(0x80, rax), r15));
+    insts.push(i_Mov64_M_R(Addr_IR(0x7FFF_FFFF, rax), r15));
+
+    // Is choice of imm size correct, for the IRRS form?
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x8000_0000, rax, r8, 3), r15));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x81, rax, r8, 3), r15));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x80, rax, r8, 3), r15));
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x7F, rax, r8, 3), r15));
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x80, rax, r8, 3), r15));
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x7FFF_FFFF, rax, r8, 3), r15));
+
+    let rru = create_reg_universe();
+    for i in insts {
+        println!("     {}", i.show(Some(&rru)));
+    }
+    println!("QQQQ END I am a test");
 }
