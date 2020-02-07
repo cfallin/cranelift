@@ -28,7 +28,7 @@ byteorder = { version = "1.3.2", default-features = false }
 # Please don't add any unless they are essential to the task of creating binary
 # machine code. Integration tests that need external dependencies can be
 # accomodated in `tests`.
-regalloc = "0.0.4"
+regalloc = "0.0.5"
 
 [build-dependencies]
 cranelift-codegen-meta = { path = "meta", version = "0.57.0" }

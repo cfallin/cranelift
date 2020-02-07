@@ -64,6 +64,15 @@ pub trait ABIBody<I: VCodeInst> {
     /// logic), because the epilogue code comes before the return and the two are
     /// likely closely related.
     fn gen_epilogue(&self) -> Vec<I>;
+
+    /// Get the spill-slot size.
+    fn get_spillslot_size(&self, rc: RegClass, ty: Type) -> u32;
+
+    /// Generate a spill.
+    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, ty: Type) -> Vec<I>;
+
+    /// Generate a reload (fill).
+    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, ty: Type) -> Vec<I>;
 }
 
 /// Trait implemented by an object that tracks ABI-related state and can

@@ -33,6 +33,12 @@ pub fn xreg(num: u8) -> Reg {
     )
 }
 
+/// Get a reference to a V-register (vector/FP register).
+pub fn vreg(num: u8) -> Reg {
+    assert!(num < 32);
+    Reg::new_real(RegClass::V128, /* enc = */ num, /* index = */ num)
+}
+
 /// Get a reference to the zero-register.
 pub fn zero_reg() -> Reg {
     // This should be the same as what xreg(31) returns.
@@ -1292,19 +1298,23 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 };
                 sink.put4(enc_arith_rr_imml(top9, imml.enc_bits(), rn, rd));
             }
+
             &Inst::AluRRImmShift { rd: _, rn: _, .. } => unimplemented!(),
+
             &Inst::AluRRRShift {
                 rd: _,
                 rn: _,
                 rm: _,
                 ..
             } => unimplemented!(),
+
             &Inst::AluRRRExtend {
                 rd: _,
                 rn: _,
                 rm: _,
                 ..
             } => unimplemented!(),
+
             &Inst::ULoad8 {
                 rd: _,
                 /*ref*/ mem: _,
@@ -1339,7 +1349,11 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 rd: _,
                 /*ref*/ mem: _,
                 ..
-            } => unimplemented!(),
+            } => {
+                // TODO.
+                sink.put4(0);
+            }
+
             &Inst::Store8 {
                 rd: _,
                 /*ref*/ mem: _,
@@ -1363,6 +1377,7 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 // TODO.
                 sink.put4(0);
             }
+
             &Inst::StoreP64 { .. } => {
                 // TODO.
                 sink.put4(0);
@@ -1510,24 +1525,6 @@ impl MachInst for Inst {
             }
             _ => MachTerminator::None,
         }
-    }
-
-    fn get_spillslot_size(rc: RegClass, ty: Type) -> u32 {
-        // We allocate in terms of 8-byte slots.
-        match (rc, ty) {
-            (RegClass::I64, _) => 1,
-            (RegClass::V128, F32) | (RegClass::V128, F64) => 1,
-            (RegClass::V128, _) => 2,
-            _ => panic!("Unexpected register class!"),
-        }
-    }
-
-    fn gen_spill(_to_slot: SpillSlot, _from_reg: RealReg, _ty: Type) -> Inst {
-        unimplemented!()
-    }
-
-    fn gen_reload(_to_reg: RealReg, _from_slot: SpillSlot, _ty: Type) -> Inst {
-        unimplemented!()
     }
 
     fn gen_move(to_reg: Reg, from_reg: Reg) -> Inst {

@@ -1431,42 +1431,6 @@ impl MachInst for Inst {
         unimplemented!()
     }
 
-    fn get_spillslot_size(rc: RegClass, ty: Type) -> u32 {
-        // We allocate in terms of 8-byte slots.
-        match (rc, ty) {
-            (RegClass::I64, _) => 1,
-            (RegClass::V128, F32) | (RegClass::V128, F64) => 1,
-            (RegClass::V128, _) => 2,
-            _ => panic!("Unexpected register class!"),
-        }
-    }
-
-    fn gen_spill(_to_slot: SpillSlot, _from_reg: RealReg, _ty: Type) -> Inst {
-        unimplemented!()
-        //zz         let mem = MemArg::stackslot(to_slot.get());
-        //zz         match from_reg.get_class() {
-        //zz             RegClass::I64 => Inst::Store64 {
-        //zz                 rd: from_reg.to_reg(),
-        //zz                 mem,
-        //zz             },
-        //zz             RegClass::V128 => unimplemented!(),
-        //zz             _ => panic!("Unexpected register class!"),
-        //zz         }
-    }
-
-    fn gen_reload(_to_reg: RealReg, _from_slot: SpillSlot, _ty: Type) -> Inst {
-        unimplemented!()
-        //zz         let mem = MemArg::stackslot(from_slot.get());
-        //zz         match to_reg.get_class() {
-        //zz             RegClass::I64 => Inst::ULoad64 {
-        //zz                 rd: to_reg.to_reg(),
-        //zz                 mem,
-        //zz             },
-        //zz             RegClass::V128 => unimplemented!(),
-        //zz             _ => panic!("Unexpected register class!"),
-        //zz         }
-    }
-
     fn gen_move(_to_reg: Reg, _from_reg: Reg) -> Inst {
         unimplemented!()
     }

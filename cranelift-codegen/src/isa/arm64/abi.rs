@@ -4,6 +4,7 @@
 
 use crate::ir;
 use crate::ir::types;
+use crate::ir::types::*;
 use crate::ir::StackSlot;
 use crate::ir::Type;
 use crate::isa::arm64::inst::*;
@@ -12,7 +13,7 @@ use crate::machinst::*;
 
 use alloc::vec::Vec;
 
-use regalloc::{RealReg, Reg, Set, SpillSlot};
+use regalloc::{RealReg, Reg, RegClass, Set, SpillSlot};
 
 #[derive(Clone, Debug)]
 enum ABIArg {
@@ -155,6 +156,55 @@ fn store_stack(fp_offset: i64, from_reg: Reg, ty: Type) -> Vec<Inst> {
     insts
 }
 
+fn is_callee_save(r: RealReg) -> bool {
+    match r.get_class() {
+        RegClass::I64 => {
+            // x19 - x28 inclusive are callee-saves.
+            r.get_hw_encoding() >= 19 && r.get_hw_encoding() <= 28
+        }
+        RegClass::V128 => {
+            // v8 - v15 inclusive are callee-saves.
+            r.get_hw_encoding() >= 8 && r.get_hw_encoding() <= 15
+        }
+        _ => panic!("Unexpected RegClass"),
+    }
+}
+
+fn is_caller_save(r: RealReg) -> bool {
+    match r.get_class() {
+        RegClass::I64 => {
+            // x0 - x17 inclusive are caller-saves.
+            r.get_hw_encoding() <= 17
+        }
+        RegClass::V128 => {
+            // v0 - v7 inclusive and v16 - v31 inclusive are caller-saves.
+            r.get_hw_encoding() <= 7 || (r.get_hw_encoding() >= 16 && r.get_hw_encoding() <= 31)
+        }
+        _ => panic!("Unexpected RegClass"),
+    }
+}
+
+fn get_callee_saves(regs: Vec<RealReg>) -> Vec<RealReg> {
+    regs.into_iter().filter(|r| is_callee_save(*r)).collect()
+}
+
+fn get_caller_saves_set() -> Set<RealReg> {
+    let mut set = Set::empty();
+    for i in 0..32 {
+        let x = xreg(i).to_real_reg();
+        if is_caller_save(x) {
+            set.insert(x);
+        }
+    }
+    for i in 0..32 {
+        let v = vreg(i).to_real_reg();
+        if is_caller_save(v) {
+            set.insert(v);
+        }
+    }
+    set
+}
+
 impl ABIBody<Inst> for ARM64ABIBody {
     fn liveins(&self) -> Set<RealReg> {
         let mut set: Set<RealReg> = Set::empty();
@@ -238,19 +288,21 @@ impl ABIBody<Inst> for ARM64ABIBody {
 
     // Load from a spillslot.
     fn load_spillslot(&self, slot: SpillSlot, ty: Type, into_reg: Reg) -> Vec<Inst> {
-        // Offset from beginning of spillslot area, which is FP - stackslot_size - 8*spillslots.
+        // Note that when spills/fills are generated, we don't yet know how many
+        // spillslots there will be, so we allocate *downward* from the beginning
+        // of the stackslot area. Hence: FP - stackslot_size - 8*spillslot -
+        // sizeof(ty).
         let slot = slot.get() as i64;
-        let fp_off: i64 =
-            -(self.stackslots_size as i64) - (8 * self.spillslots.unwrap() as i64) + 8 * slot;
+        let ty_size = self.get_spillslot_size(into_reg.get_class(), ty) * 8;
+        let fp_off: i64 = -(self.stackslots_size as i64) - (8 * slot) - ty_size as i64;
         load_stack(fp_off, into_reg, ty)
     }
 
     // Store to a spillslot.
     fn store_spillslot(&self, slot: SpillSlot, ty: Type, from_reg: Reg) -> Vec<Inst> {
-        // Offset from beginning of spillslot area, which is FP - stackslot_size - 8*spillslots.
         let slot = slot.get() as i64;
-        let fp_off: i64 =
-            -(self.stackslots_size as i64) - (8 * self.spillslots.unwrap() as i64) + 8 * slot;
+        let ty_size = self.get_spillslot_size(from_reg.get_class(), ty) * 8;
+        let fp_off: i64 = -(self.stackslots_size as i64) - (8 * slot) - ty_size as i64;
         store_stack(fp_off, from_reg, ty)
     }
 
@@ -299,15 +351,44 @@ impl ABIBody<Inst> for ARM64ABIBody {
             }
         }
 
-        // TODO: save clobbered registers (from regalloc). Save these below spillslots, right above SP,
-        // with "push" (STP) instructions.
+        // Save clobbered registers.
+        let clobbered = get_callee_saves(self.clobbered.to_vec());
+        for reg_pair in clobbered.chunks(2) {
+            let (r1, r2) = if reg_pair.len() == 2 {
+                (reg_pair[0].to_reg(), reg_pair[1].to_reg())
+            } else {
+                (reg_pair[0].to_reg(), zero_reg())
+            };
+            // stp r1, r2, [sp, #-16]!
+            insts.push(Inst::StoreP64 {
+                rt: r1,
+                rt2: r2,
+                mem: PairMemArg::PreIndexed(stack_reg(), SImm7::maybe_from_i64(-16).unwrap()),
+            });
+        }
+
         insts
     }
 
     fn gen_epilogue(&self) -> Vec<Inst> {
         let mut insts = vec![];
 
-        // TODO: restore clobbered registers
+        // Restore clobbered registers.
+        let clobbered = get_callee_saves(self.clobbered.to_vec());
+        for reg_pair in clobbered.chunks(2).rev() {
+            let (r1, r2) = if reg_pair.len() == 2 {
+                (reg_pair[0].to_reg(), reg_pair[1].to_reg())
+            } else {
+                (reg_pair[0].to_reg(), zero_reg())
+            };
+            // ldp r1, r2, [sp], #16
+            insts.push(Inst::LoadP64 {
+                rt: r1,
+                rt2: r2,
+                mem: PairMemArg::PostIndexed(stack_reg(), SImm7::maybe_from_i64(16).unwrap()),
+            });
+        }
+
         // The MOV (alias of ORR) interprets x31 as XZR, so use an ADD here.
         // MOV to SP is an alias of ADD.
         insts.push(Inst::AluRRImm12 {
@@ -326,5 +407,23 @@ impl ABIBody<Inst> for ARM64ABIBody {
         });
         insts.push(Inst::Ret {});
         insts
+    }
+
+    fn get_spillslot_size(&self, rc: RegClass, ty: Type) -> u32 {
+        // We allocate in terms of 8-byte slots.
+        match (rc, ty) {
+            (RegClass::I64, _) => 1,
+            (RegClass::V128, F32) | (RegClass::V128, F64) => 1,
+            (RegClass::V128, _) => 2,
+            _ => panic!("Unexpected register class!"),
+        }
+    }
+
+    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, ty: Type) -> Vec<Inst> {
+        self.store_spillslot(to_slot, ty, from_reg.to_reg())
+    }
+
+    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, ty: Type) -> Vec<Inst> {
+        self.load_spillslot(from_slot, ty, to_reg.to_reg())
     }
 }

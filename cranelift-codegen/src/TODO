@@ -1,8 +1,10 @@
 TODO:
 
+- Testing:
+  - Unit-test framework: (i) vcode, (ii) insts in pseudo-textual form, (iii)
+    machine code bytes.
+
 - Function ABI:
-  - callee side
-    - Save clobbered regs
   - caller side
     - Move args into place; set clobbers (defs of real regs) on Call inst; do
       call; move retvals out
@@ -41,6 +43,10 @@ TODO:
 
   - Handle out-of-range branches and constant-pool references (out of imm19
     range at least)
+
+  - Better isel for:
+    - pre-indexed / post-indexed addressing
+    - Load-pair / store-pair
 
 -------
 

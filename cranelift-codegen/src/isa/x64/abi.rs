@@ -4,6 +4,7 @@
 
 use crate::ir;
 use crate::ir::types;
+use crate::ir::types::*;
 use crate::ir::StackSlot;
 use crate::ir::Type;
 use crate::isa::x64::inst::*;
@@ -12,7 +13,7 @@ use crate::machinst::*;
 
 use alloc::vec::Vec;
 
-use regalloc::{RealReg, Reg, Set, SpillSlot};
+use regalloc::{RealReg, Reg, RegClass, Set, SpillSlot};
 
 pub struct X64ABIBody {}
 
@@ -93,6 +94,24 @@ impl ABIBody<Inst> for X64ABIBody {
     }
 
     fn gen_epilogue(&self) -> Vec<Inst> {
+        unimplemented!()
+    }
+
+    fn get_spillslot_size(&self, rc: RegClass, ty: Type) -> u32 {
+        // We allocate in terms of 8-byte slots.
+        match (rc, ty) {
+            (RegClass::I64, _) => 1,
+            (RegClass::V128, F32) | (RegClass::V128, F64) => 1,
+            (RegClass::V128, _) => 2,
+            _ => panic!("Unexpected register class!"),
+        }
+    }
+
+    fn gen_spill(&self, _to_slot: SpillSlot, _from_reg: RealReg, _ty: Type) -> Vec<Inst> {
+        unimplemented!()
+    }
+
+    fn gen_reload(&self, _to_reg: RealReg, _from_slot: SpillSlot, _ty: Type) -> Vec<Inst> {
         unimplemented!()
     }
 }
