@@ -299,39 +299,39 @@ impl ImmShift {
 
 /// A 16-bit immediate for a MOVZ instruction, with a {0,16,32,48}-bit shift.
 #[derive(Clone, Copy, Debug)]
-pub struct MovZConst {
+pub struct MoveWideConst {
     bits: u16,
     shift: u8, // shifted 16*shift bits to the left.
 }
 
-impl MovZConst {
-    /// Construct a MovZConst from an arbitrary 64-bit constant if possible.
-    pub fn maybe_from_u64(value: u64) -> Option<MovZConst> {
+impl MoveWideConst {
+    /// Construct a MoveWideConst from an arbitrary 64-bit constant if possible.
+    pub fn maybe_from_u64(value: u64) -> Option<MoveWideConst> {
         let mask0 = 0x0000_0000_0000_ffffu64;
         let mask1 = 0x0000_0000_ffff_0000u64;
         let mask2 = 0x0000_ffff_0000_0000u64;
         let mask3 = 0xffff_0000_0000_0000u64;
 
         if value == (value & mask0) {
-            return Some(MovZConst {
+            return Some(MoveWideConst {
                 bits: (value & mask0) as u16,
                 shift: 0,
             });
         }
         if value == (value & mask1) {
-            return Some(MovZConst {
+            return Some(MoveWideConst {
                 bits: ((value >> 16) & mask0) as u16,
                 shift: 1,
             });
         }
         if value == (value & mask2) {
-            return Some(MovZConst {
+            return Some(MoveWideConst {
                 bits: ((value >> 32) & mask0) as u16,
                 shift: 2,
             });
         }
         if value == (value & mask3) {
-            return Some(MovZConst {
+            return Some(MoveWideConst {
                 bits: ((value >> 48) & mask0) as u16,
                 shift: 3,
             });
@@ -775,7 +775,10 @@ pub enum Inst {
     Mov { rd: Reg, rm: Reg },
 
     /// A MOVZ with a 16-bit immediate.
-    MovZ { rd: Reg, imm: MovZConst },
+    MovZ { rd: Reg, imm: MoveWideConst },
+
+    /// A MOVN with a 16-bit immediate.
+    MovN { rd: Reg, imm: MoveWideConst },
 
     /// A machine call instruction.
     Call { dest: FuncRef },
@@ -926,7 +929,7 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.defined.insert(rd);
             iru.used.insert(rm);
         }
-        &Inst::MovZ { rd, .. } => {
+        &Inst::MovZ { rd, .. } | &Inst::MovN { rd, .. } => {
             iru.defined.insert(rd);
         }
         &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => {}
@@ -1131,6 +1134,10 @@ fn arm64_map_regs(
             rd: map(d, rd),
             imm: imm.clone(),
         },
+        &mut Inst::MovN { rd, ref imm } => Inst::MovN {
+            rd: map(d, rd),
+            imm: imm.clone(),
+        },
         &mut Inst::Jump { dest } => Inst::Jump { dest },
         &mut Inst::Call { dest } => Inst::Call { dest },
         &mut Inst::Ret {} => Inst::Ret {},
@@ -1219,16 +1226,16 @@ const MOVE_WIDE_FIXED: u32 = 0x92800000;
 
 #[repr(u32)]
 enum MoveWideOpcode {
+    MOVN = 0b00,
     MOVZ = 0b10,
 }
 
-// TODO: Pass imm_shift / imm16 in a struct?
-fn enc_move_wide(opc: MoveWideOpcode, rd: Reg, imm_shift: u8, imm16: u16) -> u32 {
-    assert!(imm_shift <= 0b11);
+fn enc_move_wide(opc: MoveWideOpcode, rd: Reg, imm: MoveWideConst) -> u32 {
+    assert!(imm.shift <= 0b11);
     MOVE_WIDE_FIXED
         | (opc as u32) << 29
-        | (imm_shift as u32) << 21
-        | (imm16 as u32) << 5
+        | (imm.shift as u32) << 21
+        | (imm.bits as u32) << 5
         | machreg_to_gpr(rd)
 }
 
@@ -1359,9 +1366,8 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 // Encoded as ORR rd, rm, zero.
                 sink.put4(enc_arith_rrr(0b10101010_000, 0b000_000, rd, zero_reg(), rm));
             }
-            &Inst::MovZ { rd, imm } => {
-                sink.put4(enc_move_wide(MoveWideOpcode::MOVZ, rd, imm.shift, imm.bits))
-            }
+            &Inst::MovZ { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVZ, rd, imm)),
+            &Inst::MovN { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVN, rd, imm)),
             &Inst::Jump { ref dest } => {
                 // TODO: differentiate between as_off26() returning `None` for
                 // out-of-range vs. not-yet-finalized. The latter happens when we
