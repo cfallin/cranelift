@@ -2,16 +2,13 @@ TODO:
 
 - Function ABI:
   - callee side
-    - Arguments and return values
-    - Prologue and epilogue generation
+    - Save clobbered regs
   - caller side
-    - Clobbers, function args, etc.
-
-  - alloca? explicit spillslot / stackslot instructions?
-  - fixup pass after regalloc, when we know how large the frame is (or just make all
-    references relative to FP)
+    - Move args into place; set clobbers (defs of real regs) on Call inst; do
+      call; move retvals out
 
 - Binary emission
+  - Load and store ops
   - Constant pool? Need MemArg resolution just prior to emission (when we know
     the constant-pool offset)
 
