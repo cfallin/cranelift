@@ -348,14 +348,14 @@ impl fmt::Debug for Addr {
 #[derive(Clone)]
 pub enum RMI {
     R { reg: Reg },
-    M { amode: Addr },
+    M { addr: Addr },
     I { simm32: u32 },
 }
 impl fmt::Debug for RMI {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             RMI::R { reg } => reg.fmt(fmt),
-            RMI::M { amode } => amode.fmt(fmt),
+            RMI::M { addr } => addr.fmt(fmt),
             RMI::I { simm32 } => write!(fmt, "{}", *simm32 as i32),
         }
     }
@@ -366,13 +366,13 @@ impl fmt::Debug for RMI {
 #[derive(Clone)]
 pub enum RM {
     R { reg: Reg },
-    M { amode: Addr },
+    M { addr: Addr },
 }
 impl fmt::Debug for RM {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             RM::R { reg } => reg.fmt(fmt),
-            RM::M { amode } => amode.fmt(fmt),
+            RM::M { addr } => addr.fmt(fmt),
         }
     }
 }
@@ -482,7 +482,7 @@ impl fmt::Debug for CC {
 /// Instructions.  Destinations are on the RIGHT (a la AT&T syntax).
 #[derive(Clone)]
 pub enum Inst {
-    /// (add sub and or xor mul adc? sbb?) (32 64) (reg amode imm) reg
+    /// (add sub and or xor mul adc? sbb?) (32 64) (reg addr imm) reg
     Alu_RMI_R {
         is64: bool,
         op: RMI_R_Op,
@@ -504,7 +504,7 @@ pub enum Inst {
         dst: Reg,
     },
 
-    /// movz (bl bq wl wq lq) amode reg (good for all ZX loads except 64->64)
+    /// movz (bl bq wl wq lq) addr reg (good for all ZX loads except 64->64)
     MovZX_M_R {
         extMode: ExtMode,
         addr: Addr,
@@ -517,14 +517,14 @@ pub enum Inst {
         dst: Reg,
     },
 
-    /// movs (bl bq wl wq lq) amode reg (good for all SX loads)
+    /// movs (bl bq wl wq lq) addr reg (good for all SX loads)
     MovSX_M_R {
         extMode: ExtMode,
         addr: Addr,
         dst: Reg,
     },
 
-    /// mov (b w l q) reg amode (good for all integer stores)
+    /// mov (b w l q) reg addr (good for all integer stores)
     Mov_R_M {
         size: u8, // 1, 2, 4 or 8
         src: Reg,
@@ -539,14 +539,14 @@ pub enum Inst {
         dst: Reg,
     },
 
-    /// cmp (b w l q) (reg amode imm) reg
+    /// cmp (b w l q) (reg addr imm) reg
     Cmp_RMI_R {
         size: u8, // 1, 2, 4 or 8
         src: RMI,
         dst: Reg,
     },
 
-    /// push (l q) (reg amode imm)
+    /// push (l q) (reg addr imm)
     Push {
         is64: bool,
         src: RMI,
@@ -814,7 +814,7 @@ impl RMI {
     fn get_regs(&self, set: &mut Set<Reg>) {
         match self {
             RMI::R { reg } => set.insert(*reg),
-            RMI::M { amode } => amode.get_regs(set),
+            RMI::M { addr } => addr.get_regs(set),
             RMI::I { simm32: _ } => {}
         }
     }
@@ -825,7 +825,7 @@ impl RM {
     fn get_regs(&self, set: &mut Set<Reg>) {
         match self {
             RM::R { reg } => set.insert(*reg),
-            RM::M { amode } => amode.get_regs(set),
+            RM::M { addr } => addr.get_regs(set),
         }
     }
 }
@@ -968,7 +968,7 @@ impl RMI {
     fn apply_map(&mut self, map: &RegallocMap<VirtualReg, RealReg>) {
         match self {
             RMI::R { ref mut reg } => apply_map(reg, map),
-            RMI::M { ref mut amode } => amode.apply_map(map),
+            RMI::M { ref mut addr } => addr.apply_map(map),
             RMI::I { simm32: _ } => {}
         }
     }
@@ -978,7 +978,7 @@ impl RM {
     fn apply_map(&mut self, map: &RegallocMap<VirtualReg, RealReg>) {
         match self {
             RM::R { ref mut reg } => apply_map(reg, map),
-            RM::M { ref mut amode } => amode.apply_map(map),
+            RM::M { ref mut addr } => addr.apply_map(map),
         }
     }
 }
