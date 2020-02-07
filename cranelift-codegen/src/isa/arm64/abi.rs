@@ -271,30 +271,32 @@ impl ABIBody<Inst> for ARM64ABIBody {
             rm: stack_reg(),
         });
 
-        // sub sp, #total_stacksize
-        if let Some(imm12) = Imm12::maybe_from_u64(total_stacksize as u64) {
-            let sub_inst = Inst::AluRRImm12 {
-                alu_op: ALUOp::Sub64,
-                rd: stack_reg(),
-                rn: stack_reg(),
-                imm12,
-            };
-            insts.push(sub_inst);
-        } else {
-            let const_data = u64_constant(total_stacksize as u64);
-            let tmp = spilltmp_reg();
-            let const_inst = Inst::ULoad64 {
-                rd: tmp,
-                mem: MemArg::label(MemLabel::ConstantData(const_data)),
-            };
-            let sub_inst = Inst::AluRRR {
-                alu_op: ALUOp::Sub64,
-                rd: stack_reg(),
-                rn: stack_reg(),
-                rm: tmp,
-            };
-            insts.push(const_inst);
-            insts.push(sub_inst);
+        if total_stacksize > 0 {
+            // sub sp, sp, #total_stacksize
+            if let Some(imm12) = Imm12::maybe_from_u64(total_stacksize as u64) {
+                let sub_inst = Inst::AluRRImm12 {
+                    alu_op: ALUOp::Sub64,
+                    rd: stack_reg(),
+                    rn: stack_reg(),
+                    imm12,
+                };
+                insts.push(sub_inst);
+            } else {
+                let const_data = u64_constant(total_stacksize as u64);
+                let tmp = spilltmp_reg();
+                let const_inst = Inst::ULoad64 {
+                    rd: tmp,
+                    mem: MemArg::label(MemLabel::ConstantData(const_data)),
+                };
+                let sub_inst = Inst::AluRRR {
+                    alu_op: ALUOp::Sub64,
+                    rd: stack_reg(),
+                    rn: stack_reg(),
+                    rm: tmp,
+                };
+                insts.push(const_inst);
+                insts.push(sub_inst);
+            }
         }
 
         // TODO: save clobbered registers (from regalloc). Save these below spillslots, right above SP,

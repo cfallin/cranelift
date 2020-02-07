@@ -28,6 +28,6 @@ ebb0:
 function %e() -> i64 {
 ebb0:
     ; ((2 ^ 16) - 1) << 48
-    v0 = iconst.i64 18446462598732840960 ; bin: d2dfffe0
+    v0 = iconst.i64 18446462598732840960 ; bin: d2ffffe0
     return v0
 }
