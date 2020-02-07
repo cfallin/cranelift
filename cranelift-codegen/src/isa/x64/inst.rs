@@ -477,7 +477,7 @@ impl fmt::Debug for CC {
 }
 
 //=============================================================================
-// Instructions: definition
+// Instructions (top level): definition
 
 /// Instructions.  Destinations are on the RIGHT (a la AT&T syntax).
 #[derive(Clone)]
