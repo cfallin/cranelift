@@ -28,6 +28,12 @@ use smallvec::SmallVec;
 //=============================================================================
 // Registers and the Universe thereof
 
+// These are the hardware encodings for various integer registers.
+const ENC_RSP: u8 = 4;
+const ENC_RBP: u8 = 5;
+const ENC_R12: u8 = 12;
+const ENC_R13: u8 = 13;
+
 // These are ordered by sequence number, as required in the Universe.  The
 // strange ordering is intended to make callee-save registers available before
 // caller-saved ones.  This is a net win provided that each function makes at
@@ -42,13 +48,13 @@ use smallvec::SmallVec;
 
 fn info_R12() -> (RealReg, String) {
     (
-        Reg::new_real(RegClass::I64, /*enc=*/ 12, /*index=*/ 0).to_real_reg(),
+        Reg::new_real(RegClass::I64, ENC_R12, /*index=*/ 0).to_real_reg(),
         "r12".to_string(),
     )
 }
 fn info_R13() -> (RealReg, String) {
     (
-        Reg::new_real(RegClass::I64, /*enc=*/ 13, /*index=*/ 1).to_real_reg(),
+        Reg::new_real(RegClass::I64, ENC_R13, /*index=*/ 1).to_real_reg(),
         "r13".to_string(),
     )
 }
@@ -226,13 +232,13 @@ fn info_XMM15() -> (RealReg, String) {
 
 fn info_RSP() -> (RealReg, String) {
     (
-        Reg::new_real(RegClass::I64, /*enc=*/ 4, /*index=*/ 30).to_real_reg(),
+        Reg::new_real(RegClass::I64, ENC_RSP, /*index=*/ 30).to_real_reg(),
         "rsp".to_string(),
     )
 }
 fn info_RBP() -> (RealReg, String) {
     (
-        Reg::new_real(RegClass::I64, /*enc=*/ 5, /*index=*/ 31).to_real_reg(),
+        Reg::new_real(RegClass::I64, ENC_RBP, /*index=*/ 31).to_real_reg(),
         "rbp".to_string(),
     )
 }
@@ -678,6 +684,11 @@ pub enum Inst {
 // Will the lower 32 bits of the given value sign-extend back to the same value?
 fn fitsIn32bits(x: i64) -> bool {
     x == ((x << 32) >> 32)
+}
+
+// Same question for 8 bits.
+fn fitsIn8bits(x: i32) -> bool {
+    x == ((x << 24) >> 24)
 }
 
 pub fn i_Alu_RMI_R(is64: bool, op: RMI_R_Op, src: RMI, dst: Reg) -> Inst {
@@ -1226,6 +1237,164 @@ fn x64_map_regs(
 
 //=============================================================================
 // Instructions and subcomponents: emission
+
+#[inline(always)]
+fn mkModRegRM(m0d: u8, encReg: u8, rm: u8) -> u8 {
+    debug_assert!(m0d < 4);
+    debug_assert!(encReg < 8);
+    debug_assert!(rm < 8);
+    ((m0d & 3) << 6) | ((encReg & 7) << 3) | (rm & 7)
+}
+
+#[inline(always)]
+fn mkSIB(shift: u8, encIndex: u8, encBase: u8) -> u8 {
+    debug_assert!(shift < 4);
+    debug_assert!(encIndex < 8);
+    debug_assert!(encBase < 8);
+    ((shift & 3) << 6) | ((encIndex & 7) << 3) | (encBase & 7)
+}
+
+#[inline(always)]
+// Get the encoding number from something which we sincerely hope is a real
+// register of class I64.
+fn iregEnc(reg: Reg) -> u8 {
+    debug_assert!(reg.is_real());
+    debug_assert!(reg.get_class() == RegClass::I64);
+    reg.get_hw_encoding()
+}
+
+// Emit the REX prefix byte even if it appears to be redundant (== 0x40).
+const F_RETAIN_REDUNDANT_REX: u32 = 1;
+
+// Set the W bit in the REX prefix to zero.  By default it will be set to 1,
+// indicating a 64-bit operation.
+const F_CLEAR_W_BIT: u32 = 2;
+
+// For an instruction that has as operands a memory address |mem| and a
+// register |encG|, create and emit, first the REX prefix, then
+// caller-supplied opcode byte(s) (|opcodes| and |numOpcodes|), then the modrm
+// byte, then optionally, a SIB byte, and finally optionally an immediate that
+// will be derived from the |mem| operand.  For most instructions up to and
+// including SSE4.2, that will be the whole instruction.
+//
+// The register operand is represented here not as a |Reg| but as its
+// encoding, |encG|.  |flags| can specify special handling for the REX prefix.
+// By default, the REX prefix will indicate a 64-bit operation and will be
+// deleted if it is redundant.  Note that for a 64-bit operation, the REX
+// prefix will normally never be redundant, since REX.W must be 1 to indicate
+// a 64-bit operation.
+fn emit_REX_OPCODES_MODRM_SIB_for_Mem_Enc<CS: CodeSink>(
+    sink: &mut CS,
+    mem: &Addr,
+    encG: u8,
+    opcodes: u32,
+    mut numOpcodes: usize,
+    flags: u32,
+) {
+    // The registers in |mem| must be 64-bit integer registers, because they
+    // are part of an address expression.  But |reg| can be of any class,
+    // since it merely holds one of the operands and the result.
+    let clearWBit = (flags & F_CLEAR_W_BIT) != 0;
+    let retainRedundant = (flags & F_RETAIN_REDUNDANT_REX) != 0;
+    match mem {
+        Addr::IR { simm32, base: regE } => {
+            // First, cook up the REX byte.  This is easy.
+            let encE = iregEnc(*regE);
+            let W = if clearWBit { 0 } else { 1 };
+            let R = (encG >> 3) & 1;
+            let X = 0;
+            let B = (encE >> 3) & 1;
+            let rex = 0x40 | (W << 3) | (R << 2) | (X << 1) | (B << 0);
+            if rex != 0x40 || retainRedundant {
+                sink.put1(rex);
+            }
+            // Now the opcode(s).  These include any other prefixes the caller
+            // hands to us.
+            while numOpcodes > 0 {
+                sink.put1(((opcodes >> (numOpcodes << 3)) & 0xFF) as u8);
+                numOpcodes -= 1;
+            }
+            // Now the mod/rm and associated immediates.  This is
+            // significantly complicated due to the multiple special cases.
+            if *simm32 == 0
+                && encE != ENC_RSP
+                && encE != ENC_RBP
+                && encE != ENC_R12
+                && encE != ENC_R13
+            {
+                sink.put1(mkModRegRM(0, encG & 7, encE & 7));
+            } else if fitsIn8bits(*simm32) && encE != ENC_RSP && encE != ENC_R12 {
+                sink.put1(mkModRegRM(1, encG & 7, encE & 7));
+                sink.put1((simm32 & 0xFF) as u8);
+            } else if encE != ENC_RSP && encE != ENC_R12 {
+                sink.put1(mkModRegRM(2, encG & 7, encE & 7));
+                sink.put4(*simm32 as u32);
+            } else if (encE == ENC_RSP || encE == ENC_R12) && fitsIn8bits(*simm32) {
+                sink.put1(mkModRegRM(1, encG & 7, 4));
+                sink.put1(0x24);
+                sink.put1((simm32 & 0xFF) as u8);
+            } else if encE == ENC_R12 {
+                // || encE == ENC_RSP .. wait for test case for RSP case
+                sink.put1(mkModRegRM(2, encG & 7, 4));
+                sink.put1(0x24);
+                sink.put4(*simm32 as u32);
+            } else {
+                panic!("emit_REX_OPCODES_MODRM_SIB_for_Mem_Enc: IR: unimp");
+            }
+        }
+        // Bizarrely, the IRRS case is much simpler.
+        Addr::IRRS {
+            simm32,
+            base: regBase,
+            index: regIndex,
+            shift,
+        } => {
+            let encBase = iregEnc(*regBase);
+            let encIndex = iregEnc(*regIndex);
+            // The rex byte
+            let W = if clearWBit { 0 } else { 1 };
+            let R = (encG >> 3) & 1;
+            let X = (encIndex >> 3) & 1;
+            let B = (encBase >> 3) & 1;
+            let rex = 0x40 | (W << 3) | (R << 2) | (X << 1) | (B << 0);
+            if rex != 0x40 || retainRedundant {
+                sink.put1(rex);
+            }
+            // All other prefixes and opcodes
+            while numOpcodes > 0 {
+                sink.put1(((opcodes >> (numOpcodes << 3)) & 0xFF) as u8);
+                numOpcodes -= 1;
+            }
+            // modrm, SIB, immediates
+            if fitsIn8bits(*simm32) && encIndex != ENC_RSP {
+                sink.put1(mkModRegRM(1, encG & 7, 4));
+                sink.put1(mkSIB(*shift, encIndex & 7, encBase & 7));
+                sink.put1((simm32 & 0xFF) as u8);
+            } else if encIndex != ENC_RSP {
+                sink.put1(mkModRegRM(2, encG & 7, 4));
+                sink.put1(mkSIB(*shift, encIndex & 7, encBase & 7));
+                sink.put4(*simm32 as u32);
+            } else {
+                panic!("emit_REX_OPCODES_MODRM_SIB_for_Mem_Enc: IRRS: unimp");
+            }
+        }
+    }
+}
+
+// This is merely a wrapper for the above function, which facilitates passing
+// an actual |Reg| rather than its encoding.
+fn emit_REX_OPCODES_MODRM_SIB_for_Mem_Reg<CS: CodeSink>(
+    sink: &mut CS,
+    mem: &Addr,
+    regG: Reg,
+    opcodes: u32,
+    numOpcodes: usize,
+    flags: u32,
+) {
+    // JRS FIXME 2020Feb07: this should really just be |regEnc| not |iregEnc|
+    let encG = iregEnc(regG);
+    emit_REX_OPCODES_MODRM_SIB_for_Mem_Enc(sink, mem, encG, opcodes, numOpcodes, flags);
+}
 
 fn x64_emit<CS: CodeSink>(_inst: &Inst, _sink: &mut CS) {
     unimplemented!()
