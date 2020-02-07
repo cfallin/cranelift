@@ -505,10 +505,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
                 let retval_reg = ctx.retval(i);
                 ctx.emit(Inst::gen_move(retval_reg, reg));
             }
-            // N.B.: we do not actually emit the `Ret` here. That is generated
-            // by the epilogue, after the stackframe teardown code and the
-            // placement of the above return value(s) into the ABI-appropriate
-            // registers.
+            ctx.emit(Inst::Ret {});
         }
 
         // TODO: cmp

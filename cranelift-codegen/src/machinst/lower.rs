@@ -186,10 +186,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         }
     }
 
-    fn gen_prologue(&mut self) {
-        for insn in self.vcode.abi().gen_prologue().into_iter() {
-            self.vcode.push(insn);
-        }
+    fn gen_arg_setup(&mut self) {
         if let Some(entry_ebb) = self.f.layout.entry_block() {
             for (i, param) in self.f.dfg.ebb_params(entry_ebb).iter().enumerate() {
                 let reg = self.value_regs[*param];
@@ -200,15 +197,11 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         }
     }
 
-    fn gen_epilogue(&mut self) {
+    fn gen_retval_setup(&mut self) {
         for (i, r) in self.retval_regs.iter().enumerate() {
-            println!("gen_epilogue: store retval reg {:?} to retval {}", r, i);
             for insn in self.vcode.abi().store_retval(i, *r).into_iter() {
                 self.vcode.push(insn);
             }
-        }
-        for insn in self.vcode.abi().gen_epilogue().into_iter() {
-            self.vcode.push(insn);
         }
     }
 
@@ -259,10 +252,10 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         for ebb in ebbs.iter() {
             println!("lowering ebb: {}", ebb);
 
-            // If this is a return block, produce the epilogue.
+            // If this is a return block, produce the return value setup.
             let last_insn = self.f.layout.ebb_insts(*ebb).last().unwrap();
             if self.f.dfg[last_insn].opcode().is_return() {
-                self.gen_epilogue();
+                self.gen_retval_setup();
                 self.vcode.end_ir_inst();
             }
 
@@ -314,9 +307,9 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 targets.clear();
             }
 
-            // If this is the entry block, produce the prologue.
+            // If this is the entry block, produce the argument setup.
             if Some(*ebb) == self.f.layout.entry_block() {
-                self.gen_prologue();
+                self.gen_arg_setup();
                 self.vcode.end_ir_inst();
             }
 

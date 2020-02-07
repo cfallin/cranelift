@@ -84,6 +84,9 @@ pub struct VCode<I: VCodeInst> {
 
     /// Size of code, according for block layout / alignment.
     code_size: CodeOffset,
+
+    /// ABI object.
+    abi: Box<dyn ABIBody<I>>,
 }
 
 /// A builder for a VCode function body. This builder is designed for the
@@ -113,27 +116,23 @@ pub struct VCodeBuilder<I: VCodeInst> {
 
     /// Start of succs for the current block in the concatenated succs list.
     succ_start: usize,
-
-    // ABI object for the function body.
-    abi: Box<dyn ABIBody<I>>,
 }
 
 impl<I: VCodeInst> VCodeBuilder<I> {
     /// Create a new VCodeBuilder.
     pub fn new(abi: Box<dyn ABIBody<I>>) -> VCodeBuilder<I> {
-        let vcode = VCode::new(&*abi);
+        let vcode = VCode::new(abi);
         VCodeBuilder {
             vcode,
             bb_insns: SmallVec::new(),
             ir_inst_insns: SmallVec::new(),
             succ_start: 0,
-            abi,
         }
     }
 
     /// Access the ABI object.
     pub fn abi(&mut self) -> &mut dyn ABIBody<I> {
-        &mut *self.abi
+        &mut *self.vcode.abi
     }
 
     /// Set the type of a VReg.
@@ -279,7 +278,7 @@ fn look_through_trivial_jumps<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex)
 
 impl<I: VCodeInst> VCode<I> {
     /// New empty VCode.
-    fn new(abi: &dyn ABIBody<I>) -> VCode<I> {
+    fn new(abi: Box<dyn ABIBody<I>>) -> VCode<I> {
         VCode {
             liveins: abi.liveins(),
             liveouts: abi.liveouts(),
@@ -293,6 +292,7 @@ impl<I: VCodeInst> VCode<I> {
             final_block_order: vec![],
             final_block_offsets: vec![],
             code_size: 0,
+            abi,
         }
     }
 
@@ -323,6 +323,12 @@ impl<I: VCodeInst> VCode<I> {
     /// the VCode with them.
     pub fn replace_insns_from_regalloc(&mut self, result: RegAllocResult<Self>) {
         self.final_block_order = compute_final_block_order(self);
+
+        // Record the spillslot count and clobbered registers for the ABI/stack
+        // setup code.
+        self.abi.set_num_spillslots(result.num_spill_slots as usize);
+        self.abi.set_clobbered(result.clobbered_registers);
+
         // We want to move instructions over in final block order, using the new
         // block-start map given by the regalloc.
         let block_ranges: Vec<(usize, usize)> =
@@ -333,12 +339,29 @@ impl<I: VCodeInst> VCode<I> {
         for block in &self.final_block_order {
             let (start, end) = block_ranges[*block as usize];
             let final_start = final_insns.len() as InsnIndex;
+
+            if *block == self.entry {
+                // Start with the prologue.
+                final_insns.extend(self.abi.gen_prologue().into_iter());
+            }
+
             for i in start..end {
                 let insn = &result.insns[i];
+
+                // Elide redundant moves at this point (we only know what is
+                // redundant once registers are allocated).
                 if is_redundant_move(insn) {
                     continue;
                 }
-                final_insns.push(insn.clone());
+
+                // Whenever encountering a return instruction, replace it
+                // with the epilogue.
+                let is_ret = insn.is_term() == MachTerminator::Ret;
+                if is_ret {
+                    final_insns.extend(self.abi.gen_epilogue().into_iter());
+                } else {
+                    final_insns.push(insn.clone());
+                }
             }
             let final_end = final_insns.len() as InsnIndex;
             final_block_ranges[*block as usize] = (final_start, final_end);

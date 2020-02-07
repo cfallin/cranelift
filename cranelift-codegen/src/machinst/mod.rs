@@ -205,7 +205,7 @@ pub trait MachInst: Clone + Debug {
 
 /// Describes a block terminator (not call) in the vcode, when its branches
 /// have not yet been finalized (so a branch may have two targets).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MachTerminator {
     /// Not a terminator.
     None,
