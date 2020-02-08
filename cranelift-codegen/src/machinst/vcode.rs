@@ -31,6 +31,7 @@ use smallvec::SmallVec;
 use std::fmt;
 use std::iter;
 use std::ops::Index;
+use std::string::String;
 
 /// Index referring to an instruction in VCode.
 pub type InsnIndex = u32;
@@ -248,20 +249,24 @@ fn inst_size<I: VCodeInst>(insn: &I) -> usize {
 
 fn is_trivial_jump_block<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> Option<BlockIndex> {
     let range = vcode.block_insns(BlockIx::new(block));
-    println!(
-        "is_trivial_jump_block: block {} has len {}",
-        block,
-        range.len()
-    );
+
+    //println!(
+    //    "is_trivial_jump_block: block {} has len {}",
+    //    block,
+    //    range.len()
+    //);
+
     if range.len() != 1 {
         return None;
     }
     let insn = range.first();
-    println!(
-        " -> only insn is: {:?} with terminator {:?}",
-        vcode.get_insn(insn),
-        vcode.get_insn(insn).is_term()
-    );
+
+    //println!(
+    //    " -> only insn is: {:?} with terminator {:?}",
+    //    vcode.get_insn(insn),
+    //    vcode.get_insn(insn).is_term()
+    //);
+
     match vcode.get_insn(insn).is_term() {
         MachTerminator::Uncond(target) => Some(target),
         _ => None,
@@ -389,10 +394,11 @@ impl<I: VCodeInst> VCode<I> {
             .map(|(i, target)| i != *target as usize)
             .collect();
 
-        println!(
-            "remove_redundant_branches: block_rewrites = {:?}",
-            block_rewrites
-        );
+        //println!(
+        //    "remove_redundant_branches: block_rewrites = {:?}",
+        //    block_rewrites
+        //);
+
         for block in 0..self.num_blocks() as u32 {
             for insn in self.block_insns(BlockIx::new(block)) {
                 self.get_insn_mut(insn)
@@ -610,5 +616,21 @@ impl<I: VCodeInst> fmt::Debug for VCode<I> {
 
         writeln!(f, "}}")?;
         Ok(())
+    }
+}
+
+// Pretty-printing with `RealRegUniverse` context.
+impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
+    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        for block in &self.final_block_order {
+            writeln!(s, "block{}:", block).expect("write");
+            let (start, end) = self.block_ranges[*block as usize];
+            for inst in start..end {
+                writeln!(s, "  {}", self.insts[inst as usize].show_rru(mb_rru)).expect("write");
+            }
+        }
+        s
     }
 }

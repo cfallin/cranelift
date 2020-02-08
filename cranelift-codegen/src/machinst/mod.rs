@@ -129,6 +129,8 @@ pub mod blockorder;
 pub use blockorder::*;
 pub mod abi;
 pub use abi::*;
+pub mod pp;
+pub use pp::*;
 
 /// A machine instruction.
 pub trait MachInst: Clone + Debug {
@@ -228,4 +230,7 @@ pub trait MachBackend {
 
     /// Return flags for this backend.
     fn flags(&self) -> &Flags;
+
+    /// Return the register universe for this backend.
+    fn reg_universe(&self) -> RealRegUniverse;
 }

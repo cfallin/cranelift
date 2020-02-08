@@ -84,7 +84,7 @@ pub fn spilltmp_reg() -> Reg {
 }
 
 /// Create the register universe for ARM64.
-fn create_reg_universe() -> RealRegUniverse {
+pub fn create_reg_universe() -> RealRegUniverse {
     let mut regs = vec![];
     let mut allocable_by_class = [None; NUM_REG_CLASSES];
 
@@ -283,6 +283,11 @@ impl ImmLogic {
     pub fn enc_bits(&self) -> u16 {
         ((self.N as u16) << 12) | ((self.R as u16) << 6) | (self.S as u16)
     }
+
+    /// Returns the value that this immediate represents.
+    pub fn value(&self) -> u64 {
+        unimplemented!()
+    }
 }
 
 /// An immediate for shift instructions.
@@ -344,6 +349,11 @@ impl MoveWideConst {
         }
         None
     }
+
+    /// Returns the value that this constant represents.
+    pub fn value(&self) -> u64 {
+        (self.bits as u64) << (16 * self.shift)
+    }
 }
 
 //=============================================================================
@@ -392,6 +402,11 @@ impl ShiftOpShiftImm {
         } else {
             None
         }
+    }
+
+    /// Return the shift amount.
+    pub fn value(&self) -> u8 {
+        self.0
     }
 }
 
@@ -609,7 +624,7 @@ pub enum BranchTarget {
     Block(BlockIndex),
     /// A resolved reference to another instruction, after
     /// `Inst::with_block_offsets()`.
-    ResolvedOffset(isize),
+    ResolvedOffset(BlockIndex, isize),
 }
 
 impl BranchTarget {
@@ -620,7 +635,7 @@ impl BranchTarget {
                 assert!(bix < targets.len());
                 let block_offset_in_func = targets[bix];
                 let branch_offset = (block_offset_in_func as isize) - (my_offset as isize);
-                *self = BranchTarget::ResolvedOffset(branch_offset);
+                *self = BranchTarget::ResolvedOffset(bix as BlockIndex, branch_offset);
             }
             &mut BranchTarget::ResolvedOffset(..) => {}
         }
@@ -635,7 +650,7 @@ impl BranchTarget {
 
     fn as_offset_words(&self) -> Option<isize> {
         match self {
-            &BranchTarget::ResolvedOffset(off) => Some(off >> 2),
+            &BranchTarget::ResolvedOffset(_, off) => Some(off >> 2),
             _ => None,
         }
     }
@@ -1635,5 +1650,398 @@ impl MachInst for Inst {
 
     fn reg_universe() -> RealRegUniverse {
         create_reg_universe()
+    }
+}
+
+//=============================================================================
+// Pretty-printing of instructions.
+
+impl ShowWithRRU for Imm12 {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        let shift = if self.shift12 { 12 } else { 0 };
+        let value = self.bits << shift;
+        format!("#{}", value)
+    }
+}
+
+impl ShowWithRRU for SImm7 {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        format!("#{}", self.bits)
+    }
+}
+
+impl ShowWithRRU for SImm9 {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        format!("#{}", self.bits)
+    }
+}
+
+impl ShowWithRRU for UImm12Scaled {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        let scale = self.scale_ty.bytes();
+        format!("#{}", self.bits * scale as u16)
+    }
+}
+
+impl ShowWithRRU for ImmLogic {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        format!("#{}", self.value())
+    }
+}
+
+impl ShowWithRRU for ImmShift {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        format!("#{}", self.imm)
+    }
+}
+
+impl ShowWithRRU for MoveWideConst {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        format!("#{}", self.value())
+    }
+}
+
+impl ShowWithRRU for ShiftOpAndAmt {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        format!("{:?} {}", self.op(), self.amt().value())
+    }
+}
+
+impl ShowWithRRU for ExtendOp {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        format!("{:?}", self)
+    }
+}
+
+impl ShowWithRRU for MemLabel {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        match self {
+            &MemLabel::ConstantPool(off) => format!("const_{}", off),
+            // Should be resolved into an offset before we pretty-print.
+            &MemLabel::ConstantData(..) => "!!constant!!".to_string(),
+            &MemLabel::Function(..) => "!!function!!".to_string(),
+            &MemLabel::GlobalValue(..) => "!!globalvalue!!".to_string(),
+        }
+    }
+}
+
+fn shift_for_type(ty: Type) -> usize {
+    match ty.bytes() {
+        1 => 0,
+        2 => 1,
+        4 => 2,
+        8 => 3,
+        _ => panic!("unknown type"),
+    }
+}
+
+impl ShowWithRRU for MemArg {
+    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+        match self {
+            &MemArg::Base(reg) => format!("[{}]", reg.show_rru(mb_rru)),
+            &MemArg::BaseSImm9(reg, simm9) => {
+                format!("[{}, {}]", reg.show_rru(mb_rru), simm9.show_rru(mb_rru))
+            }
+            &MemArg::BaseUImm12Scaled(reg, uimm12scaled) => format!(
+                "[{}, {}]",
+                reg.show_rru(mb_rru),
+                uimm12scaled.show_rru(mb_rru)
+            ),
+            &MemArg::BasePlusReg(r1, r2) => {
+                format!("[{}, {}]", r1.show_rru(mb_rru), r2.show_rru(mb_rru))
+            }
+            &MemArg::BasePlusRegScaled(r1, r2, ty) => {
+                let shift = shift_for_type(ty);
+                format!(
+                    "[{}, {} lsl #{}]",
+                    r1.show_rru(mb_rru),
+                    r2.show_rru(mb_rru),
+                    shift,
+                )
+            }
+            &MemArg::Label(ref label) => label.show_rru(mb_rru),
+            &MemArg::PreIndexed(r, simm9) => {
+                format!("[{}, {}]!", r.show_rru(mb_rru), simm9.show_rru(mb_rru))
+            }
+            &MemArg::PostIndexed(r, simm9) => {
+                format!("[{}], {}", r.show_rru(mb_rru), simm9.show_rru(mb_rru))
+            }
+        }
+    }
+}
+
+impl ShowWithRRU for PairMemArg {
+    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+        match self {
+            &PairMemArg::Base(reg) => format!("[{}]", reg.show_rru(mb_rru)),
+            &PairMemArg::BaseSImm7(reg, simm7) => {
+                format!("[{}, {}]", reg.show_rru(mb_rru), simm7.show_rru(mb_rru))
+            }
+            &PairMemArg::PreIndexed(reg, simm7) => {
+                format!("[{}, {}]!", reg.show_rru(mb_rru), simm7.show_rru(mb_rru))
+            }
+            &PairMemArg::PostIndexed(reg, simm7) => {
+                format!("[{}], {}", reg.show_rru(mb_rru), simm7.show_rru(mb_rru))
+            }
+        }
+    }
+}
+
+impl ShowWithRRU for Cond {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        let mut s = format!("{:?}", self);
+        s.make_ascii_lowercase();
+        s
+    }
+}
+
+impl ShowWithRRU for BranchTarget {
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        match self {
+            &BranchTarget::Block(block) => format!("block{}", block),
+            &BranchTarget::ResolvedOffset(block, _) => format!("block{}", block),
+        }
+    }
+}
+
+impl ShowWithRRU for Inst {
+    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+        fn adj_reg(r: String, is32: bool) -> String {
+            if is32 && r.starts_with("x") {
+                "w".to_string() + &r[1..]
+            } else {
+                r
+            }
+        }
+
+        fn op_is32(alu_op: ALUOp) -> (&'static str, bool) {
+            match alu_op {
+                ALUOp::Add32 => ("add", true),
+                ALUOp::Add64 => ("add", false),
+                ALUOp::Sub32 => ("sub", true),
+                ALUOp::Sub64 => ("sub", false),
+                ALUOp::Orr32 => ("orr", true),
+                ALUOp::Orr64 => ("orr", false),
+                ALUOp::And32 => ("and", true),
+                ALUOp::And64 => ("and", false),
+                ALUOp::SubS32 => ("subs", true),
+                ALUOp::SubS64 => ("subs", false),
+            }
+        }
+
+        match self {
+            &Inst::Nop => "".to_string(),
+            &Inst::Nop4 => "nop".to_string(),
+            &Inst::AluRRR { alu_op, rd, rn, rm } => {
+                let (op, is32) = op_is32(alu_op);
+                let rd = adj_reg(rd.show_rru(mb_rru), is32);
+                let rn = adj_reg(rn.show_rru(mb_rru), is32);
+                let rm = adj_reg(rm.show_rru(mb_rru), is32);
+                format!("{} {}, {}, {}", op, rd, rn, rm)
+            }
+            &Inst::AluRRImm12 {
+                alu_op,
+                rd,
+                rn,
+                ref imm12,
+            } => {
+                let (op, is32) = op_is32(alu_op);
+                let rd = adj_reg(rd.show_rru(mb_rru), is32);
+                let rn = adj_reg(rn.show_rru(mb_rru), is32);
+                let imm12 = imm12.show_rru(mb_rru);
+                format!("{} {}, {}, {}", op, rd, rn, imm12)
+            }
+            &Inst::AluRRImmLogic {
+                alu_op,
+                rd,
+                rn,
+                ref imml,
+            } => {
+                let (op, is32) = op_is32(alu_op);
+                let rd = adj_reg(rd.show_rru(mb_rru), is32);
+                let rn = adj_reg(rn.show_rru(mb_rru), is32);
+                let imml = imml.show_rru(mb_rru);
+                format!("{} {}, {}, {}", op, rd, rn, imml)
+            }
+            &Inst::AluRRImmShift {
+                alu_op,
+                rd,
+                rn,
+                ref immshift,
+            } => {
+                let (op, is32) = op_is32(alu_op);
+                let rd = adj_reg(rd.show_rru(mb_rru), is32);
+                let rn = adj_reg(rn.show_rru(mb_rru), is32);
+                let immshift = immshift.show_rru(mb_rru);
+                format!("{} {}, {}, {}", op, rd, rn, immshift)
+            }
+            &Inst::AluRRRShift {
+                alu_op,
+                rd,
+                rn,
+                rm,
+                ref shiftop,
+            } => {
+                let (op, is32) = op_is32(alu_op);
+                let rd = adj_reg(rd.show_rru(mb_rru), is32);
+                let rn = adj_reg(rn.show_rru(mb_rru), is32);
+                let rm = adj_reg(rm.show_rru(mb_rru), is32);
+                let shiftop = shiftop.show_rru(mb_rru);
+                format!("{} {}, {}, {}, {}", op, rd, rn, rm, shiftop)
+            }
+            &Inst::AluRRRExtend {
+                alu_op,
+                rd,
+                rn,
+                rm,
+                ref extendop,
+            } => {
+                let (op, is32) = op_is32(alu_op);
+                let rd = adj_reg(rd.show_rru(mb_rru), is32);
+                let rn = adj_reg(rn.show_rru(mb_rru), is32);
+                let rm = adj_reg(rm.show_rru(mb_rru), is32);
+                let extendop = extendop.show_rru(mb_rru);
+                format!("{} {}, {}, {}, {}", op, rd, rn, rm, extendop)
+            }
+            &Inst::ULoad8 { rd, ref mem }
+            | &Inst::SLoad8 { rd, ref mem }
+            | &Inst::ULoad16 { rd, ref mem }
+            | &Inst::SLoad16 { rd, ref mem }
+            | &Inst::ULoad32 { rd, ref mem }
+            | &Inst::SLoad32 { rd, ref mem }
+            | &Inst::ULoad64 { rd, ref mem } => {
+                let op = match self {
+                    &Inst::ULoad8 { .. } => "ldrb",
+                    &Inst::SLoad8 { .. } => "ldrsb",
+                    &Inst::ULoad16 { .. } => "ldrh",
+                    &Inst::SLoad16 { .. } => "ldrsh",
+                    &Inst::ULoad32 { .. } => "ldrw",
+                    &Inst::SLoad32 { .. } => "ldrsw",
+                    &Inst::ULoad64 { .. } => "ldr",
+                    _ => unreachable!(),
+                };
+                let rd = rd.show_rru(mb_rru);
+                let mem = mem.show_rru(mb_rru);
+                format!("{} {}, {}", op, rd, mem)
+            }
+            &Inst::Store8 { rd, ref mem }
+            | &Inst::Store16 { rd, ref mem }
+            | &Inst::Store32 { rd, ref mem }
+            | &Inst::Store64 { rd, ref mem } => {
+                let op = match self {
+                    &Inst::Store8 { .. } => "strb",
+                    &Inst::Store16 { .. } => "strh",
+                    &Inst::Store32 { .. } => "strw",
+                    &Inst::Store64 { .. } => "str",
+                    _ => unreachable!(),
+                };
+                let rd = rd.show_rru(mb_rru);
+                let mem = mem.show_rru(mb_rru);
+                format!("{} {}, {}", op, rd, mem)
+            }
+            &Inst::StoreP64 { rt, rt2, ref mem } => {
+                let rt = rt.show_rru(mb_rru);
+                let rt2 = rt2.show_rru(mb_rru);
+                let mem = mem.show_rru(mb_rru);
+                format!("stp {}, {}, {}", rt, rt2, mem)
+            }
+            &Inst::LoadP64 { rt, rt2, ref mem } => {
+                let rt = rt.show_rru(mb_rru);
+                let rt2 = rt2.show_rru(mb_rru);
+                let mem = mem.show_rru(mb_rru);
+                format!("ldp {}, {}, {}", rt, rt2, mem)
+            }
+            &Inst::Mov { rd, rm } => {
+                let rd = rd.show_rru(mb_rru);
+                let rm = rm.show_rru(mb_rru);
+                format!("mov {}, {}", rd, rm)
+            }
+            &Inst::MovZ { rd, ref imm } => {
+                let rd = rd.show_rru(mb_rru);
+                let imm = imm.show_rru(mb_rru);
+                format!("movz {}, {}", rd, imm)
+            }
+            &Inst::MovN { rd, ref imm } => {
+                let rd = rd.show_rru(mb_rru);
+                let imm = imm.show_rru(mb_rru);
+                format!("movn {}, {}", rd, imm)
+            }
+            &Inst::Call { dest: _ } => {
+                let dest = "!!".to_string(); // TODO
+                format!("bl {}", dest)
+            }
+            &Inst::CallInd { rn } => {
+                let rn = rn.show_rru(mb_rru);
+                format!("bl {}", rn)
+            }
+            &Inst::Ret {} => "ret".to_string(),
+            &Inst::Jump { ref dest } => {
+                let dest = dest.show_rru(mb_rru);
+                format!("b {}", dest)
+            }
+            &Inst::CondBr {
+                ref taken,
+                ref not_taken,
+                ref kind,
+            } => {
+                let taken = taken.show_rru(mb_rru);
+                let not_taken = not_taken.show_rru(mb_rru);
+                match kind {
+                    &CondBrKind::Zero(reg) => {
+                        let reg = reg.show_rru(mb_rru);
+                        format!("cbz {}, {} ; b {}", reg, taken, not_taken)
+                    }
+                    &CondBrKind::NotZero(reg) => {
+                        let reg = reg.show_rru(mb_rru);
+                        format!("cbnz {}, {} ; b {}", reg, taken, not_taken)
+                    }
+                    &CondBrKind::Cond(c) => {
+                        let c = c.show_rru(mb_rru);
+                        format!("b{} {} ; b {}", c, taken, not_taken)
+                    }
+                }
+            }
+            &Inst::CondBrLowered {
+                ref target,
+                inverted,
+                ref kind,
+            } => {
+                let target = target.show_rru(mb_rru);
+                let kind = if inverted {
+                    kind.invert()
+                } else {
+                    kind.clone()
+                };
+                match &kind {
+                    &CondBrKind::Zero(reg) => {
+                        let reg = reg.show_rru(mb_rru);
+                        format!("cbz {}, {}", reg, target)
+                    }
+                    &CondBrKind::NotZero(reg) => {
+                        let reg = reg.show_rru(mb_rru);
+                        format!("cbnz {}, {}", reg, target)
+                    }
+                    &CondBrKind::Cond(c) => {
+                        let c = c.show_rru(mb_rru);
+                        format!("b{} {}", c, target)
+                    }
+                }
+            }
+            &Inst::CondBrLoweredCompound {
+                ref taken,
+                ref not_taken,
+                ref kind,
+            } => {
+                let first = Inst::CondBrLowered {
+                    target: taken.clone(),
+                    inverted: false,
+                    kind: kind.clone(),
+                };
+                let second = Inst::Jump {
+                    dest: not_taken.clone(),
+                };
+                first.show_rru(mb_rru) + " ; " + &second.show_rru(mb_rru)
+            }
+        }
     }
 }

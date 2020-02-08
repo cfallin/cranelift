@@ -12,10 +12,14 @@ use crate::settings;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use regalloc::RealRegUniverse;
+
 // New backend:
 mod abi;
 mod inst;
 mod lower;
+
+use inst::create_reg_universe;
 
 /// An X64 backend.
 pub struct X64Backend {
@@ -55,5 +59,9 @@ impl MachBackend for X64Backend {
 
     fn flags(&self) -> &settings::Flags {
         &self.flags
+    }
+
+    fn reg_universe(&self) -> RealRegUniverse {
+        create_reg_universe()
     }
 }

@@ -49,197 +49,197 @@ const ENC_R13: u8 = 13;
 fn info_R12() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, ENC_R12, /*index=*/ 0).to_real_reg(),
-        "r12".to_string(),
+        "%r12".to_string(),
     )
 }
 fn info_R13() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, ENC_R13, /*index=*/ 1).to_real_reg(),
-        "r13".to_string(),
+        "%r13".to_string(),
     )
 }
 fn info_R14() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 14, /*index=*/ 2).to_real_reg(),
-        "r14".to_string(),
+        "%r14".to_string(),
     )
 }
 fn info_R15() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 15, /*index=*/ 3).to_real_reg(),
-        "r15".to_string(),
+        "%r15".to_string(),
     )
 }
 fn info_RBX() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 3, /*index=*/ 4).to_real_reg(),
-        "rbx".to_string(),
+        "%rbx".to_string(),
     )
 }
 
 fn info_RSI() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 6, /*index=*/ 5).to_real_reg(),
-        "rsi".to_string(),
+        "%rsi".to_string(),
     )
 }
 fn info_RDI() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 7, /*index=*/ 6).to_real_reg(),
-        "rdi".to_string(),
+        "%rdi".to_string(),
     )
 }
 fn info_RAX() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 0, /*index=*/ 7).to_real_reg(),
-        "rax".to_string(),
+        "%rax".to_string(),
     )
 }
 fn info_RCX() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 1, /*index=*/ 8).to_real_reg(),
-        "rcx".to_string(),
+        "%rcx".to_string(),
     )
 }
 fn info_RDX() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 2, /*index=*/ 9).to_real_reg(),
-        "rdx".to_string(),
+        "%rdx".to_string(),
     )
 }
 
 fn info_R8() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 8, /*index=*/ 10).to_real_reg(),
-        "r8".to_string(),
+        "%r8".to_string(),
     )
 }
 fn info_R9() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 9, /*index=*/ 11).to_real_reg(),
-        "r9".to_string(),
+        "%r9".to_string(),
     )
 }
 fn info_R10() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 10, /*index=*/ 12).to_real_reg(),
-        "r10".to_string(),
+        "%r10".to_string(),
     )
 }
 fn info_R11() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, /*enc=*/ 11, /*index=*/ 13).to_real_reg(),
-        "r11".to_string(),
+        "%r11".to_string(),
     )
 }
 
 fn info_XMM0() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 0, /*index=*/ 14).to_real_reg(),
-        "xmm0".to_string(),
+        "%xmm0".to_string(),
     )
 }
 fn info_XMM1() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 1, /*index=*/ 15).to_real_reg(),
-        "xmm1".to_string(),
+        "%xmm1".to_string(),
     )
 }
 fn info_XMM2() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 2, /*index=*/ 16).to_real_reg(),
-        "xmm2".to_string(),
+        "%xmm2".to_string(),
     )
 }
 fn info_XMM3() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 3, /*index=*/ 17).to_real_reg(),
-        "xmm3".to_string(),
+        "%xmm3".to_string(),
     )
 }
 fn info_XMM4() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 4, /*index=*/ 18).to_real_reg(),
-        "xmm4".to_string(),
+        "%xmm4".to_string(),
     )
 }
 fn info_XMM5() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 5, /*index=*/ 19).to_real_reg(),
-        "xmm5".to_string(),
+        "%xmm5".to_string(),
     )
 }
 fn info_XMM6() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 6, /*index=*/ 20).to_real_reg(),
-        "xmm6".to_string(),
+        "%xmm6".to_string(),
     )
 }
 fn info_XMM7() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 7, /*index=*/ 21).to_real_reg(),
-        "xmm7".to_string(),
+        "%xmm7".to_string(),
     )
 }
 fn info_XMM8() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 8, /*index=*/ 22).to_real_reg(),
-        "xmm8".to_string(),
+        "%xmm8".to_string(),
     )
 }
 fn info_XMM9() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 9, /*index=*/ 23).to_real_reg(),
-        "xmm9".to_string(),
+        "%xmm9".to_string(),
     )
 }
 fn info_XMM10() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 10, /*index=*/ 24).to_real_reg(),
-        "xmm10".to_string(),
+        "%xmm10".to_string(),
     )
 }
 fn info_XMM11() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 11, /*index=*/ 25).to_real_reg(),
-        "xmm11".to_string(),
+        "%xmm11".to_string(),
     )
 }
 fn info_XMM12() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 12, /*index=*/ 26).to_real_reg(),
-        "xmm12".to_string(),
+        "%xmm12".to_string(),
     )
 }
 fn info_XMM13() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 13, /*index=*/ 27).to_real_reg(),
-        "xmm13".to_string(),
+        "%xmm13".to_string(),
     )
 }
 fn info_XMM14() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 14, /*index=*/ 28).to_real_reg(),
-        "xmm14".to_string(),
+        "%xmm14".to_string(),
     )
 }
 fn info_XMM15() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::V128, /*enc=*/ 15, /*index=*/ 29).to_real_reg(),
-        "xmm15".to_string(),
+        "%xmm15".to_string(),
     )
 }
 
 fn info_RSP() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, ENC_RSP, /*index=*/ 30).to_real_reg(),
-        "rsp".to_string(),
+        "%rsp".to_string(),
     )
 }
 fn info_RBP() -> (RealReg, String) {
     (
         Reg::new_real(RegClass::I64, ENC_RBP, /*index=*/ 31).to_real_reg(),
-        "rbp".to_string(),
+        "%rbp".to_string(),
     )
 }
 
@@ -250,7 +250,7 @@ pub fn reg_RCX() -> Reg {
 }
 
 /// Create the register universe for X64.
-fn create_reg_universe() -> RealRegUniverse {
+pub fn create_reg_universe() -> RealRegUniverse {
     let mut regs = Vec::<(RealReg, String)>::new();
     let mut allocable_by_class = [None; NUM_REG_CLASSES];
 
@@ -310,32 +310,6 @@ fn create_reg_universe() -> RealRegUniverse {
 // Printing support.  FIXME JRS 2020Feb07: this isn't x64-specific.  Move it
 // somewhere else (to the RA interface, I think)
 
-// A trait for printing instruction bits and pieces, with the the ability to
-// take a contextualising RealRegUniverse that is used to give proper names to
-// registers.
-trait ShowWithRRU {
-    fn show(&self, mb_rru: Option<&RealRegUniverse>) -> String;
-}
-
-fn show_reg(reg: &Reg, mb_rru: Option<&RealRegUniverse>) -> String {
-    if reg.is_real() {
-        if let Some(rru) = mb_rru {
-            let reg_ix = reg.get_index();
-            if reg_ix < rru.regs.len() {
-                return "%".to_string() + &rru.regs[reg_ix].1;
-            } else {
-                // We have a real reg which isn't listed in the universe.  Per
-                // the regalloc.rs interface requirements, this is Totally Not
-                // Allowed.  Print it generically anyway, so we have something
-                // to debug.
-                return format!("!!{:?}!!", reg);
-            }
-        }
-    }
-    // The reg is virtual, or we have no universe.  Be generic.
-    format!("{:?}", reg)
-}
-
 //=============================================================================
 // Instruction sub-components: definitions and printing
 
@@ -368,9 +342,9 @@ pub fn Addr_IRRS(simm32: i32, base: Reg, index: Reg, shift: u8) -> Addr {
     }
 }
 impl ShowWithRRU for Addr {
-    fn show(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            Addr::IR { simm32, base } => format!("{}({})", *simm32, show_reg(base, mb_rru)),
+            Addr::IR { simm32, base } => format!("{}({})", *simm32, base.show_rru(mb_rru)),
             Addr::IRRS {
                 simm32,
                 base,
@@ -379,8 +353,8 @@ impl ShowWithRRU for Addr {
             } => format!(
                 "{}({},{},{})",
                 *simm32,
-                show_reg(base, mb_rru),
-                show_reg(index, mb_rru),
+                base.show_rru(mb_rru),
+                index.show_rru(mb_rru),
                 1 << shift
             ),
         }
@@ -408,10 +382,10 @@ pub fn RMI_I(simm32: i32) -> RMI {
     RMI::I { simm32 }
 }
 impl ShowWithRRU for RMI {
-    fn show(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            RMI::R { reg } => show_reg(reg, mb_rru),
-            RMI::M { addr } => addr.show(mb_rru),
+            RMI::R { reg } => reg.show_rru(mb_rru),
+            RMI::M { addr } => addr.show_rru(mb_rru),
             RMI::I { simm32 } => format!("${}", *simm32),
         }
     }
@@ -431,10 +405,10 @@ pub fn RM_M(addr: Addr) -> RM {
     RM::M { addr }
 }
 impl ShowWithRRU for RM {
-    fn show(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            RM::R { reg } => show_reg(reg, mb_rru),
-            RM::M { addr } => addr.show(mb_rru),
+            RM::R { reg } => reg.show_rru(mb_rru),
+            RM::M { addr } => addr.show_rru(mb_rru),
         }
     }
 }
@@ -787,7 +761,7 @@ pub fn i_CallUnknown(target: RM) -> Inst {
 // Instructions: printing
 
 impl ShowWithRRU for Inst {
-    fn show(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         fn ljustify(s: String) -> String {
             let w = 7;
             if s.len() >= w {
@@ -823,8 +797,8 @@ impl ShowWithRRU for Inst {
             Inst::Alu_RMI_R { is64, op, src, dst } => format!(
                 "{} {}, {}",
                 ljustify2(op.to_string(), suffixLQ(*is64)),
-                src.show(mb_rru),
-                show_reg(dst, mb_rru),
+                src.show_rru(mb_rru),
+                dst.show_rru(mb_rru),
             ),
             Inst::Imm_R {
                 dstIs64,
@@ -836,38 +810,38 @@ impl ShowWithRRU for Inst {
                     "{} ${}, {}",
                     ljustify(name.to_string()),
                     simm64,
-                    show_reg(dst, mb_rru)
+                    dst.show_rru(mb_rru)
                 )
             }
             Inst::Mov_R_R { is64, src, dst } => format!(
                 "{} {}, {}",
                 ljustify2("mov".to_string(), suffixLQ(*is64)),
-                show_reg(src, mb_rru),
-                show_reg(dst, mb_rru)
+                src.show_rru(mb_rru),
+                dst.show_rru(mb_rru)
             ),
             Inst::MovZX_M_R { extMode, addr, dst } => format!(
                 "{} {:?}, {:?}",
                 ljustify2("movz".to_string(), extMode.to_string()),
-                addr.show(mb_rru),
-                show_reg(dst, mb_rru)
+                addr.show_rru(mb_rru),
+                dst.show_rru(mb_rru)
             ),
             Inst::Mov64_M_R { addr, dst } => format!(
                 "{} {}, {}",
                 ljustify("movq".to_string()),
-                addr.show(mb_rru),
-                show_reg(dst, mb_rru)
+                addr.show_rru(mb_rru),
+                dst.show_rru(mb_rru)
             ),
             Inst::MovSX_M_R { extMode, addr, dst } => format!(
                 "{} {}, {}",
                 ljustify2("movs".to_string(), extMode.to_string()),
-                addr.show(mb_rru),
-                show_reg(dst, mb_rru)
+                addr.show_rru(mb_rru),
+                dst.show_rru(mb_rru)
             ),
             Inst::Mov_R_M { size, src, addr } => format!(
                 "{} {}. {}",
                 ljustify2("mov".to_string(), suffixBWLQ(*size)),
-                show_reg(src, mb_rru),
-                addr.show(mb_rru)
+                src.show_rru(mb_rru),
+                addr.show_rru(mb_rru)
             ),
             Inst::Shift_R {
                 is64,
@@ -879,34 +853,36 @@ impl ShowWithRRU for Inst {
                     format!(
                         "{} %cl, {}",
                         ljustify2(kind.to_string(), suffixLQ(*is64)),
-                        show_reg(dst, mb_rru)
+                        dst.show_rru(mb_rru)
                     )
                 } else {
                     format!(
                         "{} ${}, {}",
                         ljustify2(kind.to_string(), suffixLQ(*is64)),
                         nBits,
-                        show_reg(dst, mb_rru)
+                        dst.show_rru(mb_rru)
                     )
                 }
             }
             Inst::Cmp_RMI_R { size, src, dst } => format!(
                 "{} {}, {}",
                 ljustify2("cmp".to_string(), suffixBWLQ(*size)),
-                src.show(mb_rru),
-                show_reg(dst, mb_rru)
+                src.show_rru(mb_rru),
+                dst.show_rru(mb_rru)
             ),
             Inst::Push { is64, src } => format!(
                 "{} {}",
                 ljustify2("push".to_string(), suffixLQ(*is64)),
-                src.show(mb_rru)
+                src.show_rru(mb_rru)
             ),
             Inst::JmpKnown { simm32 } => {
                 format!("{} simm32={}", ljustify("jmp".to_string()), *simm32)
             }
-            Inst::JmpUnknown { target } => {
-                format!("{} {}", ljustify("jmp".to_string()), target.show(mb_rru))
-            }
+            Inst::JmpUnknown { target } => format!(
+                "{} {}",
+                ljustify("jmp".to_string()),
+                target.show_rru(mb_rru)
+            ),
             Inst::JmpCond {
                 cc,
                 tsimm32,
@@ -918,9 +894,11 @@ impl ShowWithRRU for Inst {
                 *fsimm32
             ),
             Inst::CallKnown { target } => format!("{} {:?}", ljustify("call".to_string()), target),
-            Inst::CallUnknown { target } => {
-                format!("{} {}", ljustify("call".to_string()), target.show(mb_rru))
-            }
+            Inst::CallUnknown { target } => format!(
+                "{} {}",
+                ljustify("call".to_string()),
+                target.show_rru(mb_rru)
+            ),
         }
     }
 }
@@ -929,7 +907,7 @@ impl ShowWithRRU for Inst {
 impl fmt::Debug for Inst {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         // Print the insn without a Universe :-(
-        write!(fmt, "{}", self.show(None))
+        write!(fmt, "{}", self.show_rru(None))
     }
 }
 
@@ -1526,7 +1504,7 @@ fn i_am_a_test() {
 
     let rru = create_reg_universe();
     for i in insts {
-        println!("     {}", i.show(Some(&rru)));
+        println!("     {}", i.show_rru(Some(&rru)));
     }
     println!("QQQQ END I am a test");
 }

@@ -13,6 +13,7 @@ TODO:
   - Load and store ops
   - Constant pool? Need MemArg resolution just prior to emission (when we know
     the constant-pool offset)
+  - Resolve relocations: GlobalValue, Function (multiple-insn seq for address?)
 
 - ISA completeness:
   - ImmLogic: implement the algorithm to determine whether an immediate can be

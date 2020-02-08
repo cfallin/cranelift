@@ -90,12 +90,15 @@ fn handle_module(
             let code = backend
                 .compile_function_to_memory(func, &mut relocs, &mut traps, &mut stackmaps)
                 .expect("Compilation error");
-            println!("Machine code:");
-            for word in code.chunks(4) {
-                println!(
-                    "{:02x}{:02x}{:02x}{:02x}",
-                    word[3], word[2], word[1], word[0]
-                );
+
+            if flag_disasm {
+                println!("Machine code:");
+                for word in code.chunks(4) {
+                    println!(
+                        "{:02x}{:02x}{:02x}{:02x}",
+                        word[3], word[2], word[1], word[0]
+                    );
+                }
             }
         }
     }

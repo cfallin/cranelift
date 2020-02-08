@@ -48,7 +48,7 @@ fn in_int_reg(ty: types::Type) -> bool {
 impl ARM64ABIBody {
     /// Create a new body ABI instance.
     pub fn new(f: &ir::Function) -> ARM64ABIBody {
-        println!("ARM64 ABI: func signature {:?}", f.signature);
+        //println!("ARM64 ABI: func signature {:?}", f.signature);
 
         // Compute args and retvals from signature.
         let mut args = vec![];
@@ -213,7 +213,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
                 set.insert(r);
             }
         }
-        println!("ARM64 ABI: liveins {:?}", set);
+        //println!("ARM64 ABI: liveins {:?}", set);
         set
     }
 
@@ -224,7 +224,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
                 set.insert(r);
             }
         }
-        println!("ARM64 ABI: liveouts {:?}", set);
+        //println!("ARM64 ABI: liveouts {:?}", set);
         set
     }
 
