@@ -597,10 +597,10 @@ impl LowerBackend for Arm64Backend {
             let op1 = ctx.data(branches[0]).opcode();
             let op2 = ctx.data(branches[1]).opcode();
 
-            println!(
-                "lowering two-branch group: opcodes are {:?} and {:?}",
-                op1, op2
-            );
+            //println!(
+            //    "lowering two-branch group: opcodes are {:?} and {:?}",
+            //    op1, op2
+            //);
 
             assert!(op2 == Opcode::Jump || op2 == Opcode::Fallthrough);
             let taken = BranchTarget::Block(targets[0]);

@@ -138,7 +138,7 @@ pub fn create_reg_universe() -> RealRegUniverse {
     regs.push((fp_reg().to_real_reg(), "fp".to_string()));
     regs.push((link_reg().to_real_reg(), "lr".to_string()));
     regs.push((zero_reg().to_real_reg(), "xzr".to_string()));
-    regs.push((stack_reg().to_real_reg(), "xsp".to_string()));
+    regs.push((stack_reg().to_real_reg(), "sp".to_string()));
     // FIXME JRS 2020Feb06: unfortunately this pushes the number of real regs
     // to 65, which is potentially inconvenient from a compiler performance
     // standpoint.  We could possibly drop back to 64 by "losing" a vector
@@ -1848,8 +1848,14 @@ impl ShowWithRRU for Inst {
                 let (op, is32) = op_is32(alu_op);
                 let rd = adj_reg(rd.show_rru(mb_rru), is32);
                 let rn = adj_reg(rn.show_rru(mb_rru), is32);
-                let imm12 = imm12.show_rru(mb_rru);
-                format!("{} {}, {}, {}", op, rd, rn, imm12)
+
+                if imm12.bits == 0 && alu_op == ALUOp::Add64 {
+                    // special-case MOV (used for moving into SP).
+                    format!("mov {}, {}", rd, rn)
+                } else {
+                    let imm12 = imm12.show_rru(mb_rru);
+                    format!("{} {}, {}, {}", op, rd, rn, imm12)
+                }
             }
             &Inst::AluRRImmLogic {
                 alu_op,
@@ -1910,17 +1916,17 @@ impl ShowWithRRU for Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem } => {
-                let op = match self {
-                    &Inst::ULoad8 { .. } => "ldrb",
-                    &Inst::SLoad8 { .. } => "ldrsb",
-                    &Inst::ULoad16 { .. } => "ldrh",
-                    &Inst::SLoad16 { .. } => "ldrsh",
-                    &Inst::ULoad32 { .. } => "ldrw",
-                    &Inst::SLoad32 { .. } => "ldrsw",
-                    &Inst::ULoad64 { .. } => "ldr",
+                let (op, is32) = match self {
+                    &Inst::ULoad8 { .. } => ("ldrb", false),
+                    &Inst::SLoad8 { .. } => ("ldrsb", false),
+                    &Inst::ULoad16 { .. } => ("ldrh", false),
+                    &Inst::SLoad16 { .. } => ("ldrsh", false),
+                    &Inst::ULoad32 { .. } => ("ldr", true),
+                    &Inst::SLoad32 { .. } => ("ldrsw", true),
+                    &Inst::ULoad64 { .. } => ("ldr", false),
                     _ => unreachable!(),
                 };
-                let rd = rd.show_rru(mb_rru);
+                let rd = adj_reg(rd.show_rru(mb_rru), is32);
                 let mem = mem.show_rru(mb_rru);
                 format!("{} {}, {}", op, rd, mem)
             }
@@ -1928,14 +1934,14 @@ impl ShowWithRRU for Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem } => {
-                let op = match self {
-                    &Inst::Store8 { .. } => "strb",
-                    &Inst::Store16 { .. } => "strh",
-                    &Inst::Store32 { .. } => "strw",
-                    &Inst::Store64 { .. } => "str",
+                let (op, is32) = match self {
+                    &Inst::Store8 { .. } => ("strb", false),
+                    &Inst::Store16 { .. } => ("strh", false),
+                    &Inst::Store32 { .. } => ("str", true),
+                    &Inst::Store64 { .. } => ("str", false),
                     _ => unreachable!(),
                 };
-                let rd = rd.show_rru(mb_rru);
+                let rd = adj_reg(rd.show_rru(mb_rru), is32);
                 let mem = mem.show_rru(mb_rru);
                 format!("{} {}, {}", op, rd, mem)
             }

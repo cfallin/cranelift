@@ -63,6 +63,6 @@ impl MachBackend for Arm64Backend {
     }
 
     fn reg_universe(&self) -> RealRegUniverse {
-      create_reg_universe()
+        create_reg_universe()
     }
 }

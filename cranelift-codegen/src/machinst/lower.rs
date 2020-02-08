@@ -274,6 +274,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                         let fallthrough = self.f.layout.next_block(*bb);
                         let fallthrough = fallthrough.map(|bb| self.vcode.bb_to_bindex(bb));
                         branches.reverse();
+                        targets.reverse();
                         backend.lower_branch_group(
                             &mut self,
                             &branches[..],
@@ -301,6 +302,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 let fallthrough = self.f.layout.next_block(*bb);
                 let fallthrough = fallthrough.map(|bb| self.vcode.bb_to_bindex(bb));
                 branches.reverse();
+                targets.reverse();
                 backend.lower_branch_group(&mut self, &branches[..], &targets[..], fallthrough);
                 self.vcode.end_ir_inst();
                 branches.clear();
