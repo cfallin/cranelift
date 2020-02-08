@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 target/debug/clif-util compile --target arm64 arm64_tests/fib.clif > fib.s
 
 cat > fib_final.s <<EOF
@@ -7,7 +9,7 @@ cat > fib_final.s <<EOF
 fib:
 EOF
 
-cat fib.s > fib_final.s
+cat fib.s >> fib_final.s
 
 cat > fib.c <<EOF
 #include <stdint.h>
@@ -21,4 +23,5 @@ int main() {
 }
 EOF
 
-gcc -O2 fib.c fib_final.s -o fib
+aarch64-linux-gnu-gcc -static -O2 fib.c fib_final.s -o fib
+qemu-aarch64 ./fib
