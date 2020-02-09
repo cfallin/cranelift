@@ -21,7 +21,7 @@ use std::string::{String, ToString};
 use std::sync::Once;
 
 //=============================================================================
-// Registers and the Universe thereof
+// Registers, the Universe thereof, and printing
 
 /// Get a reference to an X-register (integer register).
 pub fn xreg(num: u8) -> Reg {
@@ -149,6 +149,30 @@ pub fn create_reg_universe() -> RealRegUniverse {
         allocable,
         allocable_by_class,
     }
+}
+
+// If |ireg| denotes an I64-classed reg, make a best-effort attempt to show
+// its name at the 32-bit size.
+fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, is32: bool) -> String {
+    let mut s = reg.show_rru(mb_rru);
+    if reg.get_class() != RegClass::I64 || !is32 {
+        // We can't do any better.
+        return s;
+    }
+
+    let mut s = reg.show_rru(mb_rru);
+    if reg.is_real() {
+        // Change (eg) "x42" into "w42" as appropriate
+        if reg.get_class() == RegClass::I64 && is32 && s.starts_with("x") {
+            s = "w".to_string() + &s[1..];
+        }
+    } else {
+        // Add a "w" suffix to RegClass::I64 vregs used in a 32-bit role
+        if reg.get_class() == RegClass::I64 && is32 {
+            s = s + &"w";
+        }
+    }
+    s
 }
 
 //=============================================================================
@@ -1806,14 +1830,6 @@ impl ShowWithRRU for BranchTarget {
 
 impl ShowWithRRU for Inst {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
-        fn adj_reg(r: String, is32: bool) -> String {
-            if is32 && r.starts_with("x") {
-                "w".to_string() + &r[1..]
-            } else {
-                r
-            }
-        }
-
         fn op_is32(alu_op: ALUOp) -> (&'static str, bool) {
             match alu_op {
                 ALUOp::Add32 => ("add", true),
@@ -1834,9 +1850,9 @@ impl ShowWithRRU for Inst {
             &Inst::Nop4 => "nop".to_string(),
             &Inst::AluRRR { alu_op, rd, rn, rm } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = adj_reg(rd.show_rru(mb_rru), is32);
-                let rn = adj_reg(rn.show_rru(mb_rru), is32);
-                let rm = adj_reg(rm.show_rru(mb_rru), is32);
+                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rn = show_ireg_sized(rn, mb_rru, is32);
+                let rm = show_ireg_sized(rm, mb_rru, is32);
                 format!("{} {}, {}, {}", op, rd, rn, rm)
             }
             &Inst::AluRRImm12 {
@@ -1846,8 +1862,8 @@ impl ShowWithRRU for Inst {
                 ref imm12,
             } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = adj_reg(rd.show_rru(mb_rru), is32);
-                let rn = adj_reg(rn.show_rru(mb_rru), is32);
+                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rn = show_ireg_sized(rn, mb_rru, is32);
 
                 if imm12.bits == 0 && alu_op == ALUOp::Add64 {
                     // special-case MOV (used for moving into SP).
@@ -1864,8 +1880,8 @@ impl ShowWithRRU for Inst {
                 ref imml,
             } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = adj_reg(rd.show_rru(mb_rru), is32);
-                let rn = adj_reg(rn.show_rru(mb_rru), is32);
+                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rn = show_ireg_sized(rn, mb_rru, is32);
                 let imml = imml.show_rru(mb_rru);
                 format!("{} {}, {}, {}", op, rd, rn, imml)
             }
@@ -1876,8 +1892,8 @@ impl ShowWithRRU for Inst {
                 ref immshift,
             } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = adj_reg(rd.show_rru(mb_rru), is32);
-                let rn = adj_reg(rn.show_rru(mb_rru), is32);
+                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rn = show_ireg_sized(rn, mb_rru, is32);
                 let immshift = immshift.show_rru(mb_rru);
                 format!("{} {}, {}, {}", op, rd, rn, immshift)
             }
@@ -1889,9 +1905,9 @@ impl ShowWithRRU for Inst {
                 ref shiftop,
             } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = adj_reg(rd.show_rru(mb_rru), is32);
-                let rn = adj_reg(rn.show_rru(mb_rru), is32);
-                let rm = adj_reg(rm.show_rru(mb_rru), is32);
+                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rn = show_ireg_sized(rn, mb_rru, is32);
+                let rm = show_ireg_sized(rm, mb_rru, is32);
                 let shiftop = shiftop.show_rru(mb_rru);
                 format!("{} {}, {}, {}, {}", op, rd, rn, rm, shiftop)
             }
@@ -1903,9 +1919,9 @@ impl ShowWithRRU for Inst {
                 ref extendop,
             } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = adj_reg(rd.show_rru(mb_rru), is32);
-                let rn = adj_reg(rn.show_rru(mb_rru), is32);
-                let rm = adj_reg(rm.show_rru(mb_rru), is32);
+                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rn = show_ireg_sized(rn, mb_rru, is32);
+                let rm = show_ireg_sized(rm, mb_rru, is32);
                 let extendop = extendop.show_rru(mb_rru);
                 format!("{} {}, {}, {}, {}", op, rd, rn, rm, extendop)
             }
@@ -1926,7 +1942,7 @@ impl ShowWithRRU for Inst {
                     &Inst::ULoad64 { .. } => ("ldr", false),
                     _ => unreachable!(),
                 };
-                let rd = adj_reg(rd.show_rru(mb_rru), is32);
+                let rd = show_ireg_sized(rd, mb_rru, is32);
                 let mem = mem.show_rru(mb_rru);
                 format!("{} {}, {}", op, rd, mem)
             }
@@ -1935,13 +1951,13 @@ impl ShowWithRRU for Inst {
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem } => {
                 let (op, is32) = match self {
-                    &Inst::Store8 { .. } => ("strb", false),
-                    &Inst::Store16 { .. } => ("strh", false),
+                    &Inst::Store8 { .. } => ("strb", false),  // JRS: true?
+                    &Inst::Store16 { .. } => ("strh", false), // ditto
                     &Inst::Store32 { .. } => ("str", true),
                     &Inst::Store64 { .. } => ("str", false),
                     _ => unreachable!(),
                 };
-                let rd = adj_reg(rd.show_rru(mb_rru), is32);
+                let rd = show_ireg_sized(rd, mb_rru, is32);
                 let mem = mem.show_rru(mb_rru);
                 format!("{} {}, {}", op, rd, mem)
             }

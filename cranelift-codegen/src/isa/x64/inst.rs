@@ -26,7 +26,7 @@ use smallvec::SmallVec;
 //zz
 
 //=============================================================================
-// Registers and the Universe thereof
+// Registers, the Universe thereof, and printing
 
 // These are the hardware encodings for various integer registers.
 const ENC_RSP: u8 = 4;
@@ -248,6 +248,9 @@ fn info_RBP() -> (RealReg, String) {
 pub fn reg_RCX() -> Reg {
     info_RCX().0.to_reg()
 }
+pub fn reg_RSP() -> Reg {
+    info_RSP().0.to_reg()
+}
 
 /// Create the register universe for X64.
 pub fn create_reg_universe() -> RealRegUniverse {
@@ -306,9 +309,59 @@ pub fn create_reg_universe() -> RealRegUniverse {
     }
 }
 
-//=============================================================================
-// Printing support.  FIXME JRS 2020Feb07: this isn't x64-specific.  Move it
-// somewhere else (to the RA interface, I think)
+// If |ireg| denotes an I64-classed reg, make a best-effort attempt to show
+// its name at some smaller size (4, 2 or 1 bytes).
+fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: u8) -> String {
+    let mut s = reg.show_rru(mb_rru);
+    if reg.get_class() != RegClass::I64 || size == 8 {
+        // We can't do any better.
+        return s;
+    }
+
+    if reg.is_real() {
+        // Change (eg) "rax" into "eax", "ax" or "al" as appropriate.  This is
+        // something one could describe diplomatically as "a kludge", but it's
+        // only debug code.
+        let remapper = match s.as_str() {
+            "%rax" => Some(["%eax", "%ax", "%al"]),
+            "%rbx" => Some(["%ebx", "%bx", "%bl"]),
+            "%rcx" => Some(["%ecx", "%cx", "%cl"]),
+            "%rdx" => Some(["%edx", "%dx", "%dl"]),
+            "%rsi" => Some(["%esi", "%si", "%sil"]),
+            "%rdi" => Some(["%edi", "%di", "%dil"]),
+            "%rbp" => Some(["%ebp", "%bp", "%bpl"]),
+            "%rsp" => Some(["%esp", "%sp", "%spl"]),
+            "%r8" => Some(["%r8d", "%r8w", "%r8b"]),
+            "%r9" => Some(["%r9d", "%r9w", "%r9b"]),
+            "%r10" => Some(["%r10d", "%r10w", "%r10b"]),
+            "%r11" => Some(["%r11d", "%r11w", "%r11b"]),
+            "%r12" => Some(["%r12d", "%r12w", "%r12b"]),
+            "%r13" => Some(["%r13d", "%r13w", "%r13b"]),
+            "%r14" => Some(["%r14d", "%r14w", "%r14b"]),
+            "%r15" => Some(["%r15d", "%r15w", "%r15b"]),
+            _ => None,
+        };
+        if let Some(smaller_names) = remapper {
+            match size {
+                4 => s = smaller_names[0].to_string(),
+                2 => s = smaller_names[1].to_string(),
+                1 => s = smaller_names[2].to_string(),
+                _ => panic!("show_ireg_sized: real"),
+            }
+        }
+    } else {
+        // Add a "l", "w" or "b" suffix to RegClass::I64 vregs used at
+        // narrower widths
+        let suffix = match size {
+            4 => "l",
+            2 => "w",
+            1 => "b",
+            _ => panic!("show_ireg_sized: virtual"),
+        };
+        s = s + &suffix.to_string();
+    }
+    s
+}
 
 //=============================================================================
 // Instruction sub-components: definitions and printing
@@ -383,8 +436,11 @@ pub fn RMI_I(simm32: i32) -> RMI {
 }
 impl ShowWithRRU for RMI {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+        self.show_rru_sized(mb_rru, 8)
+    }
+    fn show_rru_sized(&self, mb_rru: Option<&RealRegUniverse>, size: u8) -> String {
         match self {
-            RMI::R { reg } => reg.show_rru(mb_rru),
+            RMI::R { reg } => show_ireg_sized(*reg, mb_rru, size),
             RMI::M { addr } => addr.show_rru(mb_rru),
             RMI::I { simm32 } => format!("${}", *simm32),
         }
@@ -406,8 +462,11 @@ pub fn RM_M(addr: Addr) -> RM {
 }
 impl ShowWithRRU for RM {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+        self.show_rru_sized(mb_rru, 8)
+    }
+    fn show_rru_sized(&self, mb_rru: Option<&RealRegUniverse>, size: u8) -> String {
         match self {
-            RM::R { reg } => reg.show_rru(mb_rru),
+            RM::R { reg } => show_ireg_sized(*reg, mb_rru, size),
             RM::M { addr } => addr.show_rru(mb_rru),
         }
     }
@@ -459,6 +518,15 @@ impl ExtMode {
             ExtMode::WL => "wl".to_string(),
             ExtMode::WQ => "wq".to_string(),
             ExtMode::LQ => "lq".to_string(),
+        }
+    }
+    fn dst_size(&self) -> u8 {
+        match self {
+            ExtMode::BL => 4,
+            ExtMode::BQ => 8,
+            ExtMode::WL => 4,
+            ExtMode::WQ => 8,
+            ExtMode::LQ => 8,
         }
     }
 }
@@ -781,14 +849,21 @@ impl ShowWithRRU for Inst {
             ljustify(s1 + &s2)
         }
         fn suffixLQ(is64: bool) -> String {
-            (if is64 { "l" } else { "q" }).to_string()
+            (if is64 { "q" } else { "l" }).to_string()
+        }
+        fn sizeLQ(is64: bool) -> u8 {
+            if is64 {
+                8
+            } else {
+                4
+            }
         }
         fn suffixBWLQ(size: u8) -> String {
             match size {
-                1 => "1".to_string(),
-                2 => "2".to_string(),
-                4 => "4".to_string(),
-                8 => "8".to_string(),
+                1 => "b".to_string(),
+                2 => "w".to_string(),
+                4 => "l".to_string(),
+                8 => "q".to_string(),
                 _ => panic!("Inst(x64).show.suffixBWLQ"),
             }
         }
@@ -797,8 +872,8 @@ impl ShowWithRRU for Inst {
             Inst::Alu_RMI_R { is64, op, src, dst } => format!(
                 "{} {}, {}",
                 ljustify2(op.to_string(), suffixLQ(*is64)),
-                src.show_rru(mb_rru),
-                dst.show_rru(mb_rru),
+                src.show_rru_sized(mb_rru, sizeLQ(*is64)),
+                show_ireg_sized(*dst, mb_rru, sizeLQ(*is64)),
             ),
             Inst::Imm_R {
                 dstIs64,
@@ -810,20 +885,20 @@ impl ShowWithRRU for Inst {
                     "{} ${}, {}",
                     ljustify(name.to_string()),
                     simm64,
-                    dst.show_rru(mb_rru)
+                    show_ireg_sized(*dst, mb_rru, sizeLQ(*dstIs64))
                 )
             }
             Inst::Mov_R_R { is64, src, dst } => format!(
                 "{} {}, {}",
                 ljustify2("mov".to_string(), suffixLQ(*is64)),
-                src.show_rru(mb_rru),
-                dst.show_rru(mb_rru)
+                src.show_rru_sized(mb_rru, sizeLQ(*is64)),
+                dst.show_rru_sized(mb_rru, sizeLQ(*is64))
             ),
             Inst::MovZX_M_R { extMode, addr, dst } => format!(
-                "{} {:?}, {:?}",
+                "{} {}, {}",
                 ljustify2("movz".to_string(), extMode.to_string()),
                 addr.show_rru(mb_rru),
-                dst.show_rru(mb_rru)
+                show_ireg_sized(*dst, mb_rru, extMode.dst_size())
             ),
             Inst::Mov64_M_R { addr, dst } => format!(
                 "{} {}, {}",
@@ -835,12 +910,12 @@ impl ShowWithRRU for Inst {
                 "{} {}, {}",
                 ljustify2("movs".to_string(), extMode.to_string()),
                 addr.show_rru(mb_rru),
-                dst.show_rru(mb_rru)
+                show_ireg_sized(*dst, mb_rru, extMode.dst_size())
             ),
             Inst::Mov_R_M { size, src, addr } => format!(
-                "{} {}. {}",
+                "{} {}, {}",
                 ljustify2("mov".to_string(), suffixBWLQ(*size)),
-                src.show_rru(mb_rru),
+                show_ireg_sized(*src, mb_rru, *size),
                 addr.show_rru(mb_rru)
             ),
             Inst::Shift_R {
@@ -853,27 +928,27 @@ impl ShowWithRRU for Inst {
                     format!(
                         "{} %cl, {}",
                         ljustify2(kind.to_string(), suffixLQ(*is64)),
-                        dst.show_rru(mb_rru)
+                        show_ireg_sized(*dst, mb_rru, sizeLQ(*is64))
                     )
                 } else {
                     format!(
                         "{} ${}, {}",
                         ljustify2(kind.to_string(), suffixLQ(*is64)),
                         nBits,
-                        dst.show_rru(mb_rru)
+                        show_ireg_sized(*dst, mb_rru, sizeLQ(*is64))
                     )
                 }
             }
             Inst::Cmp_RMI_R { size, src, dst } => format!(
                 "{} {}, {}",
                 ljustify2("cmp".to_string(), suffixBWLQ(*size)),
-                src.show_rru(mb_rru),
-                dst.show_rru(mb_rru)
+                src.show_rru_sized(mb_rru, *size),
+                show_ireg_sized(*dst, mb_rru, *size)
             ),
             Inst::Push { is64, src } => format!(
                 "{} {}",
                 ljustify2("push".to_string(), suffixLQ(*is64)),
-                src.show_rru(mb_rru)
+                src.show_rru_sized(mb_rru, sizeLQ(*is64))
             ),
             Inst::JmpKnown { simm32 } => {
                 format!("{} simm32={}", ljustify("jmp".to_string()), *simm32)
@@ -1025,6 +1100,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
         }
         Inst::Push { is64: _, src } => {
             src.get_regs(&mut iru.used);
+            iru.modified.insert(reg_RSP());
         }
         Inst::JmpKnown { simm32: _ } => {}
         Inst::JmpUnknown { target } => {
@@ -1563,6 +1639,69 @@ fn i_am_a_test() {
     insts.push(i_Mov64_M_R(Addr_IRRS(0x80, rax, r8, 3), r15));
     insts.push(i_Mov64_M_R(Addr_IRRS(0x7FFF_FFFF, rax, r8, 3), r15));
 
+    // Check sub-word printing
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), rdx));
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_R(rcx), rdx));
+    //
+    insts.push(i_Imm_R(false, -1234567, r15));
+    insts.push(i_Imm_R(true, 1234567898765, r15));
+    //
+    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-0x80, rax), r8));
+    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-0x80, rax), r8));
+    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-0x80, rax), r8));
+    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-0x80, rax), r8));
+    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-0x80, rax), r8));
+    //
+    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-0x80, rax), r8));
+    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-0x80, rax), r8));
+    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-0x80, rax), r8));
+    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-0x80, rax), r8));
+    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-0x80, rax), r8));
+    //
+    insts.push(i_Mov_R_M(1, rsi, Addr_IRRS(0x7F, rax, r8, 3)));
+    insts.push(i_Mov_R_M(2, rsi, Addr_IRRS(0x7F, rax, r8, 3)));
+    insts.push(i_Mov_R_M(4, rsi, Addr_IRRS(0x7F, rax, r8, 3)));
+    insts.push(i_Mov_R_M(8, rsi, Addr_IRRS(0x7F, rax, r8, 3)));
+    //
+    insts.push(i_Shift_R(false, ShiftKind::Left, 0, rdi));
+    insts.push(i_Shift_R(false, ShiftKind::Left, 5, rdi));
+    insts.push(i_Shift_R(true, ShiftKind::Left, 5, rdi));
+    insts.push(i_Shift_R(true, ShiftKind::RightZ, 5, rdi));
+    insts.push(i_Shift_R(true, ShiftKind::RightS, 5, rdi));
+    //
+    insts.push(i_Cmp_RMI_R(1, RMI_R(rcx), rdx));
+    insts.push(i_Cmp_RMI_R(2, RMI_R(rcx), rdx));
+    insts.push(i_Cmp_RMI_R(4, RMI_R(rcx), rdx));
+    insts.push(i_Cmp_RMI_R(8, RMI_R(rcx), rdx));
+    insts.push(i_Cmp_RMI_R(1, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx));
+    insts.push(i_Cmp_RMI_R(2, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx));
+    insts.push(i_Cmp_RMI_R(4, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx));
+    insts.push(i_Cmp_RMI_R(8, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx));
+    insts.push(i_Cmp_RMI_R(1, RMI_I(123), rdx));
+    insts.push(i_Cmp_RMI_R(2, RMI_I(456), rdx));
+    insts.push(i_Cmp_RMI_R(4, RMI_I(789), rdx));
+    insts.push(i_Cmp_RMI_R(8, RMI_I(-123), rdx));
+    //
+    insts.push(i_Push(false, RMI_R(rcx)));
+    insts.push(i_Push(true, RMI_R(rcx)));
+    insts.push(i_Push(false, RMI_M(Addr_IR(0x7FFF_FFFF, rax))));
+    insts.push(i_Push(true, RMI_M(Addr_IR(0x7FFF_FFFF, rax))));
+    insts.push(i_Push(false, RMI_I(123)));
+    insts.push(i_Push(true, RMI_I(456)));
+
+    /*
+    insts.push(i_());
+    insts.push(i_());
+    insts.push(i_());
+    insts.push(i_());
+    insts.push(i_());
+    insts.push(i_());
+    insts.push(i_());
+    insts.push(i_());
+    insts.push(i_());
+    insts.push(i_());
+    insts.push(i_());
+    */
     let rru = create_reg_universe();
     for i in insts {
         println!("     {}", i.show_rru(Some(&rru)));

@@ -13,6 +13,16 @@ pub trait ShowWithRRU {
     /// Return a string that shows the implementing object in context of the
     /// given `RealRegUniverse`, if provided.
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String;
+
+    /// The same as |show_rru|, but with an optional hint giving a size in
+    /// bytes.  Its interpretation is object-dependent, and it is intended to
+    /// pass around enough information to facilitate printing sub-parts of
+    /// real registers correctly.  Objects may ignore size hints that are
+    /// irrelevant to them.
+    fn show_rru_sized(&self, mb_rru: Option<&RealRegUniverse>, _size: u8) -> String {
+        // Default implementation is to ignore the hint.
+        self.show_rru(mb_rru)
+    }
 }
 
 impl ShowWithRRU for Reg {
@@ -23,15 +33,22 @@ impl ShowWithRRU for Reg {
                 if reg_ix < rru.regs.len() {
                     return rru.regs[reg_ix].1.to_string();
                 } else {
-                    // We have a real reg which isn't listed in the universe.  Per
-                    // the regalloc.rs interface requirements, this is Totally Not
-                    // Allowed.  Print it generically anyway, so we have something
-                    // to debug.
+                    // We have a real reg which isn't listed in the universe.
+                    // Per the regalloc.rs interface requirements, this is
+                    // Totally Not Allowed.  Print it generically anyway, so
+                    // we have something to debug.
                     return format!("!!{:?}!!", self);
                 }
             }
         }
         // The reg is virtual, or we have no universe.  Be generic.
         format!("%{:?}", self)
+    }
+
+    fn show_rru_sized(&self, _mb_rru: Option<&RealRegUniverse>, _size: u8) -> String {
+        // For the specific case of Reg, we demand not to have a size hint,
+        // since interpretation of the size is target specific, but this code
+        // is used by all targets.
+        panic!("Reg::show_rru_sized: impossible to implement");
     }
 }
