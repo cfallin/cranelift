@@ -1216,12 +1216,16 @@ fn x64_map_regs(
 //=============================================================================
 // Instructions and subcomponents: emission
 
+// For all of the routines that take both a memory-or-reg operand (sometimes
+// called "E" in the Intel parlance) and a reg-only operand ("G" in Intelese),
+// the order is always G first, then E.
+
 #[inline(always)]
-fn mkModRegRM(m0d: u8, encReg: u8, rm: u8) -> u8 {
+fn mkModRegRM(m0d: u8, encRegG: u8, rmE: u8) -> u8 {
     debug_assert!(m0d < 4);
-    debug_assert!(encReg < 8);
-    debug_assert!(rm < 8);
-    ((m0d & 3) << 6) | ((encReg & 7) << 3) | (rm & 7)
+    debug_assert!(encRegG < 8);
+    debug_assert!(rmE < 8);
+    ((m0d & 3) << 6) | ((encRegG & 7) << 3) | (rmE & 7)
 }
 
 #[inline(always)]
@@ -1248,33 +1252,37 @@ const F_RETAIN_REDUNDANT_REX: u32 = 1;
 // indicating a 64-bit operation.
 const F_CLEAR_W_BIT: u32 = 2;
 
-// For an instruction that has as operands a memory address |mem| and a
-// register |encG|, create and emit, first the REX prefix, then
-// caller-supplied opcode byte(s) (|opcodes| and |numOpcodes|), then the modrm
-// byte, then optionally, a SIB byte, and finally optionally an immediate that
-// will be derived from the |mem| operand.  For most instructions up to and
-// including SSE4.2, that will be the whole instruction.
+// For an instruction that has as operands a register |encG| and a memory
+// address |memE|, create and emit, first the REX prefix, then caller-supplied
+// opcode byte(s) (|opcodes| and |numOpcodes|), then the MOD/RM byte, then
+// optionally, a SIB byte, and finally optionally an immediate that will be
+// derived from the |memE| operand.  For most instructions up to and including
+// SSE4.2, that will be the whole instruction.
 //
-// The register operand is represented here not as a |Reg| but as its
+// The opcodes are written bigendianly for the convenience of callers.  For
+// example, if the opcode bytes to be emitted are, in this order, F3 0F 27,
+// then the caller should pass |opcodes| == 0xF3_0F_27 and |numOpcodes| == 3.
+//
+// The register operand is represented here not as a |Reg| but as its hardware
 // encoding, |encG|.  |flags| can specify special handling for the REX prefix.
 // By default, the REX prefix will indicate a 64-bit operation and will be
-// deleted if it is redundant.  Note that for a 64-bit operation, the REX
-// prefix will normally never be redundant, since REX.W must be 1 to indicate
-// a 64-bit operation.
-fn emit_REX_OPCODES_MODRM_SIB_for_Mem_Enc<CS: CodeSink>(
+// deleted if it is redundant (0x40).  Note that for a 64-bit operation, the
+// REX prefix will normally never be redundant, since REX.W must be 1 to
+// indicate a 64-bit operation.
+fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
     sink: &mut CS,
-    mem: &Addr,
-    encG: u8,
     opcodes: u32,
     mut numOpcodes: usize,
+    encG: u8,
+    memE: &Addr,
     flags: u32,
 ) {
-    // The registers in |mem| must be 64-bit integer registers, because they
-    // are part of an address expression.  But |reg| can be of any class,
-    // since it merely holds one of the operands and the result.
+    // General comment for this function: the registers in |memE| must be
+    // 64-bit integer registers, because they are part of an address
+    // expression.  But |encG| can be derived from a register of any class.
     let clearWBit = (flags & F_CLEAR_W_BIT) != 0;
     let retainRedundant = (flags & F_RETAIN_REDUNDANT_REX) != 0;
-    match mem {
+    match memE {
         Addr::IR { simm32, base: regE } => {
             // First, cook up the REX byte.  This is easy.
             let encE = iregEnc(*regE);
@@ -1308,16 +1316,18 @@ fn emit_REX_OPCODES_MODRM_SIB_for_Mem_Enc<CS: CodeSink>(
                 sink.put1(mkModRegRM(2, encG & 7, encE & 7));
                 sink.put4(*simm32 as u32);
             } else if (encE == ENC_RSP || encE == ENC_R12) && fitsIn8bits(*simm32) {
+                // REX.B distinguishes RSP from R12
                 sink.put1(mkModRegRM(1, encG & 7, 4));
                 sink.put1(0x24);
                 sink.put1((simm32 & 0xFF) as u8);
             } else if encE == ENC_R12 {
                 // || encE == ENC_RSP .. wait for test case for RSP case
+                // REX.B distinguishes RSP from R12
                 sink.put1(mkModRegRM(2, encG & 7, 4));
                 sink.put1(0x24);
                 sink.put4(*simm32 as u32);
             } else {
-                panic!("emit_REX_OPCODES_MODRM_SIB_for_Mem_Enc: IR: unimp");
+                panic!("emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE: IR");
             }
         }
         // Bizarrely, the IRRS case is much simpler.
@@ -1353,25 +1363,76 @@ fn emit_REX_OPCODES_MODRM_SIB_for_Mem_Enc<CS: CodeSink>(
                 sink.put1(mkSIB(*shift, encIndex & 7, encBase & 7));
                 sink.put4(*simm32 as u32);
             } else {
-                panic!("emit_REX_OPCODES_MODRM_SIB_for_Mem_Enc: IRRS: unimp");
+                panic!("emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE: IRRS");
             }
         }
     }
 }
 
-// This is merely a wrapper for the above function, which facilitates passing
-// an actual |Reg| rather than its encoding.
-fn emit_REX_OPCODES_MODRM_SIB_for_Mem_Reg<CS: CodeSink>(
+// This is conceptually the same as
+// emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE, except it is for the case
+// where the E operand is a register rather than memory.  Hence it is much
+// simpler.
+fn emit_REX_OPCODES_MODRM_for_EncG_EncE<CS: CodeSink>(
     sink: &mut CS,
-    mem: &Addr,
-    regG: Reg,
+    opcodes: u32,
+    mut numOpcodes: usize,
+    encG: u8,
+    encE: u8,
+    flags: u32,
+) {
+    // EncG and EncE can be derived from registers of any class, and they
+    // don't even have to be from the same class.  For example, for an
+    // integer-to-FP conversion insn, one might be RegClass::I64 and the other
+    // RegClass::V128.
+    let clearWBit = (flags & F_CLEAR_W_BIT) != 0;
+    let retainRedundant = (flags & F_RETAIN_REDUNDANT_REX) != 0;
+    // The rex byte
+    let W = if clearWBit { 0 } else { 1 };
+    let R = (encG >> 3) & 1;
+    let X = 0;
+    let B = (encE >> 3) & 1;
+    let rex = 0x40 | (W << 3) | (R << 2) | (X << 1) | (B << 0);
+    if rex != 0x40 || retainRedundant {
+        sink.put1(rex);
+    }
+    // All other prefixes and opcodes
+    while numOpcodes > 0 {
+        sink.put1(((opcodes >> (numOpcodes << 3)) & 0xFF) as u8);
+        numOpcodes -= 1;
+    }
+    // Now the mod/rm byte.  The instruction we're generating doesn't access
+    // memory, so there is no SIB byte or immediate -- we're done.
+    sink.put1(mkModRegRM(3, encG & 7, encE));
+}
+
+// These are merely wrappers for the above two functions that facilitates passing
+// actual |Reg|s rather than their encodings.
+fn emit_REX_OPCODES_MODRM_SIB_IMM_for_RegG_MemE<CS: CodeSink>(
+    sink: &mut CS,
     opcodes: u32,
     numOpcodes: usize,
+    memE: &Addr,
+    regG: Reg,
     flags: u32,
 ) {
     // JRS FIXME 2020Feb07: this should really just be |regEnc| not |iregEnc|
     let encG = iregEnc(regG);
-    emit_REX_OPCODES_MODRM_SIB_for_Mem_Enc(sink, mem, encG, opcodes, numOpcodes, flags);
+    emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE(sink, opcodes, numOpcodes, encG, memE, flags);
+}
+
+fn emit_REX_OPCODES_MODRM_for_RegG_RegE<CS: CodeSink>(
+    sink: &mut CS,
+    opcodes: u32,
+    mut numOpcodes: usize,
+    regG: Reg,
+    regE: Reg,
+    flags: u32,
+) {
+    // JRS FIXME 2020Feb07: these should really just be |regEnc| not |iregEnc|
+    let encG = iregEnc(regG);
+    let encE = iregEnc(regE);
+    emit_REX_OPCODES_MODRM_for_EncG_EncE(sink, opcodes, numOpcodes, encG, encE, flags);
 }
 
 fn x64_emit<CS: CodeSink>(_inst: &Inst, _sink: &mut CS) {
