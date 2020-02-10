@@ -371,21 +371,21 @@ fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: u8) -> Stri
 pub enum Addr {
     // sign-extend-32-to-64(Immediate) + Register
     IR {
-        simm32: i32,
+        simm32: u32,
         base: Reg,
     },
     // sign-extend-32-to-64(Immediate) + Register1 + (Register2 << Shift)
     IRRS {
-        simm32: i32,
+        simm32: u32,
         base: Reg,
         index: Reg,
         shift: u8, /* 0 .. 3 only */
     },
 }
-pub fn Addr_IR(simm32: i32, base: Reg) -> Addr {
+pub fn Addr_IR(simm32: u32, base: Reg) -> Addr {
     Addr::IR { simm32, base }
 }
-pub fn Addr_IRRS(simm32: i32, base: Reg, index: Reg, shift: u8) -> Addr {
+pub fn Addr_IRRS(simm32: u32, base: Reg, index: Reg, shift: u8) -> Addr {
     debug_assert!(shift <= 3);
     Addr::IRRS {
         simm32,
@@ -397,7 +397,7 @@ pub fn Addr_IRRS(simm32: i32, base: Reg, index: Reg, shift: u8) -> Addr {
 impl ShowWithRRU for Addr {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            Addr::IR { simm32, base } => format!("{}({})", *simm32, base.show_rru(mb_rru)),
+            Addr::IR { simm32, base } => format!("{}({})", *simm32 as i32, base.show_rru(mb_rru)),
             Addr::IRRS {
                 simm32,
                 base,
@@ -405,7 +405,7 @@ impl ShowWithRRU for Addr {
                 shift,
             } => format!(
                 "{}({},{},{})",
-                *simm32,
+                *simm32 as i32,
                 base.show_rru(mb_rru),
                 index.show_rru(mb_rru),
                 1 << shift
@@ -423,7 +423,7 @@ impl ShowWithRRU for Addr {
 pub enum RMI {
     R { reg: Reg },
     M { addr: Addr },
-    I { simm32: i32 },
+    I { simm32: u32 },
 }
 pub fn RMI_R(reg: Reg) -> RMI {
     RMI::R { reg }
@@ -431,7 +431,7 @@ pub fn RMI_R(reg: Reg) -> RMI {
 pub fn RMI_M(addr: Addr) -> RMI {
     RMI::M { addr }
 }
-pub fn RMI_I(simm32: i32) -> RMI {
+pub fn RMI_I(simm32: u32) -> RMI {
     RMI::I { simm32 }
 }
 impl ShowWithRRU for RMI {
@@ -442,7 +442,7 @@ impl ShowWithRRU for RMI {
         match self {
             RMI::R { reg } => show_ireg_sized(*reg, mb_rru, size),
             RMI::M { addr } => addr.show_rru(mb_rru),
-            RMI::I { simm32 } => format!("${}", *simm32),
+            RMI::I { simm32 } => format!("${}", *simm32 as i32),
         }
     }
 }
@@ -598,7 +598,7 @@ pub enum Inst {
     /// Either: movl $imm32, %reg32 or movabsq $imm64, %reg32
     Imm_R {
         dstIs64: bool,
-        simm64: i64,
+        simm64: u64,
         dst: Reg,
     },
 
@@ -661,7 +661,7 @@ pub enum Inst {
 
     /// jmp simm32
     JmpKnown {
-        simm32: i32,
+        simm32: u32,
     },
 
     /// jmpq (reg mem)
@@ -672,8 +672,8 @@ pub enum Inst {
     /// jcond cond simm32 simm32
     JmpCond {
         cc: CC,
-        tsimm32: i32,
-        fsimm32: i32,
+        tsimm32: u32,
+        fsimm32: u32,
     },
 
     /// call simm32
@@ -731,22 +731,24 @@ pub enum Inst {
 // Handy constructors for Insts.
 
 // Will the lower 32 bits of the given value sign-extend back to the same value?
-fn fitsIn32bits(x: i64) -> bool {
-    x == ((x << 32) >> 32)
+fn fitsIn32bits(x: u64) -> bool {
+    let xs = x as i64;
+    xs == ((xs << 32) >> 32)
 }
 
 // Same question for 8 bits.
-fn fitsIn8bits(x: i32) -> bool {
-    x == ((x << 24) >> 24)
+fn fitsIn8bits(x: u32) -> bool {
+    let xs = x as i32;
+    xs == ((xs << 24) >> 24)
 }
 
 pub fn i_Alu_RMI_R(is64: bool, op: RMI_R_Op, src: RMI, dst: Reg) -> Inst {
     Inst::Alu_RMI_R { is64, op, src, dst }
 }
 
-pub fn i_Imm_R(dstIs64: bool, simm64: i64, dst: Reg) -> Inst {
+pub fn i_Imm_R(dstIs64: bool, simm64: u64, dst: Reg) -> Inst {
     if !dstIs64 {
-        debug_assert!(simm64 >= 0 && simm64 < 0xFFFF_FFFF);
+        debug_assert!(simm64 <= 0xFFFF_FFFF);
     }
     Inst::Imm_R {
         dstIs64,
@@ -808,7 +810,7 @@ pub fn i_Push64(src: RMI) -> Inst {
     Inst::Push64 { src }
 }
 
-pub fn i_JmpKnown(simm32: i32) -> Inst {
+pub fn i_JmpKnown(simm32: u32) -> Inst {
     Inst::JmpKnown { simm32 }
 }
 
@@ -816,7 +818,7 @@ pub fn i_JmpUnknown(target: RM) -> Inst {
     Inst::JmpUnknown { target }
 }
 
-pub fn i_JmpCond(cc: CC, tsimm32: i32, fsimm32: i32) -> Inst {
+pub fn i_JmpCond(cc: CC, tsimm32: u32, fsimm32: u32) -> Inst {
     Inst::JmpCond {
         cc,
         tsimm32,
@@ -1415,7 +1417,7 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
                 sink.put1((simm32 & 0xFF) as u8);
             } else if encE != ENC_RSP && encE != ENC_R12 {
                 sink.put1(mkModRegRM(2, encG & 7, encE & 7));
-                sink.put4(*simm32 as u32);
+                sink.put4(*simm32);
             } else if (encE == ENC_RSP || encE == ENC_R12) && fitsIn8bits(*simm32) {
                 // REX.B distinguishes RSP from R12
                 sink.put1(mkModRegRM(1, encG & 7, 4));
@@ -1426,7 +1428,7 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
                 // REX.B distinguishes RSP from R12
                 sink.put1(mkModRegRM(2, encG & 7, 4));
                 sink.put1(0x24);
-                sink.put4(*simm32 as u32);
+                sink.put4(*simm32);
             } else {
                 panic!("emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE: IR");
             }
@@ -1458,11 +1460,11 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
             if fitsIn8bits(*simm32) && encIndex != ENC_RSP {
                 sink.put1(mkModRegRM(1, encG & 7, 4));
                 sink.put1(mkSIB(*shift, encIndex & 7, encBase & 7));
-                sink.put1((simm32 & 0xFF) as u8);
+                sink.put1(*simm32 as u8);
             } else if encIndex != ENC_RSP {
                 sink.put1(mkModRegRM(2, encG & 7, 4));
                 sink.put1(mkSIB(*shift, encIndex & 7, encBase & 7));
-                sink.put4(*simm32 as u32);
+                sink.put4(*simm32);
             } else {
                 panic!("emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE: IRRS");
             }
@@ -1527,7 +1529,7 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_RegG_MemE<CS: CodeSink>(
 fn emit_REX_OPCODES_MODRM_for_RegG_RegE<CS: CodeSink>(
     sink: &mut CS,
     opcodes: u32,
-    mut numOpcodes: usize,
+    numOpcodes: usize,
     regG: Reg,
     regE: Reg,
     flags: u32,
@@ -1691,22 +1693,22 @@ fn i_am_a_test() {
     insts.push(i_Mov64_M_R(Addr_IR(127, r14), rdi));
     insts.push(i_Mov64_M_R(Addr_IR(127, r15), rdi));
     // offset simm8, lo
-    insts.push(i_Mov64_M_R(Addr_IR(-128, rax), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, rbx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, rcx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, rdx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, rbp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, rsp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, rsi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, rdi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, r8), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, r9), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, r10), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, r11), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, r12), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, r13), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, r14), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128, r15), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rax), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rbx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rcx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rdx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rbp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rsp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rsi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rdi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r8), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r9), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r10), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r11), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r12), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r13), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r14), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r15), rdi));
     // offset simm32, minimal hi
     insts.push(i_Mov64_M_R(Addr_IR(128, rax), rdi));
     insts.push(i_Mov64_M_R(Addr_IR(128, rbx), rdi));
@@ -1725,22 +1727,22 @@ fn i_am_a_test() {
     insts.push(i_Mov64_M_R(Addr_IR(128, r14), rdi));
     insts.push(i_Mov64_M_R(Addr_IR(128, r15), rdi));
     // offset simm32, minimal lo
-    insts.push(i_Mov64_M_R(Addr_IR(-129, rax), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, rbx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, rcx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, rdx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, rbp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, rsp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, rsi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, rdi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, r8), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, r9), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, r10), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, r11), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, r12), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, r13), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, r14), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129, r15), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rax), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rbx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rcx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rdx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rbp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rsp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rsi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rdi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r8), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r9), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r10), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r11), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r12), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r13), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r14), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r15), rdi));
     // offset simm32, large hi
     insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rax), rdi));
     insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rbx), rdi));
@@ -1759,22 +1761,22 @@ fn i_am_a_test() {
     insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r14), rdi));
     insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r15), rdi));
     // offset simm32, large lo
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rax), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rbx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rcx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rdx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rbp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rsp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rsi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rdi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r8), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r9), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r10), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r11), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r12), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r13), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r14), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r15), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rax), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rbx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rcx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rdx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rbp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rsp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rsi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rdi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r8), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r9), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r10), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r11), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r12), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r13), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r14), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r15), rdi));
 
     // Cases aimed at checking Addr-esses: IRRS (Imm + Reg + (Reg << Shift))
     // Note these don't check the case where the index reg is RSP, since we
@@ -1789,14 +1791,14 @@ fn i_am_a_test() {
     insts.push(i_Mov64_M_R(Addr_IRRS(127, rdi, rdi, 2), r11));
     insts.push(i_Mov64_M_R(Addr_IRRS(127, r8,  rdi, 1), r11));
     insts.push(i_Mov64_M_R(Addr_IRRS(127, r15, rdi, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128, rax, r8, 2), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128, rdi, r8, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128, r8,  r8, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128, r15, r8, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128, rax, r15, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128, rdi, r15, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128, r8,  r15, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128, r15, r15, 2), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rax, r8, 2), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rdi, r8, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r8,  r8, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r15, r8, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rax, r15, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rdi, r15, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r8,  r15, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r15, r15, 2), r11));
     // offset simm32
     insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rax, rax, 0), r11));
     insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rdi, rax, 1), r11));
@@ -1806,14 +1808,14 @@ fn i_am_a_test() {
     insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rdi, rdi, 2), r11));
     insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, r8,  rdi, 1), r11));
     insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, r15, rdi, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, rax, r8, 2), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, rdi, r8, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, r8,  r8, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, r15, r8, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, rax, r15, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, rdi, r15, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, r8,  r15, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, r15, r15, 2), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rax, r8, 2), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rdi, r8, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r8,  r8, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r15, r8, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rax, r15, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rdi, r15, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r8,  r15, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r15, r15, 2), r11));
 
     // Check sub-word printing of integer registers
     insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), rdx));
@@ -1822,17 +1824,17 @@ fn i_am_a_test() {
     insts.push(i_Imm_R(false, 1234567, r15));
     insts.push(i_Imm_R(true, 1234567898765, r15));
     //
-    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-0x80, rax), r8));
-    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-0x80, rax), r8));
-    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-0x80, rax), r8));
-    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-0x80, rax), r8));
-    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-0x80, rax), r8));
+    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-0x80i32 as u32, rax), r8));
+    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-0x80i32 as u32, rax), r8));
+    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-0x80i32 as u32, rax), r8));
+    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-0x80i32 as u32, rax), r8));
+    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-0x80i32 as u32, rax), r8));
     //
-    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-0x80, rax), r8));
-    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-0x80, rax), r8));
-    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-0x80, rax), r8));
-    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-0x80, rax), r8));
-    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-0x80, rax), r8));
+    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-0x80i32 as u32, rax), r8));
+    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-0x80i32 as u32, rax), r8));
+    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-0x80i32 as u32, rax), r8));
+    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-0x80i32 as u32, rax), r8));
+    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-0x80i32 as u32, rax), r8));
     //
     insts.push(i_Mov_R_M(1, rsi, Addr_IRRS(0x7F, rax, r8, 3)));
     insts.push(i_Mov_R_M(2, rsi, Addr_IRRS(0x7F, rax, r8, 3)));
@@ -1856,7 +1858,7 @@ fn i_am_a_test() {
     insts.push(i_Cmp_RMI_R(1, RMI_I(123), rdx));
     insts.push(i_Cmp_RMI_R(2, RMI_I(456), rdx));
     insts.push(i_Cmp_RMI_R(4, RMI_I(789), rdx));
-    insts.push(i_Cmp_RMI_R(8, RMI_I(-123), rdx));
+    insts.push(i_Cmp_RMI_R(8, RMI_I(-123i32 as u32), rdx));
     //
     insts.push(i_Push64(RMI_R(rcx)));
     insts.push(i_Push64(RMI_M(Addr_IR(0x7FFF_FFFF, rax))));
@@ -1873,7 +1875,7 @@ fn i_am_a_test() {
     insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), r8));
     insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), rsi));
     insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_I(76543210), rdx));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-76543210), r8));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-76543210i32 as u32), r8));
     insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(76543210), rsi));
     // This is pretty feeble
     insts.push(i_Alu_RMI_R(true, RMI_R_Op::Sub, RMI_R(r15), rdx));
@@ -1888,7 +1890,7 @@ fn i_am_a_test() {
     insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), r8));
     insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), rsi));
     insts.push(i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_I(76543210), rdx));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-76543210), r8));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-76543210i32 as u32), r8));
     insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(76543210), rsi));
     //
     // Imm_R
@@ -1908,26 +1910,26 @@ fn i_am_a_test() {
     insts.push(i_Mov_R_R(true, r12, r9));
     //
     // MovZX_M_R
-    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7, rcx), rsi));
-    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7, r8), rbx));
-    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7, r10), r9));
-    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7, r11), rdx));
-    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7, rcx), rsi));
-    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7, r8), rbx));
-    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7, r10), r9));
-    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7, r11), rdx));
-    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7, rcx), rsi));
-    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7, r8), rbx));
-    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7, r10), r9));
-    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7, r11), rdx));
-    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7, rcx), rsi));
-    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7, r8), rbx));
-    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7, r10), r9));
-    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7, r11), rdx));
-    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7, rcx), rsi));
-    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7, r8), rbx));
-    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7, r10), r9));
-    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7, r11), rdx));
+    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, rcx), rsi));
+    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r8), rbx));
+    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r10), r9));
+    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r11), rdx));
+    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, rcx), rsi));
+    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r8), rbx));
+    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r10), r9));
+    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r11), rdx));
+    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, rcx), rsi));
+    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r8), rbx));
+    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r10), r9));
+    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r11), rdx));
+    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, rcx), rsi));
+    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r8), rbx));
+    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r10), r9));
+    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r11), rdx));
+    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, rcx), rsi));
+    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r8), rbx));
+    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r10), r9));
+    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r11), rdx));
     //
     // Mov64_M_R
     insts.push(i_Mov64_M_R(Addr_IRRS(179, rax, rbx, 0), rcx));
@@ -1940,26 +1942,26 @@ fn i_am_a_test() {
     insts.push(i_Mov64_M_R(Addr_IRRS(179, r10, r9, 0), r8));
     //
     // MovSX_M_R
-    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7, rcx), rsi));
-    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7, r8), rbx));
-    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7, r10), r9));
-    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7, r11), rdx));
-    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7, rcx), rsi));
-    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7, r8), rbx));
-    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7, r10), r9));
-    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7, r11), rdx));
-    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7, rcx), rsi));
-    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7, r8), rbx));
-    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7, r10), r9));
-    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7, r11), rdx));
-    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7, rcx), rsi));
-    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7, r8), rbx));
-    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7, r10), r9));
-    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7, r11), rdx));
-    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7, rcx), rsi));
-    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7, r8), rbx));
-    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7, r10), r9));
-    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7, r11), rdx));
+    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, rcx), rsi));
+    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r8), rbx));
+    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r10), r9));
+    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r11), rdx));
+    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, rcx), rsi));
+    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r8), rbx));
+    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r10), r9));
+    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r11), rdx));
+    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, rcx), rsi));
+    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r8), rbx));
+    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r10), r9));
+    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r11), rdx));
+    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, rcx), rsi));
+    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r8), rbx));
+    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r10), r9));
+    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r11), rdx));
+    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, rcx), rsi));
+    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r8), rbx));
+    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r10), r9));
+    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r11), rdx));
     //
     // Mov_R_M.  Byte stores are tricky.  Check everything carefully.
     insts.push(i_Mov_R_M(8, rax, Addr_IR(99, rdi)));
@@ -2058,7 +2060,7 @@ fn i_am_a_test() {
     insts.push(i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), r8));
     insts.push(i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), rsi));
     insts.push(i_Cmp_RMI_R(8, RMI_I(76543210), rdx));
-    insts.push(i_Cmp_RMI_R(8, RMI_I(-76543210), r8));
+    insts.push(i_Cmp_RMI_R(8, RMI_I(-76543210i32 as u32), r8));
     insts.push(i_Cmp_RMI_R(8, RMI_I(76543210), rsi));
     //
     insts.push(i_Cmp_RMI_R(4, RMI_R(r15), rdx));
@@ -2068,7 +2070,7 @@ fn i_am_a_test() {
     insts.push(i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), r8));
     insts.push(i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), rsi));
     insts.push(i_Cmp_RMI_R(4, RMI_I(76543210), rdx));
-    insts.push(i_Cmp_RMI_R(4, RMI_I(-76543210), r8));
+    insts.push(i_Cmp_RMI_R(4, RMI_I(-76543210i32 as u32), r8));
     insts.push(i_Cmp_RMI_R(4, RMI_I(76543210), rsi));
     //
     insts.push(i_Cmp_RMI_R(2, RMI_R(r15), rdx));
@@ -2078,7 +2080,7 @@ fn i_am_a_test() {
     insts.push(i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), r8));
     insts.push(i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), rsi));
     insts.push(i_Cmp_RMI_R(2, RMI_I(23210), rdx));
-    insts.push(i_Cmp_RMI_R(2, RMI_I(-7654), r8));
+    insts.push(i_Cmp_RMI_R(2, RMI_I(-7654i32 as u32), r8));
     insts.push(i_Cmp_RMI_R(2, RMI_I(7654), rsi));
     //
     insts.push(i_Cmp_RMI_R(1, RMI_R(r15), rdx));
@@ -2088,7 +2090,7 @@ fn i_am_a_test() {
     insts.push(i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), r8));
     insts.push(i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), rsi));
     insts.push(i_Cmp_RMI_R(1, RMI_I(70), rdx));
-    insts.push(i_Cmp_RMI_R(1, RMI_I(-76), r8));
+    insts.push(i_Cmp_RMI_R(1, RMI_I(-76i32 as u32), r8));
     insts.push(i_Cmp_RMI_R(1, RMI_I(76), rsi));
     //
     // Push64
@@ -2100,9 +2102,9 @@ fn i_am_a_test() {
     insts.push(i_Push64(RMI_I(127)));
     insts.push(i_Push64(RMI_I(128)));
     insts.push(i_Push64(RMI_I(0x31415927)));
-    insts.push(i_Push64(RMI_I(-128)));
-    insts.push(i_Push64(RMI_I(-129)));
-    insts.push(i_Push64(RMI_I(-0x75c4e8a1)));
+    insts.push(i_Push64(RMI_I(-128i32 as u32)));
+    insts.push(i_Push64(RMI_I(-129i32 as u32)));
+    insts.push(i_Push64(RMI_I(-0x75c4e8a1i32 as u32)));
     //
     // JmpKnown skipped for now
     //
