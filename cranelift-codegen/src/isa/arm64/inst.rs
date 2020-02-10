@@ -1353,6 +1353,8 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     ALUOp::Sub64 => 0b11001011_000,
                     ALUOp::Orr32 => 0b00101010_000,
                     ALUOp::Orr64 => 0b10101010_000,
+                    ALUOp::And32 => 0b00001010_000,
+                    ALUOp::And64 => 0b10001010_000,
                     ALUOp::SubS32 => 0b01101011_000,
                     ALUOp::SubS64 => 0b11101011_000,
                     _ => unimplemented!(),
@@ -2224,7 +2226,114 @@ use crate::isa::test_utils;
 fn test_arm64_binemit() {
     let mut insns = Vec::<(Inst, &str, &str)>::new();
 
+    // N.B.: the architecture is little-endian, so when transcribing the 32-bit
+    // hex instructions from e.g. objdump disassembly, one must swap the bytes
+    // seen below. (E.g., a `ret` is normally written as the u32 `D65F03C0`,
+    // but we write it here as C0035FD6.)
+
     insns.push((Inst::Ret {}, "C0035FD6", "ret"));
+    insns.push((Inst::Nop {}, "", ""));
+    insns.push((Inst::Nop4 {}, "1F2003D5", "nop"));
+    insns.push((
+        Inst::AluRRR {
+            alu_op: ALUOp::Add32,
+            rd: xreg(1),
+            rn: xreg(2),
+            rm: xreg(3),
+        },
+        "4100030B",
+        "add w1, w2, w3",
+    ));
+    insns.push((
+        Inst::AluRRR {
+            alu_op: ALUOp::Add64,
+            rd: xreg(4),
+            rn: xreg(5),
+            rm: xreg(6),
+        },
+        "A400068B",
+        "add x4, x5, x6",
+    ));
+    insns.push((
+        Inst::AluRRR {
+            alu_op: ALUOp::Sub32,
+            rd: xreg(1),
+            rn: xreg(2),
+            rm: xreg(3),
+        },
+        "4100034B",
+        "sub w1, w2, w3",
+    ));
+    insns.push((
+        Inst::AluRRR {
+            alu_op: ALUOp::Sub64,
+            rd: xreg(4),
+            rn: xreg(5),
+            rm: xreg(6),
+        },
+        "A40006CB",
+        "sub x4, x5, x6",
+    ));
+    insns.push((
+        Inst::AluRRR {
+            alu_op: ALUOp::Orr32,
+            rd: xreg(1),
+            rn: xreg(2),
+            rm: xreg(3),
+        },
+        "4100032A",
+        "orr w1, w2, w3",
+    ));
+    insns.push((
+        Inst::AluRRR {
+            alu_op: ALUOp::Orr64,
+            rd: xreg(4),
+            rn: xreg(5),
+            rm: xreg(6),
+        },
+        "A40006AA",
+        "orr x4, x5, x6",
+    ));
+    insns.push((
+        Inst::AluRRR {
+            alu_op: ALUOp::And32,
+            rd: xreg(1),
+            rn: xreg(2),
+            rm: xreg(3),
+        },
+        "4100030A",
+        "and w1, w2, w3",
+    ));
+    insns.push((
+        Inst::AluRRR {
+            alu_op: ALUOp::And64,
+            rd: xreg(4),
+            rn: xreg(5),
+            rm: xreg(6),
+        },
+        "A400068A",
+        "and x4, x5, x6",
+    ));
+    insns.push((
+        Inst::AluRRR {
+            alu_op: ALUOp::SubS32,
+            rd: xreg(1),
+            rn: xreg(2),
+            rm: xreg(3),
+        },
+        "4100036B",
+        "subs w1, w2, w3",
+    ));
+    insns.push((
+        Inst::AluRRR {
+            alu_op: ALUOp::SubS64,
+            rd: xreg(4),
+            rn: xreg(5),
+            rm: xreg(6),
+        },
+        "A40006EB",
+        "subs x4, x5, x6",
+    ));
 
     let rru = create_reg_universe();
     for (insn, expected_encoding, expected_printing) in insns {
@@ -2244,3 +2353,11 @@ fn test_arm64_binemit() {
         assert_eq!(expected_encoding, actual_encoding);
     }
 }
+
+// TODO (test): lowering
+// - simple and complex addressing modes
+// - immediate in second arg
+// - extend op in second arg
+// - shift op in second arg
+// - constants of various sizes
+// - values of different widths
