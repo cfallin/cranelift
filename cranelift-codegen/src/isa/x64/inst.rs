@@ -687,45 +687,7 @@ pub enum Inst {
     },
 
     // ret
-    Ret { }
-
-    //zz
-    //zz     /// A machine call instruction.
-    //zz     Call { dest: FuncRef },
-    //zz     /// A machine indirect-call instruction.
-    //zz     CallInd { rn: Reg },
-    //zz
-    //zz     // ---- branches (exactly one must appear at end of BB) ----
-    //zz     /// A machine return instruction.
-    //zz     Ret {},
-    //zz     /// An unconditional branch.
-    //zz     Jump { dest: BranchTarget },
-    //zz
-    //zz     /// A conditional branch.
-    //zz     CondBr {
-    //zz         taken: BranchTarget,
-    //zz         not_taken: BranchTarget,
-    //zz         kind: CondBrKind,
-    //zz     },
-    //zz
-    //zz     /// Lowered conditional branch: contains the original instruction, and a
-    //zz     /// flag indicating whether to invert the taken-condition or not. Only one
-    //zz     /// BranchTarget is retained, and the other is implicitly the next
-    //zz     /// instruction, given the final basic-block layout.
-    //zz     CondBrLowered {
-    //zz         target: BranchTarget,
-    //zz         inverted: bool,
-    //zz         kind: CondBrKind,
-    //zz     },
-    //zz
-    //zz     /// As for `CondBrLowered`, but represents a condbr/uncond-br sequence (two
-    //zz     /// actual machine instructions). Needed when the final block layout implies
-    //zz     /// that both arms of a conditional branch are not the fallthrough block.
-    //zz     CondBrLoweredCompound {
-    //zz         taken: BranchTarget,
-    //zz         not_taken: BranchTarget,
-    //zz         kind: CondBrKind,
-    //zz     },
+    Ret {},
 }
 
 // Handy constructors for Insts.
@@ -835,7 +797,7 @@ pub fn i_CallUnknown(target: RM) -> Inst {
 }
 
 pub fn i_Ret() -> Inst {
-    Inst::Ret { }
+    Inst::Ret {}
 }
 
 //=============================================================================
@@ -907,7 +869,7 @@ impl ShowWithRRU for Inst {
                 show_ireg_sized(*src, mb_rru, sizeLQ(*is64)),
                 show_ireg_sized(*dst, mb_rru, sizeLQ(*is64))
             ),
-            Inst::MovZX_M_R { extMode, addr, dst } =>
+            Inst::MovZX_M_R { extMode, addr, dst } => {
                 if *extMode == ExtMode::LQ {
                     format!(
                         "{} {}, {}",
@@ -922,7 +884,8 @@ impl ShowWithRRU for Inst {
                         addr.show_rru(mb_rru),
                         show_ireg_sized(*dst, mb_rru, extMode.dst_size())
                     )
-                },
+                }
+            }
             Inst::Mov64_M_R { addr, dst } => format!(
                 "{} {}, {}",
                 ljustify("movq".to_string()),
@@ -968,11 +931,9 @@ impl ShowWithRRU for Inst {
                 src.show_rru_sized(mb_rru, *size),
                 show_ireg_sized(*dst, mb_rru, *size)
             ),
-            Inst::Push64 { src } => format!(
-                "{} {}",
-                ljustify("pushq".to_string()),
-                src.show_rru(mb_rru)
-            ),
+            Inst::Push64 { src } => {
+                format!("{} {}", ljustify("pushq".to_string()), src.show_rru(mb_rru))
+            }
             Inst::JmpKnown { simm32 } => {
                 format!("{} simm32={}", ljustify("jmp".to_string()), *simm32)
             }
@@ -997,7 +958,7 @@ impl ShowWithRRU for Inst {
                 ljustify("call".to_string()),
                 target.show_rru(mb_rru)
             ),
-            Inst::Ret { } => "ret".to_string()
+            Inst::Ret {} => "ret".to_string(),
         }
     }
 }
@@ -1141,8 +1102,8 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
         }
         Inst::CallUnknown { target } => {
             target.get_regs(&mut iru.used);
-        },
-        Inst::Ret { } => { }
+        }
+        Inst::Ret {} => {}
     }
 
     // Enforce invariants described above.
@@ -1292,9 +1253,7 @@ fn x64_map_regs(
             src.apply_map(pre_map);
             apply_map(dst, pre_map); // yes, really |pre_map|
         }
-        Inst::Push64 {
-            ref mut src,
-        } => {
+        Inst::Push64 { ref mut src } => {
             src.apply_map(pre_map);
         }
         Inst::JmpKnown { simm32: _ } => {}
@@ -1309,8 +1268,8 @@ fn x64_map_regs(
         Inst::CallKnown { target: _ } => {}
         Inst::CallUnknown { target } => {
             target.apply_map(pre_map);
-        },
-        Inst::Ret { } => { }
+        }
+        Inst::Ret {} => {}
     }
 }
 
@@ -1627,6 +1586,12 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
 // Tests for the emitter
 
 // to see stdout: cargo test -- --nocapture
+//
+// for this specific case:
+//
+// (cd cranelift-codegen && \
+// RUST_BACKTRACE=1 cargo test isa::x64::inst::test_x64_insn_encoding_and_printing \
+//                             -- --nocapture)
 
 #[cfg(test)]
 mod test_utils {
@@ -1634,8 +1599,8 @@ mod test_utils {
 }
 
 #[test]
-fn i_am_a_test() {
-    println!("QQQQ BEGIN I am a test");
+fn test_x64_insn_encoding_and_printing() {
+    println!("QQQQ BEGIN test_x64_insn_encoding_and_printing");
 
     let rax = info_RAX().0.to_reg();
     let rbx = info_RBX().0.to_reg();
@@ -1654,478 +1619,1994 @@ fn i_am_a_test() {
     let r14 = info_R14().0.to_reg();
     let r15 = info_R15().0.to_reg();
 
-    let mut insts = Vec::<Inst>::new();
+    let mut insns = Vec::<(Inst, &str, &str)>::new();
 
     // Cases aimed at checking Addr-esses: IR (Imm + Reg)
     //
     // offset zero
-    insts.push(i_Mov64_M_R(Addr_IR(0, rax), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, rbx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, rcx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, rdx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, rbp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, rsp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, rsi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, rdi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, r8), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, r9), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, r10), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, r11), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, r12), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, r13), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, r14), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0, r15), rdi));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, rax), rdi),
+        "488B38",
+        "movq    0(%rax), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, rbx), rdi),
+        "488B3B",
+        "movq    0(%rbx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, rcx), rdi),
+        "488B39",
+        "movq    0(%rcx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, rdx), rdi),
+        "488B3A",
+        "movq    0(%rdx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, rbp), rdi),
+        "488B7D00",
+        "movq    0(%rbp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, rsp), rdi),
+        "488B3C24",
+        "movq    0(%rsp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, rsi), rdi),
+        "488B3E",
+        "movq    0(%rsi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, rdi), rdi),
+        "488B3F",
+        "movq    0(%rdi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, r8), rdi),
+        "498B38",
+        "movq    0(%r8), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, r9), rdi),
+        "498B39",
+        "movq    0(%r9), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, r10), rdi),
+        "498B3A",
+        "movq    0(%r10), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, r11), rdi),
+        "498B3B",
+        "movq    0(%r11), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, r12), rdi),
+        "498B3C24",
+        "movq    0(%r12), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, r13), rdi),
+        "498B7D00",
+        "movq    0(%r13), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, r14), rdi),
+        "498B3E",
+        "movq    0(%r14), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0, r15), rdi),
+        "498B3F",
+        "movq    0(%r15), %rdi",
+    ));
     // offset simm8, hi
-    insts.push(i_Mov64_M_R(Addr_IR(127, rax), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, rbx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, rcx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, rdx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, rbp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, rsp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, rsi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, rdi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, r8), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, r9), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, r10), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, r11), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, r12), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, r13), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, r14), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(127, r15), rdi));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, rax), rdi),
+        "488B787F",
+        "movq    127(%rax), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, rbx), rdi),
+        "488B7B7F",
+        "movq    127(%rbx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, rcx), rdi),
+        "488B797F",
+        "movq    127(%rcx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, rdx), rdi),
+        "488B7A7F",
+        "movq    127(%rdx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, rbp), rdi),
+        "488B7D7F",
+        "movq    127(%rbp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, rsp), rdi),
+        "488B7C247F",
+        "movq    127(%rsp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, rsi), rdi),
+        "488B7E7F",
+        "movq    127(%rsi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, rdi), rdi),
+        "488B7F7F",
+        "movq    127(%rdi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, r8), rdi),
+        "498B787F",
+        "movq    127(%r8), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, r9), rdi),
+        "498B797F",
+        "movq    127(%r9), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, r10), rdi),
+        "498B7A7F",
+        "movq    127(%r10), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, r11), rdi),
+        "498B7B7F",
+        "movq    127(%r11), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, r12), rdi),
+        "498B7C247F",
+        "movq    127(%r12), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, r13), rdi),
+        "498B7D7F",
+        "movq    127(%r13), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, r14), rdi),
+        "498B7E7F",
+        "movq    127(%r14), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(127, r15), rdi),
+        "498B7F7F",
+        "movq    127(%r15), %rdi",
+    ));
     // offset simm8, lo
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rax), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rbx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rcx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rdx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rbp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rsp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rsi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, rdi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r8), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r9), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r10), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r11), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r12), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r13), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r14), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-128i32 as u32, r15), rdi));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, rax), rdi),
+        "488B7880",
+        "movq    -128(%rax), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, rbx), rdi),
+        "488B7B80",
+        "movq    -128(%rbx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, rcx), rdi),
+        "488B7980",
+        "movq    -128(%rcx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, rdx), rdi),
+        "488B7A80",
+        "movq    -128(%rdx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, rbp), rdi),
+        "488B7D80",
+        "movq    -128(%rbp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, rsp), rdi),
+        "488B7C2480",
+        "movq    -128(%rsp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, rsi), rdi),
+        "488B7E80",
+        "movq    -128(%rsi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, rdi), rdi),
+        "488B7F80",
+        "movq    -128(%rdi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, r8), rdi),
+        "498B7880",
+        "movq    -128(%r8), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, r9), rdi),
+        "498B7980",
+        "movq    -128(%r9), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, r10), rdi),
+        "498B7A80",
+        "movq    -128(%r10), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, r11), rdi),
+        "498B7B80",
+        "movq    -128(%r11), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, r12), rdi),
+        "498B7C2480",
+        "movq    -128(%r12), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, r13), rdi),
+        "498B7D80",
+        "movq    -128(%r13), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, r14), rdi),
+        "498B7E80",
+        "movq    -128(%r14), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-128i32 as u32, r15), rdi),
+        "498B7F80",
+        "movq    -128(%r15), %rdi",
+    ));
     // offset simm32, minimal hi
-    insts.push(i_Mov64_M_R(Addr_IR(128, rax), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, rbx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, rcx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, rdx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, rbp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, rsp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, rsi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, rdi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, r8), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, r9), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, r10), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, r11), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, r12), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, r13), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, r14), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(128, r15), rdi));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, rax), rdi),
+        "488BB880000000",
+        "movq    128(%rax), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, rbx), rdi),
+        "488BBB80000000",
+        "movq    128(%rbx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, rcx), rdi),
+        "488BB980000000",
+        "movq    128(%rcx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, rdx), rdi),
+        "488BBA80000000",
+        "movq    128(%rdx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, rbp), rdi),
+        "488BBD80000000",
+        "movq    128(%rbp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, rsp), rdi),
+        "488BBC2480000000",
+        "movq    128(%rsp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, rsi), rdi),
+        "488BBE80000000",
+        "movq    128(%rsi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, rdi), rdi),
+        "488BBF80000000",
+        "movq    128(%rdi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, r8), rdi),
+        "498BB880000000",
+        "movq    128(%r8), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, r9), rdi),
+        "498BB980000000",
+        "movq    128(%r9), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, r10), rdi),
+        "498BBA80000000",
+        "movq    128(%r10), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, r11), rdi),
+        "498BBB80000000",
+        "movq    128(%r11), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, r12), rdi),
+        "498BBC2480000000",
+        "movq    128(%r12), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, r13), rdi),
+        "498BBD80000000",
+        "movq    128(%r13), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, r14), rdi),
+        "498BBE80000000",
+        "movq    128(%r14), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(128, r15), rdi),
+        "498BBF80000000",
+        "movq    128(%r15), %rdi",
+    ));
     // offset simm32, minimal lo
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rax), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rbx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rcx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rdx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rbp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rsp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rsi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, rdi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r8), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r9), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r10), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r11), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r12), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r13), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r14), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-129i32 as u32, r15), rdi));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, rax), rdi),
+        "488BB87FFFFFFF",
+        "movq    -129(%rax), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, rbx), rdi),
+        "488BBB7FFFFFFF",
+        "movq    -129(%rbx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, rcx), rdi),
+        "488BB97FFFFFFF",
+        "movq    -129(%rcx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, rdx), rdi),
+        "488BBA7FFFFFFF",
+        "movq    -129(%rdx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, rbp), rdi),
+        "488BBD7FFFFFFF",
+        "movq    -129(%rbp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, rsp), rdi),
+        "488BBC247FFFFFFF",
+        "movq    -129(%rsp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, rsi), rdi),
+        "488BBE7FFFFFFF",
+        "movq    -129(%rsi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, rdi), rdi),
+        "488BBF7FFFFFFF",
+        "movq    -129(%rdi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, r8), rdi),
+        "498BB87FFFFFFF",
+        "movq    -129(%r8), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, r9), rdi),
+        "498BB97FFFFFFF",
+        "movq    -129(%r9), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, r10), rdi),
+        "498BBA7FFFFFFF",
+        "movq    -129(%r10), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, r11), rdi),
+        "498BBB7FFFFFFF",
+        "movq    -129(%r11), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, r12), rdi),
+        "498BBC247FFFFFFF",
+        "movq    -129(%r12), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, r13), rdi),
+        "498BBD7FFFFFFF",
+        "movq    -129(%r13), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, r14), rdi),
+        "498BBE7FFFFFFF",
+        "movq    -129(%r14), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-129i32 as u32, r15), rdi),
+        "498BBF7FFFFFFF",
+        "movq    -129(%r15), %rdi",
+    ));
     // offset simm32, large hi
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rax), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rbx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rcx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rdx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rbp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rsp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rsi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rdi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r8), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r9), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r10), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r11), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r12), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r13), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r14), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r15), rdi));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, rax), rdi),
+        "488BB877207317",
+        "movq    393420919(%rax), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, rbx), rdi),
+        "488BBB77207317",
+        "movq    393420919(%rbx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, rcx), rdi),
+        "488BB977207317",
+        "movq    393420919(%rcx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, rdx), rdi),
+        "488BBA77207317",
+        "movq    393420919(%rdx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, rbp), rdi),
+        "488BBD77207317",
+        "movq    393420919(%rbp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, rsp), rdi),
+        "488BBC2477207317",
+        "movq    393420919(%rsp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, rsi), rdi),
+        "488BBE77207317",
+        "movq    393420919(%rsi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, rdi), rdi),
+        "488BBF77207317",
+        "movq    393420919(%rdi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, r8), rdi),
+        "498BB877207317",
+        "movq    393420919(%r8), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, r9), rdi),
+        "498BB977207317",
+        "movq    393420919(%r9), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, r10), rdi),
+        "498BBA77207317",
+        "movq    393420919(%r10), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, r11), rdi),
+        "498BBB77207317",
+        "movq    393420919(%r11), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, r12), rdi),
+        "498BBC2477207317",
+        "movq    393420919(%r12), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, r13), rdi),
+        "498BBD77207317",
+        "movq    393420919(%r13), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, r14), rdi),
+        "498BBE77207317",
+        "movq    393420919(%r14), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(0x17732077, r15), rdi),
+        "498BBF77207317",
+        "movq    393420919(%r15), %rdi",
+    ));
     // offset simm32, large lo
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rax), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rbx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rcx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rdx), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rbp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rsp), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rsi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rdi), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r8), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r9), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r10), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r11), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r12), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r13), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r14), rdi));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r15), rdi));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rax), rdi),
+        "488BB8D9A6BECE",
+        "movq    -826366247(%rax), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rbx), rdi),
+        "488BBBD9A6BECE",
+        "movq    -826366247(%rbx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rcx), rdi),
+        "488BB9D9A6BECE",
+        "movq    -826366247(%rcx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rdx), rdi),
+        "488BBAD9A6BECE",
+        "movq    -826366247(%rdx), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rbp), rdi),
+        "488BBDD9A6BECE",
+        "movq    -826366247(%rbp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rsp), rdi),
+        "488BBC24D9A6BECE",
+        "movq    -826366247(%rsp), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rsi), rdi),
+        "488BBED9A6BECE",
+        "movq    -826366247(%rsi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rdi), rdi),
+        "488BBFD9A6BECE",
+        "movq    -826366247(%rdi), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r8), rdi),
+        "498BB8D9A6BECE",
+        "movq    -826366247(%r8), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r9), rdi),
+        "498BB9D9A6BECE",
+        "movq    -826366247(%r9), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r10), rdi),
+        "498BBAD9A6BECE",
+        "movq    -826366247(%r10), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r11), rdi),
+        "498BBBD9A6BECE",
+        "movq    -826366247(%r11), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r12), rdi),
+        "498BBC24D9A6BECE",
+        "movq    -826366247(%r12), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r13), rdi),
+        "498BBDD9A6BECE",
+        "movq    -826366247(%r13), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r14), rdi),
+        "498BBED9A6BECE",
+        "movq    -826366247(%r14), %rdi",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r15), rdi),
+        "498BBFD9A6BECE",
+        "movq    -826366247(%r15), %rdi",
+    ));
 
     // Cases aimed at checking Addr-esses: IRRS (Imm + Reg + (Reg << Shift))
     // Note these don't check the case where the index reg is RSP, since we
     // don't encode any of those.
     //
     // offset simm8
-    insts.push(i_Mov64_M_R(Addr_IRRS(127, rax, rax, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(127, rdi, rax, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(127, r8,  rax, 2), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(127, r15, rax, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(127, rax, rdi, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(127, rdi, rdi, 2), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(127, r8,  rdi, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(127, r15, rdi, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rax, r8, 2), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rdi, r8, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r8,  r8, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r15, r8, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rax, r15, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rdi, r15, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r8,  r15, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r15, r15, 2), r11));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(127, rax, rax, 0), r11),
+        "4C8B5C007F",
+        "movq    127(%rax,%rax,1), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(127, rdi, rax, 1), r11),
+        "4C8B5C477F",
+        "movq    127(%rdi,%rax,2), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(127, r8, rax, 2), r11),
+        "4D8B5C807F",
+        "movq    127(%r8,%rax,4), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(127, r15, rax, 3), r11),
+        "4D8B5CC77F",
+        "movq    127(%r15,%rax,8), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(127, rax, rdi, 3), r11),
+        "4C8B5CF87F",
+        "movq    127(%rax,%rdi,8), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(127, rdi, rdi, 2), r11),
+        "4C8B5CBF7F",
+        "movq    127(%rdi,%rdi,4), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(127, r8, rdi, 1), r11),
+        "4D8B5C787F",
+        "movq    127(%r8,%rdi,2), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(127, r15, rdi, 0), r11),
+        "4D8B5C3F7F",
+        "movq    127(%r15,%rdi,1), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rax, r8, 2), r11),
+        "4E8B5C8080",
+        "movq    -128(%rax,%r8,4), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rdi, r8, 3), r11),
+        "4E8B5CC780",
+        "movq    -128(%rdi,%r8,8), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r8, r8, 0), r11),
+        "4F8B5C0080",
+        "movq    -128(%r8,%r8,1), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r15, r8, 1), r11),
+        "4F8B5C4780",
+        "movq    -128(%r15,%r8,2), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rax, r15, 1), r11),
+        "4E8B5C7880",
+        "movq    -128(%rax,%r15,2), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rdi, r15, 0), r11),
+        "4E8B5C3F80",
+        "movq    -128(%rdi,%r15,1), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r8, r15, 3), r11),
+        "4F8B5CF880",
+        "movq    -128(%r8,%r15,8), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r15, r15, 2), r11),
+        "4F8B5CBF80",
+        "movq    -128(%r15,%r15,4), %r11",
+    ));
     // offset simm32
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rax, rax, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rdi, rax, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, r8,  rax, 2), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, r15, rax, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rax, rdi, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rdi, rdi, 2), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, r8,  rdi, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, r15, rdi, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rax, r8, 2), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rdi, r8, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r8,  r8, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r15, r8, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rax, r15, 1), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rdi, r15, 0), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r8,  r15, 3), r11));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r15, r15, 2), r11));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(0x4f6625be, rax, rax, 0), r11),
+        "4C8B9C00BE25664F",
+        "movq    1332094398(%rax,%rax,1), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(0x4f6625be, rdi, rax, 1), r11),
+        "4C8B9C47BE25664F",
+        "movq    1332094398(%rdi,%rax,2), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(0x4f6625be, r8, rax, 2), r11),
+        "4D8B9C80BE25664F",
+        "movq    1332094398(%r8,%rax,4), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(0x4f6625be, r15, rax, 3), r11),
+        "4D8B9CC7BE25664F",
+        "movq    1332094398(%r15,%rax,8), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(0x4f6625be, rax, rdi, 3), r11),
+        "4C8B9CF8BE25664F",
+        "movq    1332094398(%rax,%rdi,8), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(0x4f6625be, rdi, rdi, 2), r11),
+        "4C8B9CBFBE25664F",
+        "movq    1332094398(%rdi,%rdi,4), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(0x4f6625be, r8, rdi, 1), r11),
+        "4D8B9C78BE25664F",
+        "movq    1332094398(%r8,%rdi,2), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(0x4f6625be, r15, rdi, 0), r11),
+        "4D8B9C3FBE25664F",
+        "movq    1332094398(%r15,%rdi,1), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rax, r8, 2), r11),
+        "4E8B9C8070E9B2D9",
+        "movq    -642586256(%rax,%r8,4), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rdi, r8, 3), r11),
+        "4E8B9CC770E9B2D9",
+        "movq    -642586256(%rdi,%r8,8), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r8, r8, 0), r11),
+        "4F8B9C0070E9B2D9",
+        "movq    -642586256(%r8,%r8,1), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r15, r8, 1), r11),
+        "4F8B9C4770E9B2D9",
+        "movq    -642586256(%r15,%r8,2), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rax, r15, 1), r11),
+        "4E8B9C7870E9B2D9",
+        "movq    -642586256(%rax,%r15,2), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rdi, r15, 0), r11),
+        "4E8B9C3F70E9B2D9",
+        "movq    -642586256(%rdi,%r15,1), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r8, r15, 3), r11),
+        "4F8B9CF870E9B2D9",
+        "movq    -642586256(%r8,%r15,8), %r11",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r15, r15, 2), r11),
+        "4F8B9CBF70E9B2D9",
+        "movq    -642586256(%r15,%r15,4), %r11",
+    ));
 
     // Check sub-word printing of integer registers
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), rdx));
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_R(rcx), rdx));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), rdx),
+        "01CA",
+        "addl    %ecx, %edx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_R(rcx), rdx),
+        "4801CA",
+        "addq    %rcx, %rdx",
+    ));
     //
-    insts.push(i_Imm_R(false, 1234567, r15));
-    insts.push(i_Imm_R(true, 1234567898765, r15));
+    insns.push((
+        i_Imm_R(false, 1234567, r15),
+        "41BF87D61200",
+        "movl    $1234567, %r15d",
+    ));
+    insns.push((
+        i_Imm_R(true, 1234567898765, r15),
+        "49BF8D26FB711F010000",
+        "movabsq $1234567898765, %r15",
+    ));
     //
-    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-0x80i32 as u32, rax), r8));
-    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-0x80i32 as u32, rax), r8));
-    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-0x80i32 as u32, rax), r8));
-    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-0x80i32 as u32, rax), r8));
-    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-0x80i32 as u32, rax), r8));
+    insns.push((
+        i_MovZX_M_R(ExtMode::BL, Addr_IR(-0x80i32 as u32, rax), r8),
+        "440FB64080",
+        "movzbl  -128(%rax), %r8d",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::BQ, Addr_IR(-0x80i32 as u32, rax), r8),
+        "4C0FB64080",
+        "movzbq  -128(%rax), %r8",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::WL, Addr_IR(-0x80i32 as u32, rax), r8),
+        "440FB74080",
+        "movzwl  -128(%rax), %r8d",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::WQ, Addr_IR(-0x80i32 as u32, rax), r8),
+        "4C0FB74080",
+        "movzwq  -128(%rax), %r8",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::LQ, Addr_IR(-0x80i32 as u32, rax), r8),
+        "448B4080",
+        "movl    -128(%rax), %r8d",
+    ));
     //
-    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-0x80i32 as u32, rax), r8));
-    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-0x80i32 as u32, rax), r8));
-    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-0x80i32 as u32, rax), r8));
-    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-0x80i32 as u32, rax), r8));
-    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-0x80i32 as u32, rax), r8));
+    insns.push((
+        i_MovSX_M_R(ExtMode::BL, Addr_IR(-0x80i32 as u32, rax), r8),
+        "440FBE4080",
+        "movsbl  -128(%rax), %r8d",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::BQ, Addr_IR(-0x80i32 as u32, rax), r8),
+        "4C0FBE4080",
+        "movsbq  -128(%rax), %r8",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::WL, Addr_IR(-0x80i32 as u32, rax), r8),
+        "440FBF4080",
+        "movswl  -128(%rax), %r8d",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::WQ, Addr_IR(-0x80i32 as u32, rax), r8),
+        "4C0FBF4080",
+        "movswq  -128(%rax), %r8",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::LQ, Addr_IR(-0x80i32 as u32, rax), r8),
+        "4C634080",
+        "movslq  -128(%rax), %r8",
+    ));
     //
-    insts.push(i_Mov_R_M(1, rsi, Addr_IRRS(0x7F, rax, r8, 3)));
-    insts.push(i_Mov_R_M(2, rsi, Addr_IRRS(0x7F, rax, r8, 3)));
-    insts.push(i_Mov_R_M(4, rsi, Addr_IRRS(0x7F, rax, r8, 3)));
-    insts.push(i_Mov_R_M(8, rsi, Addr_IRRS(0x7F, rax, r8, 3)));
+    insns.push((
+        i_Mov_R_M(1, rsi, Addr_IRRS(0x7F, rax, r8, 3)),
+        "428874C07F",
+        "movb    %sil, 127(%rax,%r8,8)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, rsi, Addr_IRRS(0x7F, rax, r8, 3)),
+        "66428974C07F",
+        "movw    %si, 127(%rax,%r8,8)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, rsi, Addr_IRRS(0x7F, rax, r8, 3)),
+        "428974C07F",
+        "movl    %esi, 127(%rax,%r8,8)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, rsi, Addr_IRRS(0x7F, rax, r8, 3)),
+        "4A8974C07F",
+        "movq    %rsi, 127(%rax,%r8,8)",
+    ));
     //
-    insts.push(i_Shift_R(false, ShiftKind::Left, 0, rdi));
-    insts.push(i_Shift_R(false, ShiftKind::Left, 5, rdi));
-    insts.push(i_Shift_R(true, ShiftKind::Left, 5, rdi));
-    insts.push(i_Shift_R(true, ShiftKind::RightZ, 5, rdi));
-    insts.push(i_Shift_R(true, ShiftKind::RightS, 5, rdi));
+    insns.push((
+        i_Shift_R(false, ShiftKind::Left, 0, rdi),
+        "D3E7",
+        "shll    %cl, %edi",
+    ));
+    insns.push((
+        i_Shift_R(false, ShiftKind::Left, 5, rdi),
+        "C1E705",
+        "shll    $5, %edi",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::Left, 5, rdi),
+        "48C1E705",
+        "shlq    $5, %rdi",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::RightZ, 5, rdi),
+        "48C1EF05",
+        "shrq    $5, %rdi",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::RightS, 5, rdi),
+        "48C1FF05",
+        "sarq    $5, %rdi",
+    ));
     //
-    insts.push(i_Cmp_RMI_R(1, RMI_R(rcx), rdx));
-    insts.push(i_Cmp_RMI_R(2, RMI_R(rcx), rdx));
-    insts.push(i_Cmp_RMI_R(4, RMI_R(rcx), rdx));
-    insts.push(i_Cmp_RMI_R(8, RMI_R(rcx), rdx));
-    insts.push(i_Cmp_RMI_R(1, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx));
-    insts.push(i_Cmp_RMI_R(2, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx));
-    insts.push(i_Cmp_RMI_R(4, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx));
-    insts.push(i_Cmp_RMI_R(8, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx));
-    insts.push(i_Cmp_RMI_R(1, RMI_I(123), rdx));
-    insts.push(i_Cmp_RMI_R(2, RMI_I(456), rdx));
-    insts.push(i_Cmp_RMI_R(4, RMI_I(789), rdx));
-    insts.push(i_Cmp_RMI_R(8, RMI_I(-123i32 as u32), rdx));
+    insns.push((i_Cmp_RMI_R(1, RMI_R(rcx), rdx), "38CA", "cmpb    %cl, %dl"));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_R(rcx), rdx),
+        "6639CA",
+        "cmpw    %cx, %dx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_R(rcx), rdx),
+        "39CA",
+        "cmpl    %ecx, %edx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_R(rcx), rdx),
+        "4839CA",
+        "cmpq    %rcx, %rdx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx),
+        "423A54C07F",
+        "cmpb    127(%rax,%r8,8), %dl",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx),
+        "66423B54C07F",
+        "cmpw    127(%rax,%r8,8), %dx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx),
+        "423B54C07F",
+        "cmpl    127(%rax,%r8,8), %edx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx),
+        "4A3B54C07F",
+        "cmpq    127(%rax,%r8,8), %rdx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_I(123), rdx),
+        "80FA7B",
+        "cmpb    $123, %dl",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_I(456), rdx),
+        "6681FAC801",
+        "cmpw    $456, %dx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_I(789), rdx),
+        "81FA15030000",
+        "cmpl    $789, %edx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_I(-123i32 as u32), rdx),
+        "4883FA85",
+        "cmpq    $-123, %rdx",
+    ));
     //
-    insts.push(i_Push64(RMI_R(rcx)));
-    insts.push(i_Push64(RMI_M(Addr_IR(0x7FFF_FFFF, rax))));
-    insts.push(i_Push64(RMI_I(456)));
+    insns.push((i_Push64(RMI_R(rcx)), "51", "pushq   %rcx"));
+    insns.push((
+        i_Push64(RMI_M(Addr_IR(0x7FFF_FFFF, rax))),
+        "FFB0FFFFFF7F",
+        "pushq   2147483647(%rax)",
+    ));
+    insns.push((i_Push64(RMI_I(456)), "68C8010000", "pushq   $456"));
 
     // Minimal general tests for each insn.  Don't forget to include cases
     // that test for removal of redundant REX prefixes.
     //
     // Alu_RMI_R
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_R(r15), rdx));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), r8));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), rsi));
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), rdx));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), r8));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), rsi));
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_I(76543210), rdx));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-76543210i32 as u32), r8));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(76543210), rsi));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_R(r15), rdx),
+        "4C01FA",
+        "addq    %r15, %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), r8),
+        "4101C8",
+        "addl    %ecx, %r8d",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), rsi),
+        "01CE",
+        "addl    %ecx, %esi",
+    ));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), rdx),
+        "48035763",
+        "addq    99(%rdi), %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), r8),
+        "44034763",
+        "addl    99(%rdi), %r8d",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), rsi),
+        "037763",
+        "addl    99(%rdi), %esi",
+    ));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_I(76543210), rdx),
+        "4881C2EAF48F04",
+        "addq    $76543210, %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-76543210i32 as u32), r8),
+        "4181C0160B70FB",
+        "addl    $-76543210, %r8d",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(76543210), rsi),
+        "81C6EAF48F04",
+        "addl    $76543210, %esi",
+    ));
     // This is pretty feeble
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Sub, RMI_R(r15), rdx));
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::And, RMI_R(r15), rdx));
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Or, RMI_R(r15), rdx));
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Xor, RMI_R(r15), rdx));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Sub, RMI_R(r15), rdx),
+        "4C29FA",
+        "subq    %r15, %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::And, RMI_R(r15), rdx),
+        "4C21FA",
+        "andq    %r15, %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Or, RMI_R(r15), rdx),
+        "4C09FA",
+        "orq     %r15, %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Xor, RMI_R(r15), rdx),
+        "4C31FA",
+        "xorq    %r15, %rdx",
+    ));
     // Test all mul cases, though
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_R(r15), rdx));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_R(rcx), r8));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_R(rcx), rsi));
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), rdx));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), r8));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), rsi));
-    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_I(76543210), rdx));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-76543210i32 as u32), r8));
-    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(76543210), rsi));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_R(r15), rdx),
+        "490FAFD7",
+        "imulq   %r15, %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_R(rcx), r8),
+        "440FAFC1",
+        "imull   %ecx, %r8d",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_R(rcx), rsi),
+        "0FAFF1",
+        "imull   %ecx, %esi",
+    ));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), rdx),
+        "480FAF5763",
+        "imulq   99(%rdi), %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), r8),
+        "440FAF4763",
+        "imull   99(%rdi), %r8d",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), rsi),
+        "0FAF7763",
+        "imull   99(%rdi), %esi",
+    ));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_I(76543210), rdx),
+        "4869D2EAF48F04",
+        "imulq   $76543210, %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-76543210i32 as u32), r8),
+        "4569C0160B70FB",
+        "imull   $-76543210, %r8d",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(76543210), rsi),
+        "69F6EAF48F04",
+        "imull   $76543210, %esi",
+    ));
     //
     // Imm_R
-    insts.push(i_Imm_R(false, 1234567, r14));
-    insts.push(i_Imm_R(true, 1234567898765, r14));
-    insts.push(i_Imm_R(false, 1234567, rcx));
-    insts.push(i_Imm_R(true, 1234567898765, rsi));
+    insns.push((
+        i_Imm_R(false, 1234567, r14),
+        "41BE87D61200",
+        "movl    $1234567, %r14d",
+    ));
+    insns.push((
+        i_Imm_R(true, 1234567898765, r14),
+        "49BE8D26FB711F010000",
+        "movabsq $1234567898765, %r14",
+    ));
+    insns.push((
+        i_Imm_R(false, 1234567, rcx),
+        "B987D61200",
+        "movl    $1234567, %ecx",
+    ));
+    insns.push((
+        i_Imm_R(true, 1234567898765, rsi),
+        "48BE8D26FB711F010000",
+        "movabsq $1234567898765, %rsi",
+    ));
     //
     // Mov_R_R
-    insts.push(i_Mov_R_R(false, rbx, rsi));
-    insts.push(i_Mov_R_R(false, rbx, r9));
-    insts.push(i_Mov_R_R(false, r11, rsi));
-    insts.push(i_Mov_R_R(false, r12, r9));
-    insts.push(i_Mov_R_R(true, rbx, rsi));
-    insts.push(i_Mov_R_R(true, rbx, r9));
-    insts.push(i_Mov_R_R(true, r11, rsi));
-    insts.push(i_Mov_R_R(true, r12, r9));
+    insns.push((i_Mov_R_R(false, rbx, rsi), "89DE", "movl    %ebx, %esi"));
+    insns.push((i_Mov_R_R(false, rbx, r9), "4189D9", "movl    %ebx, %r9d"));
+    insns.push((i_Mov_R_R(false, r11, rsi), "4489DE", "movl    %r11d, %esi"));
+    insns.push((i_Mov_R_R(false, r12, r9), "4589E1", "movl    %r12d, %r9d"));
+    insns.push((i_Mov_R_R(true, rbx, rsi), "4889DE", "movq    %rbx, %rsi"));
+    insns.push((i_Mov_R_R(true, rbx, r9), "4989D9", "movq    %rbx, %r9"));
+    insns.push((i_Mov_R_R(true, r11, rsi), "4C89DE", "movq    %r11, %rsi"));
+    insns.push((i_Mov_R_R(true, r12, r9), "4D89E1", "movq    %r12, %r9"));
     //
     // MovZX_M_R
-    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, rcx), rsi));
-    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r8), rbx));
-    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r10), r9));
-    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r11), rdx));
-    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, rcx), rsi));
-    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r8), rbx));
-    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r10), r9));
-    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r11), rdx));
-    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, rcx), rsi));
-    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r8), rbx));
-    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r10), r9));
-    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r11), rdx));
-    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, rcx), rsi));
-    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r8), rbx));
-    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r10), r9));
-    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r11), rdx));
-    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, rcx), rsi));
-    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r8), rbx));
-    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r10), r9));
-    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r11), rdx));
+    insns.push((
+        i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, rcx), rsi),
+        "0FB671F9",
+        "movzbl  -7(%rcx), %esi",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r8), rbx),
+        "410FB658F9",
+        "movzbl  -7(%r8), %ebx",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r10), r9),
+        "450FB64AF9",
+        "movzbl  -7(%r10), %r9d",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r11), rdx),
+        "410FB653F9",
+        "movzbl  -7(%r11), %edx",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        "480FB671F9",
+        "movzbq  -7(%rcx), %rsi",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r8), rbx),
+        "490FB658F9",
+        "movzbq  -7(%r8), %rbx",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r10), r9),
+        "4D0FB64AF9",
+        "movzbq  -7(%r10), %r9",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r11), rdx),
+        "490FB653F9",
+        "movzbq  -7(%r11), %rdx",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, rcx), rsi),
+        "0FB771F9",
+        "movzwl  -7(%rcx), %esi",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r8), rbx),
+        "410FB758F9",
+        "movzwl  -7(%r8), %ebx",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r10), r9),
+        "450FB74AF9",
+        "movzwl  -7(%r10), %r9d",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r11), rdx),
+        "410FB753F9",
+        "movzwl  -7(%r11), %edx",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        "480FB771F9",
+        "movzwq  -7(%rcx), %rsi",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r8), rbx),
+        "490FB758F9",
+        "movzwq  -7(%r8), %rbx",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r10), r9),
+        "4D0FB74AF9",
+        "movzwq  -7(%r10), %r9",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r11), rdx),
+        "490FB753F9",
+        "movzwq  -7(%r11), %rdx",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        "8B71F9",
+        "movl    -7(%rcx), %esi",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r8), rbx),
+        "418B58F9",
+        "movl    -7(%r8), %ebx",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r10), r9),
+        "458B4AF9",
+        "movl    -7(%r10), %r9d",
+    ));
+    insns.push((
+        i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r11), rdx),
+        "418B53F9",
+        "movl    -7(%r11), %edx",
+    ));
     //
     // Mov64_M_R
-    insts.push(i_Mov64_M_R(Addr_IRRS(179, rax, rbx, 0), rcx));
-    insts.push(i_Mov64_M_R(Addr_IRRS(179, rax, rbx, 0), r8));
-    insts.push(i_Mov64_M_R(Addr_IRRS(179, rax, r9, 0), rcx));
-    insts.push(i_Mov64_M_R(Addr_IRRS(179, rax, r9, 0), r8));
-    insts.push(i_Mov64_M_R(Addr_IRRS(179, r10, rbx, 0), rcx));
-    insts.push(i_Mov64_M_R(Addr_IRRS(179, r10, rbx, 0), r8));
-    insts.push(i_Mov64_M_R(Addr_IRRS(179, r10, r9, 0), rcx));
-    insts.push(i_Mov64_M_R(Addr_IRRS(179, r10, r9, 0), r8));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(179, rax, rbx, 0), rcx),
+        "488B8C18B3000000",
+        "movq    179(%rax,%rbx,1), %rcx",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(179, rax, rbx, 0), r8),
+        "4C8B8418B3000000",
+        "movq    179(%rax,%rbx,1), %r8",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(179, rax, r9, 0), rcx),
+        "4A8B8C08B3000000",
+        "movq    179(%rax,%r9,1), %rcx",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(179, rax, r9, 0), r8),
+        "4E8B8408B3000000",
+        "movq    179(%rax,%r9,1), %r8",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(179, r10, rbx, 0), rcx),
+        "498B8C1AB3000000",
+        "movq    179(%r10,%rbx,1), %rcx",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(179, r10, rbx, 0), r8),
+        "4D8B841AB3000000",
+        "movq    179(%r10,%rbx,1), %r8",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(179, r10, r9, 0), rcx),
+        "4B8B8C0AB3000000",
+        "movq    179(%r10,%r9,1), %rcx",
+    ));
+    insns.push((
+        i_Mov64_M_R(Addr_IRRS(179, r10, r9, 0), r8),
+        "4F8B840AB3000000",
+        "movq    179(%r10,%r9,1), %r8",
+    ));
     //
     // MovSX_M_R
-    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, rcx), rsi));
-    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r8), rbx));
-    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r10), r9));
-    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r11), rdx));
-    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, rcx), rsi));
-    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r8), rbx));
-    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r10), r9));
-    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r11), rdx));
-    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, rcx), rsi));
-    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r8), rbx));
-    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r10), r9));
-    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r11), rdx));
-    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, rcx), rsi));
-    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r8), rbx));
-    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r10), r9));
-    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r11), rdx));
-    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, rcx), rsi));
-    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r8), rbx));
-    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r10), r9));
-    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r11), rdx));
+    insns.push((
+        i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, rcx), rsi),
+        "0FBE71F9",
+        "movsbl  -7(%rcx), %esi",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r8), rbx),
+        "410FBE58F9",
+        "movsbl  -7(%r8), %ebx",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r10), r9),
+        "450FBE4AF9",
+        "movsbl  -7(%r10), %r9d",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r11), rdx),
+        "410FBE53F9",
+        "movsbl  -7(%r11), %edx",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        "480FBE71F9",
+        "movsbq  -7(%rcx), %rsi",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r8), rbx),
+        "490FBE58F9",
+        "movsbq  -7(%r8), %rbx",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r10), r9),
+        "4D0FBE4AF9",
+        "movsbq  -7(%r10), %r9",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r11), rdx),
+        "490FBE53F9",
+        "movsbq  -7(%r11), %rdx",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, rcx), rsi),
+        "0FBF71F9",
+        "movswl  -7(%rcx), %esi",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r8), rbx),
+        "410FBF58F9",
+        "movswl  -7(%r8), %ebx",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r10), r9),
+        "450FBF4AF9",
+        "movswl  -7(%r10), %r9d",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r11), rdx),
+        "410FBF53F9",
+        "movswl  -7(%r11), %edx",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        "480FBF71F9",
+        "movswq  -7(%rcx), %rsi",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r8), rbx),
+        "490FBF58F9",
+        "movswq  -7(%r8), %rbx",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r10), r9),
+        "4D0FBF4AF9",
+        "movswq  -7(%r10), %r9",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r11), rdx),
+        "490FBF53F9",
+        "movswq  -7(%r11), %rdx",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        "486371F9",
+        "movslq  -7(%rcx), %rsi",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r8), rbx),
+        "496358F9",
+        "movslq  -7(%r8), %rbx",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r10), r9),
+        "4D634AF9",
+        "movslq  -7(%r10), %r9",
+    ));
+    insns.push((
+        i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r11), rdx),
+        "496353F9",
+        "movslq  -7(%r11), %rdx",
+    ));
     //
     // Mov_R_M.  Byte stores are tricky.  Check everything carefully.
-    insts.push(i_Mov_R_M(8, rax, Addr_IR(99, rdi)));
-    insts.push(i_Mov_R_M(8, rbx, Addr_IR(99, r8)));
-    insts.push(i_Mov_R_M(8, rcx, Addr_IR(99, rsi)));
-    insts.push(i_Mov_R_M(8, rdx, Addr_IR(99, r9)));
-    insts.push(i_Mov_R_M(8, rsi, Addr_IR(99, rax)));
-    insts.push(i_Mov_R_M(8, rdi, Addr_IR(99, r15)));
-    insts.push(i_Mov_R_M(8, rsp, Addr_IR(99, rcx)));
-    insts.push(i_Mov_R_M(8, rbp, Addr_IR(99, r14)));
-    insts.push(i_Mov_R_M(8, r8, Addr_IR(99, rdi)));
-    insts.push(i_Mov_R_M(8, r9, Addr_IR(99, r8)));
-    insts.push(i_Mov_R_M(8, r10, Addr_IR(99, rsi)));
-    insts.push(i_Mov_R_M(8, r11, Addr_IR(99, r9)));
-    insts.push(i_Mov_R_M(8, r12, Addr_IR(99, rax)));
-    insts.push(i_Mov_R_M(8, r13, Addr_IR(99, r15)));
-    insts.push(i_Mov_R_M(8, r14, Addr_IR(99, rcx)));
-    insts.push(i_Mov_R_M(8, r15, Addr_IR(99, r14)));
+    insns.push((
+        i_Mov_R_M(8, rax, Addr_IR(99, rdi)),
+        "48894763",
+        "movq    %rax, 99(%rdi)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, rbx, Addr_IR(99, r8)),
+        "49895863",
+        "movq    %rbx, 99(%r8)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, rcx, Addr_IR(99, rsi)),
+        "48894E63",
+        "movq    %rcx, 99(%rsi)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, rdx, Addr_IR(99, r9)),
+        "49895163",
+        "movq    %rdx, 99(%r9)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, rsi, Addr_IR(99, rax)),
+        "48897063",
+        "movq    %rsi, 99(%rax)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, rdi, Addr_IR(99, r15)),
+        "49897F63",
+        "movq    %rdi, 99(%r15)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, rsp, Addr_IR(99, rcx)),
+        "48896163",
+        "movq    %rsp, 99(%rcx)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, rbp, Addr_IR(99, r14)),
+        "49896E63",
+        "movq    %rbp, 99(%r14)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, r8, Addr_IR(99, rdi)),
+        "4C894763",
+        "movq    %r8, 99(%rdi)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, r9, Addr_IR(99, r8)),
+        "4D894863",
+        "movq    %r9, 99(%r8)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, r10, Addr_IR(99, rsi)),
+        "4C895663",
+        "movq    %r10, 99(%rsi)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, r11, Addr_IR(99, r9)),
+        "4D895963",
+        "movq    %r11, 99(%r9)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, r12, Addr_IR(99, rax)),
+        "4C896063",
+        "movq    %r12, 99(%rax)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, r13, Addr_IR(99, r15)),
+        "4D896F63",
+        "movq    %r13, 99(%r15)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, r14, Addr_IR(99, rcx)),
+        "4C897163",
+        "movq    %r14, 99(%rcx)",
+    ));
+    insns.push((
+        i_Mov_R_M(8, r15, Addr_IR(99, r14)),
+        "4D897E63",
+        "movq    %r15, 99(%r14)",
+    ));
     //
-    insts.push(i_Mov_R_M(4, rax, Addr_IR(99, rdi)));
-    insts.push(i_Mov_R_M(4, rbx, Addr_IR(99, r8)));
-    insts.push(i_Mov_R_M(4, rcx, Addr_IR(99, rsi)));
-    insts.push(i_Mov_R_M(4, rdx, Addr_IR(99, r9)));
-    insts.push(i_Mov_R_M(4, rsi, Addr_IR(99, rax)));
-    insts.push(i_Mov_R_M(4, rdi, Addr_IR(99, r15)));
-    insts.push(i_Mov_R_M(4, rsp, Addr_IR(99, rcx)));
-    insts.push(i_Mov_R_M(4, rbp, Addr_IR(99, r14)));
-    insts.push(i_Mov_R_M(4, r8, Addr_IR(99, rdi)));
-    insts.push(i_Mov_R_M(4, r9, Addr_IR(99, r8)));
-    insts.push(i_Mov_R_M(4, r10, Addr_IR(99, rsi)));
-    insts.push(i_Mov_R_M(4, r11, Addr_IR(99, r9)));
-    insts.push(i_Mov_R_M(4, r12, Addr_IR(99, rax)));
-    insts.push(i_Mov_R_M(4, r13, Addr_IR(99, r15)));
-    insts.push(i_Mov_R_M(4, r14, Addr_IR(99, rcx)));
-    insts.push(i_Mov_R_M(4, r15, Addr_IR(99, r14)));
+    insns.push((
+        i_Mov_R_M(4, rax, Addr_IR(99, rdi)),
+        "894763",
+        "movl    %eax, 99(%rdi)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, rbx, Addr_IR(99, r8)),
+        "41895863",
+        "movl    %ebx, 99(%r8)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, rcx, Addr_IR(99, rsi)),
+        "894E63",
+        "movl    %ecx, 99(%rsi)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, rdx, Addr_IR(99, r9)),
+        "41895163",
+        "movl    %edx, 99(%r9)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, rsi, Addr_IR(99, rax)),
+        "897063",
+        "movl    %esi, 99(%rax)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, rdi, Addr_IR(99, r15)),
+        "41897F63",
+        "movl    %edi, 99(%r15)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, rsp, Addr_IR(99, rcx)),
+        "896163",
+        "movl    %esp, 99(%rcx)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, rbp, Addr_IR(99, r14)),
+        "41896E63",
+        "movl    %ebp, 99(%r14)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, r8, Addr_IR(99, rdi)),
+        "44894763",
+        "movl    %r8d, 99(%rdi)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, r9, Addr_IR(99, r8)),
+        "45894863",
+        "movl    %r9d, 99(%r8)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, r10, Addr_IR(99, rsi)),
+        "44895663",
+        "movl    %r10d, 99(%rsi)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, r11, Addr_IR(99, r9)),
+        "45895963",
+        "movl    %r11d, 99(%r9)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, r12, Addr_IR(99, rax)),
+        "44896063",
+        "movl    %r12d, 99(%rax)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, r13, Addr_IR(99, r15)),
+        "45896F63",
+        "movl    %r13d, 99(%r15)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, r14, Addr_IR(99, rcx)),
+        "44897163",
+        "movl    %r14d, 99(%rcx)",
+    ));
+    insns.push((
+        i_Mov_R_M(4, r15, Addr_IR(99, r14)),
+        "45897E63",
+        "movl    %r15d, 99(%r14)",
+    ));
     //
-    insts.push(i_Mov_R_M(2, rax, Addr_IR(99, rdi)));
-    insts.push(i_Mov_R_M(2, rbx, Addr_IR(99, r8)));
-    insts.push(i_Mov_R_M(2, rcx, Addr_IR(99, rsi)));
-    insts.push(i_Mov_R_M(2, rdx, Addr_IR(99, r9)));
-    insts.push(i_Mov_R_M(2, rsi, Addr_IR(99, rax)));
-    insts.push(i_Mov_R_M(2, rdi, Addr_IR(99, r15)));
-    insts.push(i_Mov_R_M(2, rsp, Addr_IR(99, rcx)));
-    insts.push(i_Mov_R_M(2, rbp, Addr_IR(99, r14)));
-    insts.push(i_Mov_R_M(2, r8, Addr_IR(99, rdi)));
-    insts.push(i_Mov_R_M(2, r9, Addr_IR(99, r8)));
-    insts.push(i_Mov_R_M(2, r10, Addr_IR(99, rsi)));
-    insts.push(i_Mov_R_M(2, r11, Addr_IR(99, r9)));
-    insts.push(i_Mov_R_M(2, r12, Addr_IR(99, rax)));
-    insts.push(i_Mov_R_M(2, r13, Addr_IR(99, r15)));
-    insts.push(i_Mov_R_M(2, r14, Addr_IR(99, rcx)));
-    insts.push(i_Mov_R_M(2, r15, Addr_IR(99, r14)));
+    insns.push((
+        i_Mov_R_M(2, rax, Addr_IR(99, rdi)),
+        "66894763",
+        "movw    %ax, 99(%rdi)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, rbx, Addr_IR(99, r8)),
+        "6641895863",
+        "movw    %bx, 99(%r8)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, rcx, Addr_IR(99, rsi)),
+        "66894E63",
+        "movw    %cx, 99(%rsi)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, rdx, Addr_IR(99, r9)),
+        "6641895163",
+        "movw    %dx, 99(%r9)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, rsi, Addr_IR(99, rax)),
+        "66897063",
+        "movw    %si, 99(%rax)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, rdi, Addr_IR(99, r15)),
+        "6641897F63",
+        "movw    %di, 99(%r15)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, rsp, Addr_IR(99, rcx)),
+        "66896163",
+        "movw    %sp, 99(%rcx)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, rbp, Addr_IR(99, r14)),
+        "6641896E63",
+        "movw    %bp, 99(%r14)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, r8, Addr_IR(99, rdi)),
+        "6644894763",
+        "movw    %r8w, 99(%rdi)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, r9, Addr_IR(99, r8)),
+        "6645894863",
+        "movw    %r9w, 99(%r8)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, r10, Addr_IR(99, rsi)),
+        "6644895663",
+        "movw    %r10w, 99(%rsi)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, r11, Addr_IR(99, r9)),
+        "6645895963",
+        "movw    %r11w, 99(%r9)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, r12, Addr_IR(99, rax)),
+        "6644896063",
+        "movw    %r12w, 99(%rax)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, r13, Addr_IR(99, r15)),
+        "6645896F63",
+        "movw    %r13w, 99(%r15)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, r14, Addr_IR(99, rcx)),
+        "6644897163",
+        "movw    %r14w, 99(%rcx)",
+    ));
+    insns.push((
+        i_Mov_R_M(2, r15, Addr_IR(99, r14)),
+        "6645897E63",
+        "movw    %r15w, 99(%r14)",
+    ));
     //
-    insts.push(i_Mov_R_M(1, rax, Addr_IR(99, rdi)));
-    insts.push(i_Mov_R_M(1, rbx, Addr_IR(99, r8)));
-    insts.push(i_Mov_R_M(1, rcx, Addr_IR(99, rsi)));
-    insts.push(i_Mov_R_M(1, rdx, Addr_IR(99, r9)));
-    insts.push(i_Mov_R_M(1, rsi, Addr_IR(99, rax)));
-    insts.push(i_Mov_R_M(1, rdi, Addr_IR(99, r15)));
-    insts.push(i_Mov_R_M(1, rsp, Addr_IR(99, rcx)));
-    insts.push(i_Mov_R_M(1, rbp, Addr_IR(99, r14)));
-    insts.push(i_Mov_R_M(1, r8, Addr_IR(99, rdi)));
-    insts.push(i_Mov_R_M(1, r9, Addr_IR(99, r8)));
-    insts.push(i_Mov_R_M(1, r10, Addr_IR(99, rsi)));
-    insts.push(i_Mov_R_M(1, r11, Addr_IR(99, r9)));
-    insts.push(i_Mov_R_M(1, r12, Addr_IR(99, rax)));
-    insts.push(i_Mov_R_M(1, r13, Addr_IR(99, r15)));
-    insts.push(i_Mov_R_M(1, r14, Addr_IR(99, rcx)));
-    insts.push(i_Mov_R_M(1, r15, Addr_IR(99, r14)));
+    insns.push((
+        i_Mov_R_M(1, rax, Addr_IR(99, rdi)),
+        "884763",
+        "movb    %al, 99(%rdi)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, rbx, Addr_IR(99, r8)),
+        "41885863",
+        "movb    %bl, 99(%r8)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, rcx, Addr_IR(99, rsi)),
+        "884E63",
+        "movb    %cl, 99(%rsi)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, rdx, Addr_IR(99, r9)),
+        "41885163",
+        "movb    %dl, 99(%r9)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, rsi, Addr_IR(99, rax)),
+        "40887063",
+        "movb    %sil, 99(%rax)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, rdi, Addr_IR(99, r15)),
+        "41887F63",
+        "movb    %dil, 99(%r15)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, rsp, Addr_IR(99, rcx)),
+        "40886163",
+        "movb    %spl, 99(%rcx)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, rbp, Addr_IR(99, r14)),
+        "41886E63",
+        "movb    %bpl, 99(%r14)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, r8, Addr_IR(99, rdi)),
+        "44884763",
+        "movb    %r8b, 99(%rdi)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, r9, Addr_IR(99, r8)),
+        "45884863",
+        "movb    %r9b, 99(%r8)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, r10, Addr_IR(99, rsi)),
+        "44885663",
+        "movb    %r10b, 99(%rsi)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, r11, Addr_IR(99, r9)),
+        "45885963",
+        "movb    %r11b, 99(%r9)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, r12, Addr_IR(99, rax)),
+        "44886063",
+        "movb    %r12b, 99(%rax)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, r13, Addr_IR(99, r15)),
+        "45886F63",
+        "movb    %r13b, 99(%r15)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, r14, Addr_IR(99, rcx)),
+        "44887163",
+        "movb    %r14b, 99(%rcx)",
+    ));
+    insns.push((
+        i_Mov_R_M(1, r15, Addr_IR(99, r14)),
+        "45887E63",
+        "movb    %r15b, 99(%r14)",
+    ));
     //
     // Shift_R
-    insts.push(i_Shift_R(false, ShiftKind::Left, 0, rdi));
-    insts.push(i_Shift_R(false, ShiftKind::Left, 1, r8));
-    insts.push(i_Shift_R(false, ShiftKind::Left, 31, r13));
-    insts.push(i_Shift_R(true, ShiftKind::Left, 0, rdi));
-    insts.push(i_Shift_R(true, ShiftKind::Left, 1, r8));
-    insts.push(i_Shift_R(true, ShiftKind::Left, 63, r13));
-    insts.push(i_Shift_R(false, ShiftKind::RightZ, 0, rdi));
-    insts.push(i_Shift_R(false, ShiftKind::RightZ, 1, r8));
-    insts.push(i_Shift_R(false, ShiftKind::RightZ, 31, r13));
-    insts.push(i_Shift_R(true, ShiftKind::RightZ, 0, rdi));
-    insts.push(i_Shift_R(true, ShiftKind::RightZ, 1, r8));
-    insts.push(i_Shift_R(true, ShiftKind::RightZ, 63, r13));
-    insts.push(i_Shift_R(false, ShiftKind::RightS, 0, rdi));
-    insts.push(i_Shift_R(false, ShiftKind::RightS, 1, r8));
-    insts.push(i_Shift_R(false, ShiftKind::RightS, 31, r13));
-    insts.push(i_Shift_R(true, ShiftKind::RightS, 0, rdi));
-    insts.push(i_Shift_R(true, ShiftKind::RightS, 1, r8));
-    insts.push(i_Shift_R(true, ShiftKind::RightS, 63, r13));
+    insns.push((
+        i_Shift_R(false, ShiftKind::Left, 0, rdi),
+        "D3E7",
+        "shll    %cl, %edi",
+    ));
+    insns.push((
+        i_Shift_R(false, ShiftKind::Left, 1, r8),
+        "41D1E0",
+        "shll    $1, %r8d",
+    ));
+    insns.push((
+        i_Shift_R(false, ShiftKind::Left, 31, r13),
+        "41C1E51F",
+        "shll    $31, %r13d",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::Left, 0, rdi),
+        "48D3E7",
+        "shlq    %cl, %rdi",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::Left, 1, r8),
+        "49D1E0",
+        "shlq    $1, %r8",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::Left, 63, r13),
+        "49C1E53F",
+        "shlq    $63, %r13",
+    ));
+    insns.push((
+        i_Shift_R(false, ShiftKind::RightZ, 0, rdi),
+        "D3EF",
+        "shrl    %cl, %edi",
+    ));
+    insns.push((
+        i_Shift_R(false, ShiftKind::RightZ, 1, r8),
+        "41D1E8",
+        "shrl    $1, %r8d",
+    ));
+    insns.push((
+        i_Shift_R(false, ShiftKind::RightZ, 31, r13),
+        "41C1ED1F",
+        "shrl    $31, %r13d",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::RightZ, 0, rdi),
+        "48D3EF",
+        "shrq    %cl, %rdi",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::RightZ, 1, r8),
+        "49D1E8",
+        "shrq    $1, %r8",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::RightZ, 63, r13),
+        "49C1ED3F",
+        "shrq    $63, %r13",
+    ));
+    insns.push((
+        i_Shift_R(false, ShiftKind::RightS, 0, rdi),
+        "D3FF",
+        "sarl    %cl, %edi",
+    ));
+    insns.push((
+        i_Shift_R(false, ShiftKind::RightS, 1, r8),
+        "41D1F8",
+        "sarl    $1, %r8d",
+    ));
+    insns.push((
+        i_Shift_R(false, ShiftKind::RightS, 31, r13),
+        "41C1FD1F",
+        "sarl    $31, %r13d",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::RightS, 0, rdi),
+        "48D3FF",
+        "sarq    %cl, %rdi",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::RightS, 1, r8),
+        "49D1F8",
+        "sarq    $1, %r8",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::RightS, 63, r13),
+        "49C1FD3F",
+        "sarq    $63, %r13",
+    ));
     //
     // Cmp_RMI_R
-    insts.push(i_Cmp_RMI_R(8, RMI_R(r15), rdx));
-    insts.push(i_Cmp_RMI_R(8, RMI_R(rcx), r8));
-    insts.push(i_Cmp_RMI_R(8, RMI_R(rcx), rsi));
-    insts.push(i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), rdx));
-    insts.push(i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), r8));
-    insts.push(i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), rsi));
-    insts.push(i_Cmp_RMI_R(8, RMI_I(76543210), rdx));
-    insts.push(i_Cmp_RMI_R(8, RMI_I(-76543210i32 as u32), r8));
-    insts.push(i_Cmp_RMI_R(8, RMI_I(76543210), rsi));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_R(r15), rdx),
+        "4C39FA",
+        "cmpq    %r15, %rdx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_R(rcx), r8),
+        "4939C8",
+        "cmpq    %rcx, %r8",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_R(rcx), rsi),
+        "4839CE",
+        "cmpq    %rcx, %rsi",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), rdx),
+        "483B5763",
+        "cmpq    99(%rdi), %rdx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), r8),
+        "4C3B4763",
+        "cmpq    99(%rdi), %r8",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), rsi),
+        "483B7763",
+        "cmpq    99(%rdi), %rsi",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_I(76543210), rdx),
+        "4881FAEAF48F04",
+        "cmpq    $76543210, %rdx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_I(-76543210i32 as u32), r8),
+        "4981F8160B70FB",
+        "cmpq    $-76543210, %r8",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(8, RMI_I(76543210), rsi),
+        "4881FEEAF48F04",
+        "cmpq    $76543210, %rsi",
+    ));
     //
-    insts.push(i_Cmp_RMI_R(4, RMI_R(r15), rdx));
-    insts.push(i_Cmp_RMI_R(4, RMI_R(rcx), r8));
-    insts.push(i_Cmp_RMI_R(4, RMI_R(rcx), rsi));
-    insts.push(i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), rdx));
-    insts.push(i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), r8));
-    insts.push(i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), rsi));
-    insts.push(i_Cmp_RMI_R(4, RMI_I(76543210), rdx));
-    insts.push(i_Cmp_RMI_R(4, RMI_I(-76543210i32 as u32), r8));
-    insts.push(i_Cmp_RMI_R(4, RMI_I(76543210), rsi));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_R(r15), rdx),
+        "4439FA",
+        "cmpl    %r15d, %edx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_R(rcx), r8),
+        "4139C8",
+        "cmpl    %ecx, %r8d",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_R(rcx), rsi),
+        "39CE",
+        "cmpl    %ecx, %esi",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), rdx),
+        "3B5763",
+        "cmpl    99(%rdi), %edx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), r8),
+        "443B4763",
+        "cmpl    99(%rdi), %r8d",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), rsi),
+        "3B7763",
+        "cmpl    99(%rdi), %esi",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_I(76543210), rdx),
+        "81FAEAF48F04",
+        "cmpl    $76543210, %edx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_I(-76543210i32 as u32), r8),
+        "4181F8160B70FB",
+        "cmpl    $-76543210, %r8d",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(4, RMI_I(76543210), rsi),
+        "81FEEAF48F04",
+        "cmpl    $76543210, %esi",
+    ));
     //
-    insts.push(i_Cmp_RMI_R(2, RMI_R(r15), rdx));
-    insts.push(i_Cmp_RMI_R(2, RMI_R(rcx), r8));
-    insts.push(i_Cmp_RMI_R(2, RMI_R(rcx), rsi));
-    insts.push(i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), rdx));
-    insts.push(i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), r8));
-    insts.push(i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), rsi));
-    insts.push(i_Cmp_RMI_R(2, RMI_I(23210), rdx));
-    insts.push(i_Cmp_RMI_R(2, RMI_I(-7654i32 as u32), r8));
-    insts.push(i_Cmp_RMI_R(2, RMI_I(7654), rsi));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_R(r15), rdx),
+        "664439FA",
+        "cmpw    %r15w, %dx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_R(rcx), r8),
+        "664139C8",
+        "cmpw    %cx, %r8w",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_R(rcx), rsi),
+        "6639CE",
+        "cmpw    %cx, %si",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), rdx),
+        "663B5763",
+        "cmpw    99(%rdi), %dx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), r8),
+        "66443B4763",
+        "cmpw    99(%rdi), %r8w",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), rsi),
+        "663B7763",
+        "cmpw    99(%rdi), %si",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_I(23210), rdx),
+        "6681FAAA5A",
+        "cmpw    $23210, %dx",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_I(-7654i32 as u32), r8),
+        "664181F81AE2",
+        "cmpw    $-7654, %r8w",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(2, RMI_I(7654), rsi),
+        "6681FEE61D",
+        "cmpw    $7654, %si",
+    ));
     //
-    insts.push(i_Cmp_RMI_R(1, RMI_R(r15), rdx));
-    insts.push(i_Cmp_RMI_R(1, RMI_R(rcx), r8));
-    insts.push(i_Cmp_RMI_R(1, RMI_R(rcx), rsi));
-    insts.push(i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), rdx));
-    insts.push(i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), r8));
-    insts.push(i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), rsi));
-    insts.push(i_Cmp_RMI_R(1, RMI_I(70), rdx));
-    insts.push(i_Cmp_RMI_R(1, RMI_I(-76i32 as u32), r8));
-    insts.push(i_Cmp_RMI_R(1, RMI_I(76), rsi));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(r15), rdx),
+        "4438FA",
+        "cmpb    %r15b, %dl",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(rcx), r8),
+        "4138C8",
+        "cmpb    %cl, %r8b",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(rcx), rsi),
+        "4038CE",
+        "cmpb    %cl, %sil",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), rdx),
+        "3A5763",
+        "cmpb    99(%rdi), %dl",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), r8),
+        "443A4763",
+        "cmpb    99(%rdi), %r8b",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), rsi),
+        "403A7763",
+        "cmpb    99(%rdi), %sil",
+    ));
+    insns.push((i_Cmp_RMI_R(1, RMI_I(70), rdx), "80FA46", "cmpb    $70, %dl"));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_I(-76i32 as u32), r8),
+        "4180F8B4",
+        "cmpb    $-76, %r8b",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_I(76), rsi),
+        "4080FE4C",
+        "cmpb    $76, %sil",
+    ));
     //
     // Push64
-    insts.push(i_Push64(RMI_R(rdi)));
-    insts.push(i_Push64(RMI_R(r8)));
-    insts.push(i_Push64(RMI_M(Addr_IRRS(321, rsi, rcx, 3))));
-    insts.push(i_Push64(RMI_M(Addr_IRRS(321, r9, rbx, 2))));
-    insts.push(i_Push64(RMI_I(0)));
-    insts.push(i_Push64(RMI_I(127)));
-    insts.push(i_Push64(RMI_I(128)));
-    insts.push(i_Push64(RMI_I(0x31415927)));
-    insts.push(i_Push64(RMI_I(-128i32 as u32)));
-    insts.push(i_Push64(RMI_I(-129i32 as u32)));
-    insts.push(i_Push64(RMI_I(-0x75c4e8a1i32 as u32)));
+    insns.push((i_Push64(RMI_R(rdi)), "57", "pushq   %rdi"));
+    insns.push((i_Push64(RMI_R(r8)), "4150", "pushq   %r8"));
+    insns.push((
+        i_Push64(RMI_M(Addr_IRRS(321, rsi, rcx, 3))),
+        "FFB4CE41010000",
+        "pushq   321(%rsi,%rcx,8)",
+    ));
+    insns.push((
+        i_Push64(RMI_M(Addr_IRRS(321, r9, rbx, 2))),
+        "41FFB49941010000",
+        "pushq   321(%r9,%rbx,4)",
+    ));
+    insns.push((i_Push64(RMI_I(0)), "6A00", "pushq   $0"));
+    insns.push((i_Push64(RMI_I(127)), "6A7F", "pushq   $127"));
+    insns.push((i_Push64(RMI_I(128)), "6880000000", "pushq   $128"));
+    insns.push((
+        i_Push64(RMI_I(0x31415927)),
+        "6827594131",
+        "pushq   $826366247",
+    ));
+    insns.push((i_Push64(RMI_I(-128i32 as u32)), "6A80", "pushq   $-128"));
+    insns.push((
+        i_Push64(RMI_I(-129i32 as u32)),
+        "687FFFFFFF",
+        "pushq   $-129",
+    ));
+    insns.push((
+        i_Push64(RMI_I(-0x75c4e8a1i32 as u32)),
+        "685F173B8A",
+        "pushq   $-1975838881",
+    ));
     //
     // JmpKnown skipped for now
     //
     // JmpUnknown
-    insts.push(i_JmpUnknown(RM_R(rbp)));
-    insts.push(i_JmpUnknown(RM_R(r11)));
-    insts.push(i_JmpUnknown(RM_M(Addr_IRRS(321, rsi, rcx, 3))));
-    insts.push(i_JmpUnknown(RM_M(Addr_IRRS(321, r10, rdx, 2))));
+    insns.push((i_JmpUnknown(RM_R(rbp)), "FFE5", "jmp     *%rbp"));
+    insns.push((i_JmpUnknown(RM_R(r11)), "41FFE3", "jmp     *%r11"));
+    insns.push((
+        i_JmpUnknown(RM_M(Addr_IRRS(321, rsi, rcx, 3))),
+        "FFA4CE41010000",
+        "jmp     *321(%rsi,%rcx,8)",
+    ));
+    insns.push((
+        i_JmpUnknown(RM_M(Addr_IRRS(321, r10, rdx, 2))),
+        "41FFA49241010000",
+        "jmp     *321(%r10,%rdx,4)",
+    ));
     //
     // JmpCond skipped for now
     //
     // CallKnown skipped for now
     //
     // CallUnknown
-    insts.push(i_CallUnknown(RM_R(rbp)));
-    insts.push(i_CallUnknown(RM_R(r11)));
-    insts.push(i_CallUnknown(RM_M(Addr_IRRS(321, rsi, rcx, 3))));
-    insts.push(i_CallUnknown(RM_M(Addr_IRRS(321, r10, rdx, 2))));
+    insns.push((i_CallUnknown(RM_R(rbp)), "FFD5", "call    *%rbp"));
+    insns.push((i_CallUnknown(RM_R(r11)), "41FFD3", "call    *%r11"));
+    insns.push((
+        i_CallUnknown(RM_M(Addr_IRRS(321, rsi, rcx, 3))),
+        "FF94CE41010000",
+        "call    *321(%rsi,%rcx,8)",
+    ));
+    insns.push((
+        i_CallUnknown(RM_M(Addr_IRRS(321, r10, rdx, 2))),
+        "41FF949241010000",
+        "call    *321(%r10,%rdx,4)",
+    ));
     //
     // Ret
-    insts.push(i_Ret());
+    insns.push((i_Ret(), "C3", "ret"));
 
     /*
     insts.push(i_());
@@ -2139,8 +3620,13 @@ fn i_am_a_test() {
     insts.push(i_());
     */
     let rru = create_reg_universe();
-    for i in insts {
-        println!("     {}", i.show_rru(Some(&rru)));
+    for (insn, _expected_encoding, expected_printing) in insns {
+        println!("     {}", insn.show_rru(Some(&rru)));
+        // Check the printed text is as expected.
+        let actual_printing = insn.show_rru(Some(&rru));
+        assert_eq!(expected_printing, actual_printing);
+        // Check the encoding is as expected.
+        // (fill this bit in :-)
     }
-    println!("QQQQ END I am a test");
+    println!("QQQQ END test_x64_insn_encoding_and_printing");
 }
