@@ -15,10 +15,10 @@ use regalloc::Map as RegallocMap;
 use regalloc::{InstRegUses, Set};
 use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, NUM_REG_CLASSES};
 
+use alloc::vec::Vec;
 use smallvec::SmallVec;
 use std::mem;
 use std::string::{String, ToString};
-use std::sync::Once;
 
 //=============================================================================
 // Registers, the Universe thereof, and printing
@@ -2214,5 +2214,33 @@ impl ShowWithRRU for Inst {
                 first.show_rru(mb_rru) + " ; " + &second.show_rru(mb_rru)
             }
         }
+    }
+}
+
+#[cfg(test)]
+use crate::isa::test_utils;
+
+#[test]
+fn test_arm64_binemit() {
+    let mut insns = Vec::<(Inst, &str, &str)>::new();
+
+    insns.push((Inst::Ret {}, "C0035FD6", "ret"));
+
+    let rru = create_reg_universe();
+    for (insn, expected_encoding, expected_printing) in insns {
+        println!(
+            "ARM64: {:?}, {}, {}",
+            insn, expected_encoding, expected_printing
+        );
+
+        // Check the printed text is as expected.
+        let actual_printing = insn.show_rru(Some(&rru));
+        assert_eq!(expected_printing, actual_printing);
+
+        // Check the encoding is as expected.
+        let mut sink = test_utils::TestCodeSink::new();
+        insn.emit(&mut sink);
+        let actual_encoding = &sink.stringify();
+        assert_eq!(expected_encoding, actual_encoding);
     }
 }

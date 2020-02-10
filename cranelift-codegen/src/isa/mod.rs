@@ -87,6 +87,9 @@ mod encoding;
 pub mod registers;
 mod stack;
 
+#[cfg(test)]
+mod test_utils;
+
 /// Represents a backend: either an old-style `Builder` for a `TargetIsa`, or a
 /// new `MachBackend`.
 pub enum IsaBackend {
