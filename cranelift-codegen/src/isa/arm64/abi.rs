@@ -315,7 +315,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         insts.push(Inst::StoreP64 {
             rt: fp_reg(),
             rt2: link_reg(),
-            mem: PairMemArg::PreIndexed(stack_reg(), SImm7::maybe_from_i64(-16).unwrap()),
+            mem: PairMemArg::PreIndexed(stack_reg(), SImm7::maybe_from_i64(-16 / 8).unwrap()),
         });
         // mov fp (x29), sp
         insts.push(Inst::Mov {
@@ -363,7 +363,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
             insts.push(Inst::StoreP64 {
                 rt: r1,
                 rt2: r2,
-                mem: PairMemArg::PreIndexed(stack_reg(), SImm7::maybe_from_i64(-16).unwrap()),
+                mem: PairMemArg::PreIndexed(stack_reg(), SImm7::maybe_from_i64(-16 / 8).unwrap()),
             });
         }
 
@@ -385,7 +385,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
             insts.push(Inst::LoadP64 {
                 rt: r1,
                 rt2: r2,
-                mem: PairMemArg::PostIndexed(stack_reg(), SImm7::maybe_from_i64(16).unwrap()),
+                mem: PairMemArg::PostIndexed(stack_reg(), SImm7::maybe_from_i64(16 / 8).unwrap()),
             });
         }
 
@@ -403,7 +403,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         insts.push(Inst::LoadP64 {
             rt: fp_reg(),
             rt2: link_reg(),
-            mem: PairMemArg::PostIndexed(stack_reg(), SImm7::maybe_from_i64(16).unwrap()),
+            mem: PairMemArg::PostIndexed(stack_reg(), SImm7::maybe_from_i64(16 / 8).unwrap()),
         });
         insts.push(Inst::Ret {});
         insts

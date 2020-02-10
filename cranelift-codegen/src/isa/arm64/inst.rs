@@ -160,7 +160,6 @@ fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, is32: bool) -> St
         return s;
     }
 
-    let mut s = reg.show_rru(mb_rru);
     if reg.is_real() {
         // Change (eg) "x42" into "w42" as appropriate
         if reg.get_class() == RegClass::I64 && is32 && s.starts_with("x") {
@@ -193,6 +192,16 @@ impl SImm7 {
             None
         }
     }
+
+    /// Create a zero immediate of this format.
+    pub fn zero() -> SImm7 {
+        SImm7 { bits: 0 }
+    }
+
+    /// Bits for encoding.
+    pub fn bits(&self) -> u32 {
+        (self.bits as u32) & 0x7f
+    }
 }
 
 /// a 9-bit signed offset.
@@ -209,6 +218,16 @@ impl SImm9 {
         } else {
             None
         }
+    }
+
+    // Create a zero immediate of this format.
+    pub fn zero() -> SImm9 {
+        SImm9 { bits: 0 }
+    }
+
+    /// Bits for encoding.
+    pub fn bits(&self) -> u32 {
+        (self.bits as u32) & 0x1ff
     }
 }
 
@@ -234,6 +253,11 @@ impl UImm12Scaled {
         } else {
             None
         }
+    }
+
+    /// Encoded bits.
+    pub fn bits(&self) -> u32 {
+        (self.bits as u32) & 0xfff
     }
 }
 
@@ -489,8 +513,6 @@ pub enum MemLabel {
     ConstantPool(ConstantOffset),
     /// A value in a constant pool, to be emitted during binemit.
     ConstantData(ConstantData),
-    Function(FuncRef),
-    GlobalValue(GlobalValue),
 }
 
 /// A memory argument to load/store, encapsulating the possible addressing modes.
@@ -1275,13 +1297,49 @@ enum MoveWideOpcode {
     MOVZ = 0b10,
 }
 
-fn enc_move_wide(opc: MoveWideOpcode, rd: Reg, imm: MoveWideConst) -> u32 {
+fn enc_move_wide(op: MoveWideOpcode, rd: Reg, imm: MoveWideConst) -> u32 {
     assert!(imm.shift <= 0b11);
     MOVE_WIDE_FIXED
-        | (opc as u32) << 29
+        | (op as u32) << 29
         | (imm.shift as u32) << 21
         | (imm.bits as u32) << 5
         | machreg_to_gpr(rd)
+}
+
+fn enc_ldst_pair(op_31_22: u32, simm7: SImm7, rn: Reg, rt: Reg, rt2: Reg) -> u32 {
+    (op_31_22 << 22)
+        | (simm7.bits() << 15)
+        | (machreg_to_gpr(rt2) << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rt)
+}
+
+fn enc_ldst_simm9(op_31_22: u32, simm9: SImm9, op_11_10: u32, rn: Reg, rd: Reg) -> u32 {
+    (op_31_22 << 22)
+        | (simm9.bits() << 12)
+        | (op_11_10 << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd)
+}
+
+fn enc_ldst_uimm12(op_31_22: u32, uimm12: UImm12Scaled, rn: Reg, rd: Reg) -> u32 {
+    (op_31_22 << 22) | (uimm12.bits() << 10) | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd)
+}
+
+fn enc_ldst_reg(op_31_22: u32, rm: Reg, rn: Reg, s_bit: bool, rd: Reg) -> u32 {
+    let s_bit = if s_bit { 1 } else { 0 };
+    (op_31_22 << 22)
+        | (1 << 21)
+        | (machreg_to_gpr(rm) << 16)
+        | (0b011 << 13)
+        | (s_bit << 12)
+        | (0b10 << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd)
+}
+
+fn enc_ldst_imm19(op_31_24: u32, imm19: u32, rd: Reg) -> u32 {
+    (op_31_24 << 24) | (imm19 << 5) | machreg_to_gpr(rd)
 }
 
 impl<CS: CodeSink> MachInstEmit<CS> for Inst {
@@ -1354,43 +1412,75 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 ..
             } => unimplemented!(),
 
-            &Inst::ULoad8 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            }
-            | &Inst::SLoad8 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            }
-            | &Inst::ULoad16 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            }
-            | &Inst::SLoad16 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            }
-            | &Inst::ULoad32 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            }
-            | &Inst::SLoad32 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            }
-            | &Inst::ULoad64 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            } => {
-                // TODO.
-                sink.put4(0);
+            &Inst::ULoad8 { rd, ref mem }
+            | &Inst::SLoad8 { rd, ref mem }
+            | &Inst::ULoad16 { rd, ref mem }
+            | &Inst::SLoad16 { rd, ref mem }
+            | &Inst::ULoad32 { rd, ref mem }
+            | &Inst::SLoad32 { rd, ref mem }
+            | &Inst::ULoad64 { rd, ref mem } => {
+                // This is the base opcode (top 11 bits) for the "unscaled
+                // immediate" form (BaseSImm9). Other addressing modes will OR in
+                // other values for bits 24/25 (bits 1/2 of this constant).
+                let op = match self {
+                    &Inst::ULoad8 { .. } => 0b0011100001,
+                    &Inst::SLoad8 { .. } => 0b0011100010,
+                    &Inst::ULoad16 { .. } => 0b0111100001,
+                    &Inst::SLoad16 { .. } => 0b0111100010,
+                    &Inst::ULoad32 { .. } => 0b1011100001,
+                    &Inst::SLoad32 { .. } => 0b1011100010,
+                    &Inst::ULoad64 { .. } => 0b1111100001,
+                    _ => unreachable!(),
+                };
+                match mem {
+                    &MemArg::Base(reg) => {
+                        sink.put4(enc_ldst_simm9(op, SImm9::zero(), 0b00, reg, rd));
+                    }
+                    &MemArg::BaseSImm9(reg, simm9) => {
+                        sink.put4(enc_ldst_simm9(op, simm9, 0b00, reg, rd));
+                    }
+                    &MemArg::BaseUImm12Scaled(reg, uimm12scaled) => {
+                        sink.put4(enc_ldst_uimm12(op | 0b01, uimm12scaled, reg, rd));
+                    }
+                    &MemArg::BasePlusReg(r1, r2) => {
+                        sink.put4(enc_ldst_reg(op | 0b01, r1, r2, /* S = */ false, rd));
+                    }
+                    &MemArg::BasePlusRegScaled(r1, r2, _ty) => {
+                        sink.put4(enc_ldst_reg(op | 0b01, r1, r2, /* S = */ true, rd));
+                    }
+                    &MemArg::Label(ref label) => {
+                        let offset = match label {
+                            &MemLabel::ConstantPool(off) => off,
+                            &MemLabel::ConstantData(..) => {
+                                // Should only happen when computing size --
+                                // ConstantData refs are converted to
+                                // ConstantPool refs once the data itself is
+                                // collected and allocated into the constant
+                                // pool.
+                                0
+                            }
+                        };
+                        assert!(offset < (1 << 19));
+                        match self {
+                            &Inst::ULoad32 { .. } => {
+                                sink.put4(enc_ldst_imm19(0b00011000, offset, rd));
+                            }
+                            &Inst::SLoad32 { .. } => {
+                                sink.put4(enc_ldst_imm19(0b10011000, offset, rd));
+                            }
+                            &Inst::ULoad64 { .. } => {
+                                sink.put4(enc_ldst_imm19(0b01011000, offset, rd));
+                            }
+                            _ => panic!("Unspported size for LDR from constant pool!"),
+                        }
+                    }
+                    &MemArg::PreIndexed(reg, simm9) => {
+                        sink.put4(enc_ldst_simm9(op, simm9, 0b11, reg, rd));
+                    }
+                    &MemArg::PostIndexed(reg, simm9) => {
+                        sink.put4(enc_ldst_simm9(op, simm9, 0b01, reg, rd));
+                    }
+                }
             }
 
             &Inst::Store8 {
@@ -1417,14 +1507,34 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 sink.put4(0);
             }
 
-            &Inst::StoreP64 { .. } => {
-                // TODO.
-                sink.put4(0);
-            }
-            &Inst::LoadP64 { .. } => {
-                // TODO.
-                sink.put4(0);
-            }
+            &Inst::StoreP64 { rt, rt2, ref mem } => match mem {
+                &PairMemArg::Base(reg) => {
+                    sink.put4(enc_ldst_pair(0b1010100100, SImm7::zero(), reg, rt, rt2));
+                }
+                &PairMemArg::BaseSImm7(reg, simm7) => {
+                    sink.put4(enc_ldst_pair(0b1010100100, simm7, reg, rt, rt2));
+                }
+                &PairMemArg::PreIndexed(reg, simm7) => {
+                    sink.put4(enc_ldst_pair(0b1010100110, simm7, reg, rt, rt2));
+                }
+                &PairMemArg::PostIndexed(reg, simm7) => {
+                    sink.put4(enc_ldst_pair(0b1010100010, simm7, reg, rt, rt2));
+                }
+            },
+            &Inst::LoadP64 { rt, rt2, ref mem } => match mem {
+                &PairMemArg::Base(reg) => {
+                    sink.put4(enc_ldst_pair(0b1010100101, SImm7::zero(), reg, rt, rt2));
+                }
+                &PairMemArg::BaseSImm7(reg, simm7) => {
+                    sink.put4(enc_ldst_pair(0b1010100101, simm7, reg, rt, rt2));
+                }
+                &PairMemArg::PreIndexed(reg, simm7) => {
+                    sink.put4(enc_ldst_pair(0b1010100111, simm7, reg, rt, rt2));
+                }
+                &PairMemArg::PostIndexed(reg, simm7) => {
+                    sink.put4(enc_ldst_pair(0b1010100011, simm7, reg, rt, rt2));
+                }
+            },
             &Inst::Mov { rd, rm } => {
                 // Encoded as ORR rd, rm, zero.
                 sink.put4(enc_arith_rrr(0b10101010_000, 0b000_000, rd, zero_reg(), rm));
@@ -1692,6 +1802,10 @@ impl ShowWithRRU for SImm7 {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         format!("#{}", self.bits)
     }
+
+    fn show_rru_sized(&self, _mb_rru: Option<&RealRegUniverse>, size: u8) -> String {
+        format!("#{}", self.bits * (size as i16))
+    }
 }
 
 impl ShowWithRRU for SImm9 {
@@ -1743,8 +1857,6 @@ impl ShowWithRRU for MemLabel {
             &MemLabel::ConstantPool(off) => format!("const_{}", off),
             // Should be resolved into an offset before we pretty-print.
             &MemLabel::ConstantData(..) => "!!constant!!".to_string(),
-            &MemLabel::Function(..) => "!!function!!".to_string(),
-            &MemLabel::GlobalValue(..) => "!!globalvalue!!".to_string(),
         }
     }
 }
@@ -1807,6 +1919,27 @@ impl ShowWithRRU for PairMemArg {
             &PairMemArg::PostIndexed(reg, simm7) => {
                 format!("[{}], {}", reg.show_rru(mb_rru), simm7.show_rru(mb_rru))
             }
+        }
+    }
+
+    fn show_rru_sized(&self, mb_rru: Option<&RealRegUniverse>, size: u8) -> String {
+        match self {
+            &PairMemArg::Base(reg) => format!("[{}]", reg.show_rru(mb_rru)),
+            &PairMemArg::BaseSImm7(reg, simm7) => format!(
+                "[{}, {}]",
+                reg.show_rru(mb_rru),
+                simm7.show_rru_sized(mb_rru, size)
+            ),
+            &PairMemArg::PreIndexed(reg, simm7) => format!(
+                "[{}, {}]!",
+                reg.show_rru(mb_rru),
+                simm7.show_rru_sized(mb_rru, size)
+            ),
+            &PairMemArg::PostIndexed(reg, simm7) => format!(
+                "[{}], {}",
+                reg.show_rru(mb_rru),
+                simm7.show_rru_sized(mb_rru, size)
+            ),
         }
     }
 }
@@ -1942,6 +2075,7 @@ impl ShowWithRRU for Inst {
                     &Inst::ULoad64 { .. } => ("ldr", false),
                     _ => unreachable!(),
                 };
+                // TODO: LDUR* variants when "unscaled" (SImm9) offset.
                 let rd = show_ireg_sized(rd, mb_rru, is32);
                 let mem = mem.show_rru(mb_rru);
                 format!("{} {}, {}", op, rd, mem)
@@ -1964,13 +2098,13 @@ impl ShowWithRRU for Inst {
             &Inst::StoreP64 { rt, rt2, ref mem } => {
                 let rt = rt.show_rru(mb_rru);
                 let rt2 = rt2.show_rru(mb_rru);
-                let mem = mem.show_rru(mb_rru);
+                let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
                 format!("stp {}, {}, {}", rt, rt2, mem)
             }
             &Inst::LoadP64 { rt, rt2, ref mem } => {
                 let rt = rt.show_rru(mb_rru);
                 let rt2 = rt2.show_rru(mb_rru);
-                let mem = mem.show_rru(mb_rru);
+                let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
                 format!("ldp {}, {}, {}", rt, rt2, mem)
             }
             &Inst::Mov { rd, rm } => {
