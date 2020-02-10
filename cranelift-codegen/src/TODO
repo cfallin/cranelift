@@ -1,8 +1,8 @@
 TODO:
 
 - Testing:
-  - Unit-test framework: (i) vcode, (ii) insts in pseudo-textual form, (iii)
-    machine code bytes.
+  - Unit-test framework for encoding and binemit: (i) vcode, (ii) insts in
+    pseudo-textual form, (iii) machine code bytes.
 
 - Function ABI:
   - caller side
@@ -10,16 +10,15 @@ TODO:
       call; move retvals out
 
 - Binary emission
-  - Load and store ops
   - Constant pool? Need MemArg resolution just prior to emission (when we know
-    the constant-pool offset)
+    the constant-pool offset) -- do this using the SizeCodeSink
   - Resolve relocations: GlobalValue, Function (multiple-insn seq for address?)
+  - Frontend option to jump to generated code (for execution tests)
 
 - ISA completeness:
   - ImmLogic: implement the algorithm to determine whether an immediate can be
     encoded as a logical immediate.
-  - Add opcodes to lowering. ALU, loads/stores, control flow. All integer
-    instruction set.
+  - Add opcodes to lowering. Full integer/ALU instruction set.
   - 8/16-bit ops? Widening for legalization?
 
 - Limits (handle gracefully / return error from lowering)
@@ -54,11 +53,13 @@ TODO:
 
 Milestones:
 
-- M0: codegen a leaf function (no calls) with only integer add/sub, load/store,
+- (X) M0: codegen a leaf function (no calls) with only integer add/sub, load/store,
   and control flow. No prologue or epilogue.
 
-- M1: function ABI. Support function arguments and return value. Save clobbered
-  registers. Support calls to other functions, saving caller-saved regs.
+- (X) M1: function ABI. Support function arguments and return value. Save clobbered
+  registers.
+
+- M1.5: Support calls to other functions, saving caller-saved regs.
 
 - M2: fill out the integer instruction set. Support all Cranelift ops that are
   not FP or vector-related.

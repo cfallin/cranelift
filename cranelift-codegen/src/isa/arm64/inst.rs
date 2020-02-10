@@ -1419,7 +1419,7 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem } => {
-                // This is the base opcode (top 11 bits) for the "unscaled
+                // This is the base opcode (top 10 bits) for the "unscaled
                 // immediate" form (BaseSImm9). Other addressing modes will OR in
                 // other values for bits 24/25 (bits 1/2 of this constant).
                 let op = match self {
@@ -1483,28 +1483,43 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                 }
             }
 
-            &Inst::Store8 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            }
-            | &Inst::Store16 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            }
-            | &Inst::Store32 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            }
-            | &Inst::Store64 {
-                rd: _,
-                /*ref*/ mem: _,
-                ..
-            } => {
-                // TODO.
-                sink.put4(0);
+            &Inst::Store8 { rd, ref mem }
+            | &Inst::Store16 { rd, ref mem }
+            | &Inst::Store32 { rd, ref mem }
+            | &Inst::Store64 { rd, ref mem } => {
+                let op = match self {
+                    &Inst::Store8 { .. } => 0b0011100000,
+                    &Inst::Store16 { .. } => 0b0111100000,
+                    &Inst::Store32 { .. } => 0b1011100000,
+                    &Inst::Store64 { .. } => 0b1111100000,
+                    _ => unreachable!(),
+                };
+                match mem {
+                    &MemArg::Base(reg) => {
+                        sink.put4(enc_ldst_simm9(op, SImm9::zero(), 0b00, reg, rd));
+                    }
+                    &MemArg::BaseSImm9(reg, simm9) => {
+                        sink.put4(enc_ldst_simm9(op, simm9, 0b00, reg, rd));
+                    }
+                    &MemArg::BaseUImm12Scaled(reg, uimm12scaled) => {
+                        sink.put4(enc_ldst_uimm12(op | 0b01, uimm12scaled, reg, rd));
+                    }
+                    &MemArg::BasePlusReg(r1, r2) => {
+                        sink.put4(enc_ldst_reg(op | 0b01, r1, r2, /* S = */ false, rd));
+                    }
+                    &MemArg::BasePlusRegScaled(r1, r2, _ty) => {
+                        sink.put4(enc_ldst_reg(op | 0b01, r1, r2, /* S = */ true, rd));
+                    }
+                    &MemArg::Label(..) => {
+                        panic!("Store to a constant-pool entry not allowed!");
+                    }
+                    &MemArg::PreIndexed(reg, simm9) => {
+                        sink.put4(enc_ldst_simm9(op, simm9, 0b11, reg, rd));
+                    }
+                    &MemArg::PostIndexed(reg, simm9) => {
+                        sink.put4(enc_ldst_simm9(op, simm9, 0b01, reg, rd));
+                    }
+                }
             }
 
             &Inst::StoreP64 { rt, rt2, ref mem } => match mem {

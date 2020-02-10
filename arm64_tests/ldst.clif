@@ -8,5 +8,9 @@ block0(v0: i64):
   v5 = uload16.i64 v0
   v6 = sload8.i64 v0
   v7 = uload8.i64 v0
+  store.i64 v1, v0
+  istore32 v2, v0
+  istore16 v4, v0
+  istore8 v6, v0
   return v0
 }

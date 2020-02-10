@@ -317,10 +317,16 @@ impl ABIBody<Inst> for ARM64ABIBody {
             rt2: link_reg(),
             mem: PairMemArg::PreIndexed(stack_reg(), SImm7::maybe_from_i64(-16 / 8).unwrap()),
         });
-        // mov fp (x29), sp
-        insts.push(Inst::Mov {
+        // mov fp (x29), sp. This uses the ADDI rd, rs, 0 form of `MOV` because
+        // the usual encoding (`ORR`) does not work with SP.
+        insts.push(Inst::AluRRImm12 {
+            alu_op: ALUOp::Add64,
             rd: fp_reg(),
-            rm: stack_reg(),
+            rn: stack_reg(),
+            imm12: Imm12 {
+                bits: 0,
+                shift12: false,
+            },
         });
 
         if total_stacksize > 0 {
