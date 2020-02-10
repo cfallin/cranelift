@@ -474,7 +474,7 @@ impl ShowWithRRU for RM {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 // Some basic ALU operations.  TODO: maybe add Adc, Sbb.
 pub enum RMI_R_Op {
     Add,
@@ -1307,6 +1307,9 @@ fn iregEnc(reg: Reg) -> u8 {
     reg.get_hw_encoding()
 }
 
+// Flags that describe special handling of the REX prefix.
+const F_NONE: u32 = 0;
+
 // Emit the REX prefix byte even if it appears to be redundant (== 0x40).
 const F_RETAIN_REDUNDANT_REX: u32 = 1;
 
@@ -1361,8 +1364,8 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
             // Now the opcode(s).  These include any other prefixes the caller
             // hands to us.
             while numOpcodes > 0 {
-                sink.put1(((opcodes >> (numOpcodes << 3)) & 0xFF) as u8);
                 numOpcodes -= 1;
+                sink.put1(((opcodes >> (numOpcodes << 3)) & 0xFF) as u8);
             }
             // Now the mod/rm and associated immediates.  This is
             // significantly complicated due to the multiple special cases.
@@ -1373,6 +1376,9 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
                 && encE != ENC_R13
             {
                 sink.put1(mkModRegRM(0, encG & 7, encE & 7));
+            } else if *simm32 == 0 && (encE == ENC_RSP || encE == ENC_R12) {
+                sink.put1(mkModRegRM(0, encG & 7, 4));
+                sink.put1(0x24);
             } else if fitsIn8bits(*simm32) && encE != ENC_RSP && encE != ENC_R12 {
                 sink.put1(mkModRegRM(1, encG & 7, encE & 7));
                 sink.put1((simm32 & 0xFF) as u8);
@@ -1384,8 +1390,8 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
                 sink.put1(mkModRegRM(1, encG & 7, 4));
                 sink.put1(0x24);
                 sink.put1((simm32 & 0xFF) as u8);
-            } else if encE == ENC_R12 {
-                // || encE == ENC_RSP .. wait for test case for RSP case
+            } else if encE == ENC_R12 || encE == ENC_RSP {
+                //.. wait for test case for RSP case
                 // REX.B distinguishes RSP from R12
                 sink.put1(mkModRegRM(2, encG & 7, 4));
                 sink.put1(0x24);
@@ -1414,8 +1420,8 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
             }
             // All other prefixes and opcodes
             while numOpcodes > 0 {
-                sink.put1(((opcodes >> (numOpcodes << 3)) & 0xFF) as u8);
                 numOpcodes -= 1;
+                sink.put1(((opcodes >> (numOpcodes << 3)) & 0xFF) as u8);
             }
             // modrm, SIB, immediates
             if fitsIn8bits(*simm32) && encIndex != ENC_RSP {
@@ -1464,8 +1470,8 @@ fn emit_REX_OPCODES_MODRM_for_EncG_EncE<CS: CodeSink>(
     }
     // All other prefixes and opcodes
     while numOpcodes > 0 {
-        sink.put1(((opcodes >> (numOpcodes << 3)) & 0xFF) as u8);
         numOpcodes -= 1;
+        sink.put1(((opcodes >> (numOpcodes << 3)) & 0xFF) as u8);
     }
     // Now the mod/rm byte.  The instruction we're generating doesn't access
     // memory, so there is no SIB byte or immediate -- we're done.
@@ -1478,8 +1484,8 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_RegG_MemE<CS: CodeSink>(
     sink: &mut CS,
     opcodes: u32,
     numOpcodes: usize,
-    memE: &Addr,
     regG: Reg,
+    memE: &Addr,
     flags: u32,
 ) {
     // JRS FIXME 2020Feb07: this should really just be |regEnc| not |iregEnc|
@@ -1501,8 +1507,72 @@ fn emit_REX_OPCODES_MODRM_for_RegG_RegE<CS: CodeSink>(
     emit_REX_OPCODES_MODRM_for_EncG_EncE(sink, opcodes, numOpcodes, encG, encE, flags);
 }
 
+// The top-level emit function.
 fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
     match inst {
+        Inst::Alu_RMI_R {
+            is64,
+            op,
+            src: srcE,
+            dst: regG,
+        } => {
+            if *op == RMI_R_Op::Mul {
+                // We kinda freeloaded Mul into RMI_R_Op, but it doesn't fit
+                // the usual pattern, so we have to special-case it.
+                panic!("unimplemented")
+            } else {
+                let flags = if *is64 { F_NONE } else { F_CLEAR_W_BIT };
+                let (opcode_rm, opcode_rr) = match op {
+                    RMI_R_Op::Add => (0x03, 0x01),
+                    RMI_R_Op::Sub => (0x2B, 0x29),
+                    RMI_R_Op::And => (0x23, 0x21),
+                    RMI_R_Op::Or => (0x0B, 0x09),
+                    RMI_R_Op::Xor => (0x33, 0x31),
+                    RMI_R_Op::Mul => panic!("unreachable"),
+                };
+                match srcE {
+                    RMI::R { reg: regE } => {
+                        // Note.  The arguments .. regE .. regG .. sequence
+                        // here is the opposite of what is expected.  I'm not
+                        // sure why this is.  But I am fairly sure that the
+                        // arg order could be switched back to the expected
+                        // .. regG .. regE .. if opcode_rr is also switched
+                        // over to the "other" basic integer opcode (viz, the
+                        // R/RM vs RM/R duality).  However, that would mean
+                        // that the test results won't be in accordance with
+                        // the GNU as reference output.  In other words, the
+                        // inversion exists as a result of using GNU as as a
+                        // gold standard.
+                        emit_REX_OPCODES_MODRM_for_RegG_RegE(
+                            sink, opcode_rr, 1, *regE, *regG, flags,
+                        );
+                    }
+                    _ => panic!("unimplemented"),
+                }
+            }
+        }
+        Inst::Imm_R {
+            dstIs64,
+            simm64,
+            dst,
+        } => {
+            let encDst = iregEnc(*dst);
+            if *dstIs64 {
+                // FIXME JRS 2020Feb10: also use the 32-bit case here when possible
+                sink.put1(0x48 | ((encDst >> 3) & 1));
+                sink.put1(0xB8 | (encDst & 7));
+                sink.put8(*simm64);
+            } else {
+                if ((encDst >> 3) & 1) == 1 {
+                    sink.put1(0x41);
+                }
+                sink.put1(0xB8 | (encDst & 7));
+                sink.put4(*simm64 as u32);
+            }
+        }
+        Inst::Mov64_M_R { addr, dst } => {
+            emit_REX_OPCODES_MODRM_SIB_IMM_for_RegG_MemE(sink, 0x8B, 1, *dst, addr, F_NONE)
+        }
         Inst::Ret {} => sink.put1(0xC3),
         _ => panic!("x64_emit"),
     }
