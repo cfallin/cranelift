@@ -5,10 +5,12 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-use crate::binemit::{CodeOffset, CodeSink};
+use crate::binemit::{Addend, CodeOffset, CodeSink, Reloc};
 //zz use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
-use crate::ir::{FuncRef, GlobalValue, Type};
+use crate::ir::{ConstantOffset, ExternalName, Function, JumpTable, SourceLoc, TrapCode};
+use crate::ir::{FuncRef, GlobalValue, Type, Value};
+use crate::isa::TargetIsa;
 use crate::machinst::*;
 
 use regalloc::InstRegUses;
@@ -1499,8 +1501,11 @@ fn emit_REX_OPCODES_MODRM_for_RegG_RegE<CS: CodeSink>(
     emit_REX_OPCODES_MODRM_for_EncG_EncE(sink, opcodes, numOpcodes, encG, encE, flags);
 }
 
-fn x64_emit<CS: CodeSink>(_inst: &Inst, _sink: &mut CS) {
-    unimplemented!()
+fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
+    match inst {
+        Inst::Ret {} => sink.put1(0xC3),
+        _ => panic!("x64_emit"),
+    }
 }
 
 //=============================================================================
@@ -1590,12 +1595,86 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
 // for this specific case:
 //
 // (cd cranelift-codegen && \
-// RUST_BACKTRACE=1 cargo test isa::x64::inst::test_x64_insn_encoding_and_printing \
-//                             -- --nocapture)
+// RUST_BACKTRACE=1 \
+//       cargo test isa::x64::inst::test_x64_insn_encoding_and_printing \
+//                  -- --nocapture)
 
 #[cfg(test)]
 mod test_utils {
     use super::*;
+    use super::{Addend, CodeOffset, CodeSink, Reloc};
+
+    pub struct TestCodeSink {
+        bytes: Vec<u8>,
+    }
+
+    impl TestCodeSink {
+        /// Create a new TestCodeSink.
+        pub fn new() -> TestCodeSink {
+            TestCodeSink { bytes: vec![] }
+        }
+
+        /// Return the size of emitted code so far.
+        pub fn size(&self) -> usize {
+            self.bytes.len()
+        }
+
+        /// This is pretty lame, but whatever ..
+        pub fn stringify(&self) -> String {
+            let mut s = "".to_string();
+            for b in &self.bytes {
+                s = s + &format!("{:02X}", b).to_string();
+            }
+            s
+        }
+    }
+
+    impl CodeSink for TestCodeSink {
+        fn offset(&self) -> CodeOffset {
+            unimplemented!()
+        }
+
+        fn put1(&mut self, x: u8) {
+            self.bytes.push(x);
+        }
+
+        fn put2(&mut self, x: u16) {
+            self.bytes.push((x >> 0) as u8);
+            self.bytes.push((x >> 8) as u8);
+        }
+
+        fn put4(&mut self, mut x: u32) {
+            for _ in 0..4 {
+                self.bytes.push(x as u8);
+                x >>= 8;
+            }
+        }
+
+        fn put8(&mut self, mut x: u64) {
+            for _ in 0..8 {
+                self.bytes.push(x as u8);
+                x >>= 8;
+            }
+        }
+
+        fn reloc_block(&mut self, _rel: Reloc, _block_offset: CodeOffset) {}
+
+        fn reloc_external(&mut self, _rel: Reloc, _name: &ExternalName, _addend: Addend) {}
+
+        fn reloc_constant(&mut self, _rel: Reloc, _constant_offset: ConstantOffset) {}
+
+        fn reloc_jt(&mut self, _rel: Reloc, _jt: JumpTable) {}
+
+        fn trap(&mut self, _code: TrapCode, _srcloc: SourceLoc) {}
+
+        fn begin_jumptables(&mut self) {}
+
+        fn begin_rodata(&mut self) {}
+
+        fn end_codegen(&mut self) {}
+
+        fn add_stackmap(&mut self, _val_list: &[Value], _func: &Function, _isa: &dyn TargetIsa) {}
+    }
 }
 
 #[test]
@@ -3608,25 +3687,19 @@ fn test_x64_insn_encoding_and_printing() {
     // Ret
     insns.push((i_Ret(), "C3", "ret"));
 
-    /*
-    insts.push(i_());
-    insts.push(i_());
-    insts.push(i_());
-    insts.push(i_());
-    insts.push(i_());
-    insts.push(i_());
-    insts.push(i_());
-    insts.push(i_());
-    insts.push(i_());
-    */
+    // Actually run the tests
     let rru = create_reg_universe();
-    for (insn, _expected_encoding, expected_printing) in insns {
+    for (insn, expected_encoding, expected_printing) in insns {
         println!("     {}", insn.show_rru(Some(&rru)));
         // Check the printed text is as expected.
         let actual_printing = insn.show_rru(Some(&rru));
         assert_eq!(expected_printing, actual_printing);
+
         // Check the encoding is as expected.
-        // (fill this bit in :-)
+        let mut sink = test_utils::TestCodeSink::new();
+        insn.emit(&mut sink);
+        let actual_encoding = &sink.stringify();
+        assert_eq!(expected_encoding, actual_encoding);
     }
     println!("QQQQ END test_x64_insn_encoding_and_printing");
 }
