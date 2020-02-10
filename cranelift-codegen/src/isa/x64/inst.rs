@@ -480,7 +480,7 @@ pub enum RMI_R_Op {
     And,
     Or,
     Xor,
-    Mul,
+    Mul, // the signless, non-extending (N x N -> N, for N in {32,64}) variant
 }
 impl RMI_R_Op {
     fn to_string(&self) -> String {
@@ -490,7 +490,7 @@ impl RMI_R_Op {
             RMI_R_Op::And => "and".to_string(),
             RMI_R_Op::Or => "or".to_string(),
             RMI_R_Op::Xor => "xor".to_string(),
-            RMI_R_Op::Mul => "mul".to_string(),
+            RMI_R_Op::Mul => "imul".to_string(),
         }
     }
 }
@@ -500,7 +500,7 @@ impl fmt::Debug for RMI_R_Op {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 // These indicate ways of extending (widening) a value, using the Intel
 // naming: B(yte) = u8, W(ord) = u16, L(ong)word = u32, Q(uad)word = u64
 pub enum ExtMode {
@@ -594,7 +594,8 @@ pub enum Inst {
         dst: Reg,
     },
 
-    /// (imm32 imm64) reg
+    /// (imm32 imm64) reg.
+    /// Either: movl $imm32, %reg32 or movabsq $imm64, %reg32
     Imm_R {
         dstIs64: bool,
         simm64: i64,
@@ -608,7 +609,10 @@ pub enum Inst {
         dst: Reg,
     },
 
-    /// movz (bl bq wl wq lq) addr reg (good for all ZX loads except 64->64)
+    /// movz (bl bq wl wq lq) addr reg (good for all ZX loads except 64->64).
+    /// Note that the lq variant doesn't really exist since the default
+    /// zero-extend rule makes it unnecessary.  For that case we emit the
+    /// equivalent "movl AM, reg32".
     MovZX_M_R {
         extMode: ExtMode,
         addr: Addr,
@@ -650,9 +654,8 @@ pub enum Inst {
         dst: Reg,
     },
 
-    /// push (l q) (reg addr imm)
-    Push {
-        is64: bool,
+    /// pushq (reg addr imm)
+    Push64 {
         src: RMI,
     },
 
@@ -682,6 +685,10 @@ pub enum Inst {
     CallUnknown {
         target: RM,
     },
+
+    // ret
+    Ret { }
+
     //zz
     //zz     /// A machine call instruction.
     //zz     Call { dest: FuncRef },
@@ -739,7 +746,7 @@ pub fn i_Alu_RMI_R(is64: bool, op: RMI_R_Op, src: RMI, dst: Reg) -> Inst {
 
 pub fn i_Imm_R(dstIs64: bool, simm64: i64, dst: Reg) -> Inst {
     if !dstIs64 {
-        debug_assert!(fitsIn32bits(simm64));
+        debug_assert!(simm64 >= 0 && simm64 < 0xFFFF_FFFF);
     }
     Inst::Imm_R {
         dstIs64,
@@ -797,8 +804,8 @@ pub fn i_Cmp_RMI_R(
     Inst::Cmp_RMI_R { size, src, dst }
 }
 
-pub fn i_Push(is64: bool, src: RMI) -> Inst {
-    Inst::Push { is64, src }
+pub fn i_Push64(src: RMI) -> Inst {
+    Inst::Push64 { src }
 }
 
 pub fn i_JmpKnown(simm32: i32) -> Inst {
@@ -823,6 +830,10 @@ pub fn i_CallKnown(target: FuncRef) -> Inst {
 
 pub fn i_CallUnknown(target: RM) -> Inst {
     Inst::CallUnknown { target }
+}
+
+pub fn i_Ret() -> Inst {
+    Inst::Ret { }
 }
 
 //=============================================================================
@@ -891,15 +902,25 @@ impl ShowWithRRU for Inst {
             Inst::Mov_R_R { is64, src, dst } => format!(
                 "{} {}, {}",
                 ljustify2("mov".to_string(), suffixLQ(*is64)),
-                src.show_rru_sized(mb_rru, sizeLQ(*is64)),
-                dst.show_rru_sized(mb_rru, sizeLQ(*is64))
+                show_ireg_sized(*src, mb_rru, sizeLQ(*is64)),
+                show_ireg_sized(*dst, mb_rru, sizeLQ(*is64))
             ),
-            Inst::MovZX_M_R { extMode, addr, dst } => format!(
-                "{} {}, {}",
-                ljustify2("movz".to_string(), extMode.to_string()),
-                addr.show_rru(mb_rru),
-                show_ireg_sized(*dst, mb_rru, extMode.dst_size())
-            ),
+            Inst::MovZX_M_R { extMode, addr, dst } =>
+                if *extMode == ExtMode::LQ {
+                    format!(
+                        "{} {}, {}",
+                        ljustify("movl".to_string()),
+                        addr.show_rru(mb_rru),
+                        show_ireg_sized(*dst, mb_rru, 4)
+                    )
+                } else {
+                    format!(
+                        "{} {}, {}",
+                        ljustify2("movz".to_string(), extMode.to_string()),
+                        addr.show_rru(mb_rru),
+                        show_ireg_sized(*dst, mb_rru, extMode.dst_size())
+                    )
+                },
             Inst::Mov64_M_R { addr, dst } => format!(
                 "{} {}, {}",
                 ljustify("movq".to_string()),
@@ -945,16 +966,16 @@ impl ShowWithRRU for Inst {
                 src.show_rru_sized(mb_rru, *size),
                 show_ireg_sized(*dst, mb_rru, *size)
             ),
-            Inst::Push { is64, src } => format!(
+            Inst::Push64 { src } => format!(
                 "{} {}",
-                ljustify2("push".to_string(), suffixLQ(*is64)),
-                src.show_rru_sized(mb_rru, sizeLQ(*is64))
+                ljustify("pushq".to_string()),
+                src.show_rru(mb_rru)
             ),
             Inst::JmpKnown { simm32 } => {
                 format!("{} simm32={}", ljustify("jmp".to_string()), *simm32)
             }
             Inst::JmpUnknown { target } => format!(
-                "{} {}",
+                "{} *{}",
                 ljustify("jmp".to_string()),
                 target.show_rru(mb_rru)
             ),
@@ -970,10 +991,11 @@ impl ShowWithRRU for Inst {
             ),
             Inst::CallKnown { target } => format!("{} {:?}", ljustify("call".to_string()), target),
             Inst::CallUnknown { target } => format!(
-                "{} {}",
+                "{} *{}",
                 ljustify("call".to_string()),
                 target.show_rru(mb_rru)
             ),
+            Inst::Ret { } => "ret".to_string()
         }
     }
 }
@@ -1098,7 +1120,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             src.get_regs(&mut iru.used);
             iru.used.insert(*dst); // yes, really |iru.used|
         }
-        Inst::Push { is64: _, src } => {
+        Inst::Push64 { src } => {
             src.get_regs(&mut iru.used);
             iru.modified.insert(reg_RSP());
         }
@@ -1117,7 +1139,8 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
         }
         Inst::CallUnknown { target } => {
             target.get_regs(&mut iru.used);
-        }
+        },
+        Inst::Ret { } => { }
     }
 
     // Enforce invariants described above.
@@ -1267,8 +1290,7 @@ fn x64_map_regs(
             src.apply_map(pre_map);
             apply_map(dst, pre_map); // yes, really |pre_map|
         }
-        Inst::Push {
-            is64: _,
+        Inst::Push64 {
             ref mut src,
         } => {
             src.apply_map(pre_map);
@@ -1285,7 +1307,8 @@ fn x64_map_regs(
         Inst::CallKnown { target: _ } => {}
         Inst::CallUnknown { target } => {
             target.apply_map(pre_map);
-        }
+        },
+        Inst::Ret { } => { }
     }
 }
 
@@ -1328,6 +1351,8 @@ const F_RETAIN_REDUNDANT_REX: u32 = 1;
 // indicating a 64-bit operation.
 const F_CLEAR_W_BIT: u32 = 2;
 
+// This is the core 'emit' function for instructions that reference memory.
+//
 // For an instruction that has as operands a register |encG| and a memory
 // address |memE|, create and emit, first the REX prefix, then caller-supplied
 // opcode byte(s) (|opcodes| and |numOpcodes|), then the MOD/RM byte, then
@@ -1362,11 +1387,11 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
         Addr::IR { simm32, base: regE } => {
             // First, cook up the REX byte.  This is easy.
             let encE = iregEnc(*regE);
-            let W = if clearWBit { 0 } else { 1 };
-            let R = (encG >> 3) & 1;
-            let X = 0;
-            let B = (encE >> 3) & 1;
-            let rex = 0x40 | (W << 3) | (R << 2) | (X << 1) | (B << 0);
+            let w = if clearWBit { 0 } else { 1 };
+            let r = (encG >> 3) & 1;
+            let x = 0;
+            let b = (encE >> 3) & 1;
+            let rex = 0x40 | (w << 3) | (r << 2) | (x << 1) | b;
             if rex != 0x40 || retainRedundant {
                 sink.put1(rex);
             }
@@ -1416,11 +1441,11 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
             let encBase = iregEnc(*regBase);
             let encIndex = iregEnc(*regIndex);
             // The rex byte
-            let W = if clearWBit { 0 } else { 1 };
-            let R = (encG >> 3) & 1;
-            let X = (encIndex >> 3) & 1;
-            let B = (encBase >> 3) & 1;
-            let rex = 0x40 | (W << 3) | (R << 2) | (X << 1) | (B << 0);
+            let w = if clearWBit { 0 } else { 1 };
+            let r = (encG >> 3) & 1;
+            let x = (encIndex >> 3) & 1;
+            let b = (encBase >> 3) & 1;
+            let rex = 0x40 | (w << 3) | (r << 2) | (x << 1) | b;
             if rex != 0x40 || retainRedundant {
                 sink.put1(rex);
             }
@@ -1445,6 +1470,8 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
     }
 }
 
+// This is the core 'emit' function for instructions that reference memory.
+//
 // This is conceptually the same as
 // emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE, except it is for the case
 // where the E operand is a register rather than memory.  Hence it is much
@@ -1464,11 +1491,11 @@ fn emit_REX_OPCODES_MODRM_for_EncG_EncE<CS: CodeSink>(
     let clearWBit = (flags & F_CLEAR_W_BIT) != 0;
     let retainRedundant = (flags & F_RETAIN_REDUNDANT_REX) != 0;
     // The rex byte
-    let W = if clearWBit { 0 } else { 1 };
-    let R = (encG >> 3) & 1;
-    let X = 0;
-    let B = (encE >> 3) & 1;
-    let rex = 0x40 | (W << 3) | (R << 2) | (X << 1) | (B << 0);
+    let w = if clearWBit { 0 } else { 1 };
+    let r = (encG >> 3) & 1;
+    let x = 0;
+    let b = (encE >> 3) & 1;
+    let rex = 0x40 | (w << 3) | (r << 2) | (x << 1) | b;
     if rex != 0x40 || retainRedundant {
         sink.put1(rex);
     }
@@ -1482,7 +1509,7 @@ fn emit_REX_OPCODES_MODRM_for_EncG_EncE<CS: CodeSink>(
     sink.put1(mkModRegRM(3, encG & 7, encE));
 }
 
-// These are merely wrappers for the above two functions that facilitates passing
+// These are merely wrappers for the above two functions that facilitate passing
 // actual |Reg|s rather than their encodings.
 fn emit_REX_OPCODES_MODRM_SIB_IMM_for_RegG_MemE<CS: CodeSink>(
     sink: &mut CS,
@@ -1617,33 +1644,182 @@ fn i_am_a_test() {
     let rsp = info_RSP().0.to_reg();
     let rbp = info_RBP().0.to_reg();
     let r8 = info_R8().0.to_reg();
+    let r9 = info_R9().0.to_reg();
+    let r10 = info_R10().0.to_reg();
+    let r11 = info_R11().0.to_reg();
+    let r12 = info_R12().0.to_reg();
+    let r13 = info_R13().0.to_reg();
+    let r14 = info_R14().0.to_reg();
     let r15 = info_R15().0.to_reg();
 
     let mut insts = Vec::<Inst>::new();
 
-    // Cases aimed at checking Addr-esses
+    // Cases aimed at checking Addr-esses: IR (Imm + Reg)
+    //
+    // offset zero
+    insts.push(i_Mov64_M_R(Addr_IR(0, rax), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, rbx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, rcx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, rdx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, rbp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, rsp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, rsi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, rdi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, r8), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, r9), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, r10), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, r11), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, r12), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, r13), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, r14), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0, r15), rdi));
+    // offset simm8, hi
+    insts.push(i_Mov64_M_R(Addr_IR(127, rax), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, rbx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, rcx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, rdx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, rbp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, rsp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, rsi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, rdi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, r8), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, r9), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, r10), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, r11), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, r12), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, r13), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, r14), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(127, r15), rdi));
+    // offset simm8, lo
+    insts.push(i_Mov64_M_R(Addr_IR(-128, rax), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, rbx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, rcx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, rdx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, rbp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, rsp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, rsi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, rdi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, r8), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, r9), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, r10), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, r11), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, r12), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, r13), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, r14), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-128, r15), rdi));
+    // offset simm32, minimal hi
+    insts.push(i_Mov64_M_R(Addr_IR(128, rax), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, rbx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, rcx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, rdx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, rbp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, rsp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, rsi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, rdi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, r8), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, r9), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, r10), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, r11), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, r12), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, r13), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, r14), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(128, r15), rdi));
+    // offset simm32, minimal lo
+    insts.push(i_Mov64_M_R(Addr_IR(-129, rax), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, rbx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, rcx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, rdx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, rbp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, rsp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, rsi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, rdi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, r8), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, r9), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, r10), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, r11), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, r12), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, r13), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, r14), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-129, r15), rdi));
+    // offset simm32, large hi
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rax), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rbx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rcx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rdx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rbp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rsp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rsi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, rdi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r8), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r9), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r10), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r11), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r12), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r13), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r14), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(0x17732077, r15), rdi));
+    // offset simm32, large lo
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rax), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rbx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rcx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rdx), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rbp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rsp), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rsi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, rdi), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r8), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r9), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r10), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r11), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r12), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r13), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r14), rdi));
+    insts.push(i_Mov64_M_R(Addr_IR(-0x31415927, r15), rdi));
 
-    // Is choice of imm size correct, for the IR form?
-    insts.push(i_Mov64_M_R(Addr_IR(-0x8000_0000, rax), r15));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x81, rax), r15));
-    insts.push(i_Mov64_M_R(Addr_IR(-0x80, rax), r15));
-    insts.push(i_Mov64_M_R(Addr_IR(0x7F, rax), r15));
-    insts.push(i_Mov64_M_R(Addr_IR(0x80, rax), r15));
-    insts.push(i_Mov64_M_R(Addr_IR(0x7FFF_FFFF, rax), r15));
+    // Cases aimed at checking Addr-esses: IRRS (Imm + Reg + (Reg << Shift))
+    // Note these don't check the case where the index reg is RSP, since we
+    // don't encode any of those.
+    //
+    // offset simm8
+    insts.push(i_Mov64_M_R(Addr_IRRS(127, rax, rax, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(127, rdi, rax, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(127, r8,  rax, 2), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(127, r15, rax, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(127, rax, rdi, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(127, rdi, rdi, 2), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(127, r8,  rdi, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(127, r15, rdi, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128, rax, r8, 2), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128, rdi, r8, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128, r8,  r8, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128, r15, r8, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128, rax, r15, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128, rdi, r15, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128, r8,  r15, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-128, r15, r15, 2), r11));
+    // offset simm32
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rax, rax, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rdi, rax, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, r8,  rax, 2), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, r15, rax, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rax, rdi, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, rdi, rdi, 2), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, r8,  rdi, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(0x4f6625be, r15, rdi, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, rax, r8, 2), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, rdi, r8, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, r8,  r8, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, r15, r8, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, rax, r15, 1), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, rdi, r15, 0), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, r8,  r15, 3), r11));
+    insts.push(i_Mov64_M_R(Addr_IRRS(-0x264d1690, r15, r15, 2), r11));
 
-    // Is choice of imm size correct, for the IRRS form?
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x8000_0000, rax, r8, 3), r15));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x81, rax, r8, 3), r15));
-    insts.push(i_Mov64_M_R(Addr_IRRS(-0x80, rax, r8, 3), r15));
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x7F, rax, r8, 3), r15));
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x80, rax, r8, 3), r15));
-    insts.push(i_Mov64_M_R(Addr_IRRS(0x7FFF_FFFF, rax, r8, 3), r15));
-
-    // Check sub-word printing
+    // Check sub-word printing of integer registers
     insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), rdx));
     insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_R(rcx), rdx));
     //
-    insts.push(i_Imm_R(false, -1234567, r15));
+    insts.push(i_Imm_R(false, 1234567, r15));
     insts.push(i_Imm_R(true, 1234567898765, r15));
     //
     insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-0x80, rax), r8));
@@ -1682,16 +1858,274 @@ fn i_am_a_test() {
     insts.push(i_Cmp_RMI_R(4, RMI_I(789), rdx));
     insts.push(i_Cmp_RMI_R(8, RMI_I(-123), rdx));
     //
-    insts.push(i_Push(false, RMI_R(rcx)));
-    insts.push(i_Push(true, RMI_R(rcx)));
-    insts.push(i_Push(false, RMI_M(Addr_IR(0x7FFF_FFFF, rax))));
-    insts.push(i_Push(true, RMI_M(Addr_IR(0x7FFF_FFFF, rax))));
-    insts.push(i_Push(false, RMI_I(123)));
-    insts.push(i_Push(true, RMI_I(456)));
+    insts.push(i_Push64(RMI_R(rcx)));
+    insts.push(i_Push64(RMI_M(Addr_IR(0x7FFF_FFFF, rax))));
+    insts.push(i_Push64(RMI_I(456)));
+
+    // Minimal general tests for each insn.  Don't forget to include cases
+    // that test for removal of redundant REX prefixes.
+    //
+    // Alu_RMI_R
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_R(r15), rdx));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), r8));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), rsi));
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), rdx));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), r8));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), rsi));
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_I(76543210), rdx));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-76543210), r8));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(76543210), rsi));
+    // This is pretty feeble
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Sub, RMI_R(r15), rdx));
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::And, RMI_R(r15), rdx));
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Or, RMI_R(r15), rdx));
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Xor, RMI_R(r15), rdx));
+    // Test all mul cases, though
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_R(r15), rdx));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_R(rcx), r8));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_R(rcx), rsi));
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), rdx));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), r8));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), rsi));
+    insts.push(i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_I(76543210), rdx));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-76543210), r8));
+    insts.push(i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(76543210), rsi));
+    //
+    // Imm_R
+    insts.push(i_Imm_R(false, 1234567, r14));
+    insts.push(i_Imm_R(true, 1234567898765, r14));
+    insts.push(i_Imm_R(false, 1234567, rcx));
+    insts.push(i_Imm_R(true, 1234567898765, rsi));
+    //
+    // Mov_R_R
+    insts.push(i_Mov_R_R(false, rbx, rsi));
+    insts.push(i_Mov_R_R(false, rbx, r9));
+    insts.push(i_Mov_R_R(false, r11, rsi));
+    insts.push(i_Mov_R_R(false, r12, r9));
+    insts.push(i_Mov_R_R(true, rbx, rsi));
+    insts.push(i_Mov_R_R(true, rbx, r9));
+    insts.push(i_Mov_R_R(true, r11, rsi));
+    insts.push(i_Mov_R_R(true, r12, r9));
+    //
+    // MovZX_M_R
+    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7, rcx), rsi));
+    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7, r8), rbx));
+    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7, r10), r9));
+    insts.push(i_MovZX_M_R(ExtMode::BL, Addr_IR(-7, r11), rdx));
+    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7, rcx), rsi));
+    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7, r8), rbx));
+    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7, r10), r9));
+    insts.push(i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7, r11), rdx));
+    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7, rcx), rsi));
+    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7, r8), rbx));
+    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7, r10), r9));
+    insts.push(i_MovZX_M_R(ExtMode::WL, Addr_IR(-7, r11), rdx));
+    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7, rcx), rsi));
+    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7, r8), rbx));
+    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7, r10), r9));
+    insts.push(i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7, r11), rdx));
+    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7, rcx), rsi));
+    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7, r8), rbx));
+    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7, r10), r9));
+    insts.push(i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7, r11), rdx));
+    //
+    // Mov64_M_R
+    insts.push(i_Mov64_M_R(Addr_IRRS(179, rax, rbx, 0), rcx));
+    insts.push(i_Mov64_M_R(Addr_IRRS(179, rax, rbx, 0), r8));
+    insts.push(i_Mov64_M_R(Addr_IRRS(179, rax, r9, 0), rcx));
+    insts.push(i_Mov64_M_R(Addr_IRRS(179, rax, r9, 0), r8));
+    insts.push(i_Mov64_M_R(Addr_IRRS(179, r10, rbx, 0), rcx));
+    insts.push(i_Mov64_M_R(Addr_IRRS(179, r10, rbx, 0), r8));
+    insts.push(i_Mov64_M_R(Addr_IRRS(179, r10, r9, 0), rcx));
+    insts.push(i_Mov64_M_R(Addr_IRRS(179, r10, r9, 0), r8));
+    //
+    // MovSX_M_R
+    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7, rcx), rsi));
+    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7, r8), rbx));
+    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7, r10), r9));
+    insts.push(i_MovSX_M_R(ExtMode::BL, Addr_IR(-7, r11), rdx));
+    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7, rcx), rsi));
+    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7, r8), rbx));
+    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7, r10), r9));
+    insts.push(i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7, r11), rdx));
+    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7, rcx), rsi));
+    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7, r8), rbx));
+    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7, r10), r9));
+    insts.push(i_MovSX_M_R(ExtMode::WL, Addr_IR(-7, r11), rdx));
+    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7, rcx), rsi));
+    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7, r8), rbx));
+    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7, r10), r9));
+    insts.push(i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7, r11), rdx));
+    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7, rcx), rsi));
+    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7, r8), rbx));
+    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7, r10), r9));
+    insts.push(i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7, r11), rdx));
+    //
+    // Mov_R_M.  Byte stores are tricky.  Check everything carefully.
+    insts.push(i_Mov_R_M(8, rax, Addr_IR(99, rdi)));
+    insts.push(i_Mov_R_M(8, rbx, Addr_IR(99, r8)));
+    insts.push(i_Mov_R_M(8, rcx, Addr_IR(99, rsi)));
+    insts.push(i_Mov_R_M(8, rdx, Addr_IR(99, r9)));
+    insts.push(i_Mov_R_M(8, rsi, Addr_IR(99, rax)));
+    insts.push(i_Mov_R_M(8, rdi, Addr_IR(99, r15)));
+    insts.push(i_Mov_R_M(8, rsp, Addr_IR(99, rcx)));
+    insts.push(i_Mov_R_M(8, rbp, Addr_IR(99, r14)));
+    insts.push(i_Mov_R_M(8, r8, Addr_IR(99, rdi)));
+    insts.push(i_Mov_R_M(8, r9, Addr_IR(99, r8)));
+    insts.push(i_Mov_R_M(8, r10, Addr_IR(99, rsi)));
+    insts.push(i_Mov_R_M(8, r11, Addr_IR(99, r9)));
+    insts.push(i_Mov_R_M(8, r12, Addr_IR(99, rax)));
+    insts.push(i_Mov_R_M(8, r13, Addr_IR(99, r15)));
+    insts.push(i_Mov_R_M(8, r14, Addr_IR(99, rcx)));
+    insts.push(i_Mov_R_M(8, r15, Addr_IR(99, r14)));
+    //
+    insts.push(i_Mov_R_M(4, rax, Addr_IR(99, rdi)));
+    insts.push(i_Mov_R_M(4, rbx, Addr_IR(99, r8)));
+    insts.push(i_Mov_R_M(4, rcx, Addr_IR(99, rsi)));
+    insts.push(i_Mov_R_M(4, rdx, Addr_IR(99, r9)));
+    insts.push(i_Mov_R_M(4, rsi, Addr_IR(99, rax)));
+    insts.push(i_Mov_R_M(4, rdi, Addr_IR(99, r15)));
+    insts.push(i_Mov_R_M(4, rsp, Addr_IR(99, rcx)));
+    insts.push(i_Mov_R_M(4, rbp, Addr_IR(99, r14)));
+    insts.push(i_Mov_R_M(4, r8, Addr_IR(99, rdi)));
+    insts.push(i_Mov_R_M(4, r9, Addr_IR(99, r8)));
+    insts.push(i_Mov_R_M(4, r10, Addr_IR(99, rsi)));
+    insts.push(i_Mov_R_M(4, r11, Addr_IR(99, r9)));
+    insts.push(i_Mov_R_M(4, r12, Addr_IR(99, rax)));
+    insts.push(i_Mov_R_M(4, r13, Addr_IR(99, r15)));
+    insts.push(i_Mov_R_M(4, r14, Addr_IR(99, rcx)));
+    insts.push(i_Mov_R_M(4, r15, Addr_IR(99, r14)));
+    //
+    insts.push(i_Mov_R_M(2, rax, Addr_IR(99, rdi)));
+    insts.push(i_Mov_R_M(2, rbx, Addr_IR(99, r8)));
+    insts.push(i_Mov_R_M(2, rcx, Addr_IR(99, rsi)));
+    insts.push(i_Mov_R_M(2, rdx, Addr_IR(99, r9)));
+    insts.push(i_Mov_R_M(2, rsi, Addr_IR(99, rax)));
+    insts.push(i_Mov_R_M(2, rdi, Addr_IR(99, r15)));
+    insts.push(i_Mov_R_M(2, rsp, Addr_IR(99, rcx)));
+    insts.push(i_Mov_R_M(2, rbp, Addr_IR(99, r14)));
+    insts.push(i_Mov_R_M(2, r8, Addr_IR(99, rdi)));
+    insts.push(i_Mov_R_M(2, r9, Addr_IR(99, r8)));
+    insts.push(i_Mov_R_M(2, r10, Addr_IR(99, rsi)));
+    insts.push(i_Mov_R_M(2, r11, Addr_IR(99, r9)));
+    insts.push(i_Mov_R_M(2, r12, Addr_IR(99, rax)));
+    insts.push(i_Mov_R_M(2, r13, Addr_IR(99, r15)));
+    insts.push(i_Mov_R_M(2, r14, Addr_IR(99, rcx)));
+    insts.push(i_Mov_R_M(2, r15, Addr_IR(99, r14)));
+    //
+    insts.push(i_Mov_R_M(1, rax, Addr_IR(99, rdi)));
+    insts.push(i_Mov_R_M(1, rbx, Addr_IR(99, r8)));
+    insts.push(i_Mov_R_M(1, rcx, Addr_IR(99, rsi)));
+    insts.push(i_Mov_R_M(1, rdx, Addr_IR(99, r9)));
+    insts.push(i_Mov_R_M(1, rsi, Addr_IR(99, rax)));
+    insts.push(i_Mov_R_M(1, rdi, Addr_IR(99, r15)));
+    insts.push(i_Mov_R_M(1, rsp, Addr_IR(99, rcx)));
+    insts.push(i_Mov_R_M(1, rbp, Addr_IR(99, r14)));
+    insts.push(i_Mov_R_M(1, r8, Addr_IR(99, rdi)));
+    insts.push(i_Mov_R_M(1, r9, Addr_IR(99, r8)));
+    insts.push(i_Mov_R_M(1, r10, Addr_IR(99, rsi)));
+    insts.push(i_Mov_R_M(1, r11, Addr_IR(99, r9)));
+    insts.push(i_Mov_R_M(1, r12, Addr_IR(99, rax)));
+    insts.push(i_Mov_R_M(1, r13, Addr_IR(99, r15)));
+    insts.push(i_Mov_R_M(1, r14, Addr_IR(99, rcx)));
+    insts.push(i_Mov_R_M(1, r15, Addr_IR(99, r14)));
+    //
+    // Shift_R
+    insts.push(i_Shift_R(false, ShiftKind::Left, 0, rdi));
+    insts.push(i_Shift_R(false, ShiftKind::Left, 1, r8));
+    insts.push(i_Shift_R(false, ShiftKind::Left, 31, r13));
+    insts.push(i_Shift_R(true, ShiftKind::Left, 0, rdi));
+    insts.push(i_Shift_R(true, ShiftKind::Left, 1, r8));
+    insts.push(i_Shift_R(true, ShiftKind::Left, 63, r13));
+    insts.push(i_Shift_R(false, ShiftKind::RightZ, 0, rdi));
+    insts.push(i_Shift_R(false, ShiftKind::RightZ, 1, r8));
+    insts.push(i_Shift_R(false, ShiftKind::RightZ, 31, r13));
+    insts.push(i_Shift_R(true, ShiftKind::RightZ, 0, rdi));
+    insts.push(i_Shift_R(true, ShiftKind::RightZ, 1, r8));
+    insts.push(i_Shift_R(true, ShiftKind::RightZ, 63, r13));
+    insts.push(i_Shift_R(false, ShiftKind::RightS, 0, rdi));
+    insts.push(i_Shift_R(false, ShiftKind::RightS, 1, r8));
+    insts.push(i_Shift_R(false, ShiftKind::RightS, 31, r13));
+    insts.push(i_Shift_R(true, ShiftKind::RightS, 0, rdi));
+    insts.push(i_Shift_R(true, ShiftKind::RightS, 1, r8));
+    insts.push(i_Shift_R(true, ShiftKind::RightS, 63, r13));
+    //
+    // Cmp_RMI_R
+    insts.push(i_Cmp_RMI_R(8, RMI_R(r15), rdx));
+    insts.push(i_Cmp_RMI_R(8, RMI_R(rcx), r8));
+    insts.push(i_Cmp_RMI_R(8, RMI_R(rcx), rsi));
+    insts.push(i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), rdx));
+    insts.push(i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), r8));
+    insts.push(i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), rsi));
+    insts.push(i_Cmp_RMI_R(8, RMI_I(76543210), rdx));
+    insts.push(i_Cmp_RMI_R(8, RMI_I(-76543210), r8));
+    insts.push(i_Cmp_RMI_R(8, RMI_I(76543210), rsi));
+    //
+    insts.push(i_Cmp_RMI_R(4, RMI_R(r15), rdx));
+    insts.push(i_Cmp_RMI_R(4, RMI_R(rcx), r8));
+    insts.push(i_Cmp_RMI_R(4, RMI_R(rcx), rsi));
+    insts.push(i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), rdx));
+    insts.push(i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), r8));
+    insts.push(i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), rsi));
+    insts.push(i_Cmp_RMI_R(4, RMI_I(76543210), rdx));
+    insts.push(i_Cmp_RMI_R(4, RMI_I(-76543210), r8));
+    insts.push(i_Cmp_RMI_R(4, RMI_I(76543210), rsi));
+    //
+    insts.push(i_Cmp_RMI_R(2, RMI_R(r15), rdx));
+    insts.push(i_Cmp_RMI_R(2, RMI_R(rcx), r8));
+    insts.push(i_Cmp_RMI_R(2, RMI_R(rcx), rsi));
+    insts.push(i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), rdx));
+    insts.push(i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), r8));
+    insts.push(i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), rsi));
+    insts.push(i_Cmp_RMI_R(2, RMI_I(23210), rdx));
+    insts.push(i_Cmp_RMI_R(2, RMI_I(-7654), r8));
+    insts.push(i_Cmp_RMI_R(2, RMI_I(7654), rsi));
+    //
+    insts.push(i_Cmp_RMI_R(1, RMI_R(r15), rdx));
+    insts.push(i_Cmp_RMI_R(1, RMI_R(rcx), r8));
+    insts.push(i_Cmp_RMI_R(1, RMI_R(rcx), rsi));
+    insts.push(i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), rdx));
+    insts.push(i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), r8));
+    insts.push(i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), rsi));
+    insts.push(i_Cmp_RMI_R(1, RMI_I(70), rdx));
+    insts.push(i_Cmp_RMI_R(1, RMI_I(-76), r8));
+    insts.push(i_Cmp_RMI_R(1, RMI_I(76), rsi));
+    //
+    // Push64
+    insts.push(i_Push64(RMI_R(rdi)));
+    insts.push(i_Push64(RMI_R(r8)));
+    insts.push(i_Push64(RMI_M(Addr_IRRS(321, rsi, rcx, 3))));
+    insts.push(i_Push64(RMI_M(Addr_IRRS(321, r9, rbx, 2))));
+    insts.push(i_Push64(RMI_I(0)));
+    insts.push(i_Push64(RMI_I(127)));
+    insts.push(i_Push64(RMI_I(128)));
+    insts.push(i_Push64(RMI_I(0x31415927)));
+    insts.push(i_Push64(RMI_I(-128)));
+    insts.push(i_Push64(RMI_I(-129)));
+    insts.push(i_Push64(RMI_I(-0x75c4e8a1)));
+    //
+    // JmpKnown skipped for now
+    //
+    // JmpUnknown
+    insts.push(i_JmpUnknown(RM_R(rbp)));
+    insts.push(i_JmpUnknown(RM_R(r11)));
+    insts.push(i_JmpUnknown(RM_M(Addr_IRRS(321, rsi, rcx, 3))));
+    insts.push(i_JmpUnknown(RM_M(Addr_IRRS(321, r10, rdx, 2))));
+    //
+    // JmpCond skipped for now
+    //
+    // CallKnown skipped for now
+    //
+    // CallUnknown
+    insts.push(i_CallUnknown(RM_R(rbp)));
+    insts.push(i_CallUnknown(RM_R(r11)));
+    insts.push(i_CallUnknown(RM_M(Addr_IRRS(321, rsi, rcx, 3))));
+    insts.push(i_CallUnknown(RM_M(Addr_IRRS(321, r10, rdx, 2))));
+    //
+    // Ret
+    insts.push(i_Ret());
 
     /*
-    insts.push(i_());
-    insts.push(i_());
     insts.push(i_());
     insts.push(i_());
     insts.push(i_());
