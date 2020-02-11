@@ -572,7 +572,7 @@ pub enum PairMemArg {
 // definitions
 
 /// Condition for conditional branches.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cond {
     Eq,
     Ne,
@@ -1326,7 +1326,7 @@ fn enc_ldst_uimm12(op_31_22: u32, uimm12: UImm12Scaled, rn: Reg, rd: Reg) -> u32
     (op_31_22 << 22) | (uimm12.bits() << 10) | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd)
 }
 
-fn enc_ldst_reg(op_31_22: u32, rm: Reg, rn: Reg, s_bit: bool, rd: Reg) -> u32 {
+fn enc_ldst_reg(op_31_22: u32, rn: Reg, rm: Reg, s_bit: bool, rd: Reg) -> u32 {
     let s_bit = if s_bit { 1 } else { 0 };
     (op_31_22 << 22)
         | (1 << 21)
@@ -1371,7 +1371,9 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     ALUOp::Add32 => 0b000_10001,
                     ALUOp::Add64 => 0b100_10001,
                     ALUOp::Sub32 => 0b010_10001,
-                    ALUOp::Sub64 => 0b010_10001,
+                    ALUOp::Sub64 => 0b110_10001,
+                    ALUOp::SubS32 => 0b011_10001,
+                    ALUOp::SubS64 => 0b111_10001,
                     _ => unimplemented!(),
                 };
                 sink.put4(enc_arith_rr_imm12(
@@ -1442,7 +1444,7 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b00, reg, rd));
                     }
                     &MemArg::BaseUImm12Scaled(reg, uimm12scaled) => {
-                        sink.put4(enc_ldst_uimm12(op | 0b01, uimm12scaled, reg, rd));
+                        sink.put4(enc_ldst_uimm12(op | 0b101, uimm12scaled, reg, rd));
                     }
                     &MemArg::BasePlusReg(r1, r2) => {
                         sink.put4(enc_ldst_reg(op | 0b01, r1, r2, /* S = */ false, rd));
@@ -1461,7 +1463,7 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                                 // pool.
                                 0
                             }
-                        };
+                        } / 4;
                         assert!(offset < (1 << 19));
                         match self {
                             &Inst::ULoad32 { .. } => {
@@ -1504,13 +1506,13 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b00, reg, rd));
                     }
                     &MemArg::BaseUImm12Scaled(reg, uimm12scaled) => {
-                        sink.put4(enc_ldst_uimm12(op | 0b01, uimm12scaled, reg, rd));
+                        sink.put4(enc_ldst_uimm12(op | 0b100, uimm12scaled, reg, rd));
                     }
                     &MemArg::BasePlusReg(r1, r2) => {
-                        sink.put4(enc_ldst_reg(op | 0b01, r1, r2, /* S = */ false, rd));
+                        sink.put4(enc_ldst_reg(op, r1, r2, /* S = */ false, rd));
                     }
                     &MemArg::BasePlusRegScaled(r1, r2, _ty) => {
-                        sink.put4(enc_ldst_reg(op | 0b01, r1, r2, /* S = */ true, rd));
+                        sink.put4(enc_ldst_reg(op, r1, r2, /* S = */ true, rd));
                     }
                     &MemArg::Label(..) => {
                         panic!("Store to a constant-pool entry not allowed!");
@@ -1871,7 +1873,7 @@ impl ShowWithRRU for ExtendOp {
 impl ShowWithRRU for MemLabel {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            &MemLabel::ConstantPool(off) => format!("const_{}", off),
+            &MemLabel::ConstantPool(off) => format!("{}", off),
             // Should be resolved into an offset before we pretty-print.
             &MemLabel::ConstantData(..) => "!!constant!!".to_string(),
         }
@@ -1906,7 +1908,7 @@ impl ShowWithRRU for MemArg {
             &MemArg::BasePlusRegScaled(r1, r2, ty) => {
                 let shift = shift_for_type(ty);
                 format!(
-                    "[{}, {} lsl #{}]",
+                    "[{}, {}, lsl #{}]",
                     r1.show_rru(mb_rru),
                     r2.show_rru(mb_rru),
                     shift,
@@ -2082,14 +2084,25 @@ impl ShowWithRRU for Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem } => {
-                let (op, is32) = match self {
-                    &Inst::ULoad8 { .. } => ("ldrb", false),
-                    &Inst::SLoad8 { .. } => ("ldrsb", false),
-                    &Inst::ULoad16 { .. } => ("ldrh", false),
-                    &Inst::SLoad16 { .. } => ("ldrsh", false),
-                    &Inst::ULoad32 { .. } => ("ldr", true),
-                    &Inst::SLoad32 { .. } => ("ldrsw", true),
-                    &Inst::ULoad64 { .. } => ("ldr", false),
+                let is_unscaled_base = match mem {
+                    &MemArg::Base(..) | &MemArg::BaseSImm9(..) => true,
+                    _ => false,
+                };
+                let (op, is32) = match (self, is_unscaled_base) {
+                    (&Inst::ULoad8 { .. }, false) => ("ldrb", true),
+                    (&Inst::ULoad8 { .. }, true) => ("ldurb", true),
+                    (&Inst::SLoad8 { .. }, false) => ("ldrsb", false),
+                    (&Inst::SLoad8 { .. }, true) => ("ldursb", false),
+                    (&Inst::ULoad16 { .. }, false) => ("ldrh", true),
+                    (&Inst::ULoad16 { .. }, true) => ("ldurh", true),
+                    (&Inst::SLoad16 { .. }, false) => ("ldrsh", false),
+                    (&Inst::SLoad16 { .. }, true) => ("ldursh", false),
+                    (&Inst::ULoad32 { .. }, false) => ("ldr", true),
+                    (&Inst::ULoad32 { .. }, true) => ("ldur", true),
+                    (&Inst::SLoad32 { .. }, false) => ("ldrsw", false),
+                    (&Inst::SLoad32 { .. }, true) => ("ldursw", false),
+                    (&Inst::ULoad64 { .. }, false) => ("ldr", false),
+                    (&Inst::ULoad64 { .. }, true) => ("ldur", false),
                     _ => unreachable!(),
                 };
                 // TODO: LDUR* variants when "unscaled" (SImm9) offset.
@@ -2101,11 +2114,19 @@ impl ShowWithRRU for Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem } => {
-                let (op, is32) = match self {
-                    &Inst::Store8 { .. } => ("strb", false),  // JRS: true?
-                    &Inst::Store16 { .. } => ("strh", false), // ditto
-                    &Inst::Store32 { .. } => ("str", true),
-                    &Inst::Store64 { .. } => ("str", false),
+                let is_unscaled_base = match mem {
+                    &MemArg::Base(..) | &MemArg::BaseSImm9(..) => true,
+                    _ => false,
+                };
+                let (op, is32) = match (self, is_unscaled_base) {
+                    (&Inst::Store8 { .. }, false) => ("strb", true),
+                    (&Inst::Store8 { .. }, true) => ("sturb", true),
+                    (&Inst::Store16 { .. }, false) => ("strh", true),
+                    (&Inst::Store16 { .. }, true) => ("sturh", true),
+                    (&Inst::Store32 { .. }, false) => ("str", true),
+                    (&Inst::Store32 { .. }, true) => ("stur", true),
+                    (&Inst::Store64 { .. }, false) => ("str", false),
+                    (&Inst::Store64 { .. }, true) => ("stur", false),
                     _ => unreachable!(),
                 };
                 let rd = show_ireg_sized(rd, mb_rru, is32);
@@ -2170,7 +2191,7 @@ impl ShowWithRRU for Inst {
                     }
                     &CondBrKind::Cond(c) => {
                         let c = c.show_rru(mb_rru);
-                        format!("b{} {} ; b {}", c, taken, not_taken)
+                        format!("b.{} {} ; b {}", c, taken, not_taken)
                     }
                 }
             }
@@ -2196,7 +2217,7 @@ impl ShowWithRRU for Inst {
                     }
                     &CondBrKind::Cond(c) => {
                         let c = c.show_rru(mb_rru);
-                        format!("b{} {}", c, target)
+                        format!("b.{} {}", c, target)
                     }
                 }
             }
@@ -2220,137 +2241,871 @@ impl ShowWithRRU for Inst {
 }
 
 #[cfg(test)]
-use crate::isa::test_utils;
+mod test {
+    use super::*;
+    use crate::isa::test_utils;
 
-#[test]
-fn test_arm64_binemit() {
-    let mut insns = Vec::<(Inst, &str, &str)>::new();
+    #[test]
+    fn test_arm64_binemit() {
+        let mut insns = Vec::<(Inst, &str, &str)>::new();
 
-    // N.B.: the architecture is little-endian, so when transcribing the 32-bit
-    // hex instructions from e.g. objdump disassembly, one must swap the bytes
-    // seen below. (E.g., a `ret` is normally written as the u32 `D65F03C0`,
-    // but we write it here as C0035FD6.)
+        // N.B.: the architecture is little-endian, so when transcribing the 32-bit
+        // hex instructions from e.g. objdump disassembly, one must swap the bytes
+        // seen below. (E.g., a `ret` is normally written as the u32 `D65F03C0`,
+        // but we write it here as C0035FD6.)
 
-    insns.push((Inst::Ret {}, "C0035FD6", "ret"));
-    insns.push((Inst::Nop {}, "", ""));
-    insns.push((Inst::Nop4 {}, "1F2003D5", "nop"));
-    insns.push((
-        Inst::AluRRR {
-            alu_op: ALUOp::Add32,
-            rd: xreg(1),
-            rn: xreg(2),
-            rm: xreg(3),
-        },
-        "4100030B",
-        "add w1, w2, w3",
-    ));
-    insns.push((
-        Inst::AluRRR {
-            alu_op: ALUOp::Add64,
-            rd: xreg(4),
-            rn: xreg(5),
-            rm: xreg(6),
-        },
-        "A400068B",
-        "add x4, x5, x6",
-    ));
-    insns.push((
-        Inst::AluRRR {
-            alu_op: ALUOp::Sub32,
-            rd: xreg(1),
-            rn: xreg(2),
-            rm: xreg(3),
-        },
-        "4100034B",
-        "sub w1, w2, w3",
-    ));
-    insns.push((
-        Inst::AluRRR {
-            alu_op: ALUOp::Sub64,
-            rd: xreg(4),
-            rn: xreg(5),
-            rm: xreg(6),
-        },
-        "A40006CB",
-        "sub x4, x5, x6",
-    ));
-    insns.push((
-        Inst::AluRRR {
-            alu_op: ALUOp::Orr32,
-            rd: xreg(1),
-            rn: xreg(2),
-            rm: xreg(3),
-        },
-        "4100032A",
-        "orr w1, w2, w3",
-    ));
-    insns.push((
-        Inst::AluRRR {
-            alu_op: ALUOp::Orr64,
-            rd: xreg(4),
-            rn: xreg(5),
-            rm: xreg(6),
-        },
-        "A40006AA",
-        "orr x4, x5, x6",
-    ));
-    insns.push((
-        Inst::AluRRR {
-            alu_op: ALUOp::And32,
-            rd: xreg(1),
-            rn: xreg(2),
-            rm: xreg(3),
-        },
-        "4100030A",
-        "and w1, w2, w3",
-    ));
-    insns.push((
-        Inst::AluRRR {
-            alu_op: ALUOp::And64,
-            rd: xreg(4),
-            rn: xreg(5),
-            rm: xreg(6),
-        },
-        "A400068A",
-        "and x4, x5, x6",
-    ));
-    insns.push((
-        Inst::AluRRR {
-            alu_op: ALUOp::SubS32,
-            rd: xreg(1),
-            rn: xreg(2),
-            rm: xreg(3),
-        },
-        "4100036B",
-        "subs w1, w2, w3",
-    ));
-    insns.push((
-        Inst::AluRRR {
-            alu_op: ALUOp::SubS64,
-            rd: xreg(4),
-            rn: xreg(5),
-            rm: xreg(6),
-        },
-        "A40006EB",
-        "subs x4, x5, x6",
-    ));
+        insns.push((Inst::Ret {}, "C0035FD6", "ret"));
+        insns.push((Inst::Nop {}, "", ""));
+        insns.push((Inst::Nop4 {}, "1F2003D5", "nop"));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Add32,
+                rd: xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+            },
+            "4100030B",
+            "add w1, w2, w3",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Add64,
+                rd: xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A400068B",
+            "add x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Sub32,
+                rd: xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+            },
+            "4100034B",
+            "sub w1, w2, w3",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Sub64,
+                rd: xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A40006CB",
+            "sub x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Orr32,
+                rd: xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+            },
+            "4100032A",
+            "orr w1, w2, w3",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Orr64,
+                rd: xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A40006AA",
+            "orr x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::And32,
+                rd: xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+            },
+            "4100030A",
+            "and w1, w2, w3",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::And64,
+                rd: xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A400068A",
+            "and x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::SubS32,
+                rd: xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+            },
+            "4100036B",
+            "subs w1, w2, w3",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::SubS64,
+                rd: xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A40006EB",
+            "subs x4, x5, x6",
+        ));
 
-    let rru = create_reg_universe();
-    for (insn, expected_encoding, expected_printing) in insns {
-        println!(
-            "ARM64: {:?}, {}, {}",
-            insn, expected_encoding, expected_printing
-        );
+        insns.push((
+            Inst::AluRRImm12 {
+                alu_op: ALUOp::Add32,
+                rd: xreg(7),
+                rn: xreg(8),
+                imm12: Imm12 {
+                    bits: 0x123,
+                    shift12: false,
+                },
+            },
+            "078D0411",
+            "add w7, w8, #291",
+        ));
+        insns.push((
+            Inst::AluRRImm12 {
+                alu_op: ALUOp::Add32,
+                rd: xreg(7),
+                rn: xreg(8),
+                imm12: Imm12 {
+                    bits: 0x123,
+                    shift12: true,
+                },
+            },
+            "078D4411",
+            "add w7, w8, #1191936",
+        ));
+        insns.push((
+            Inst::AluRRImm12 {
+                alu_op: ALUOp::Add64,
+                rd: xreg(7),
+                rn: xreg(8),
+                imm12: Imm12 {
+                    bits: 0x123,
+                    shift12: false,
+                },
+            },
+            "078D0491",
+            "add x7, x8, #291",
+        ));
+        insns.push((
+            Inst::AluRRImm12 {
+                alu_op: ALUOp::Sub32,
+                rd: xreg(7),
+                rn: xreg(8),
+                imm12: Imm12 {
+                    bits: 0x123,
+                    shift12: false,
+                },
+            },
+            "078D0451",
+            "sub w7, w8, #291",
+        ));
+        insns.push((
+            Inst::AluRRImm12 {
+                alu_op: ALUOp::Sub64,
+                rd: xreg(7),
+                rn: xreg(8),
+                imm12: Imm12 {
+                    bits: 0x123,
+                    shift12: false,
+                },
+            },
+            "078D04D1",
+            "sub x7, x8, #291",
+        ));
+        insns.push((
+            Inst::AluRRImm12 {
+                alu_op: ALUOp::SubS32,
+                rd: xreg(7),
+                rn: xreg(8),
+                imm12: Imm12 {
+                    bits: 0x123,
+                    shift12: false,
+                },
+            },
+            "078D0471",
+            "subs w7, w8, #291",
+        ));
+        insns.push((
+            Inst::AluRRImm12 {
+                alu_op: ALUOp::SubS64,
+                rd: xreg(7),
+                rn: xreg(8),
+                imm12: Imm12 {
+                    bits: 0x123,
+                    shift12: false,
+                },
+            },
+            "078D04F1",
+            "subs x7, x8, #291",
+        ));
 
-        // Check the printed text is as expected.
-        let actual_printing = insn.show_rru(Some(&rru));
-        assert_eq!(expected_printing, actual_printing);
+        // TODO: ImmLogic forms (once logic-immediate encoding/decoding exists).
 
-        // Check the encoding is as expected.
-        let mut sink = test_utils::TestCodeSink::new();
-        insn.emit(&mut sink);
-        let actual_encoding = &sink.stringify();
-        assert_eq!(expected_encoding, actual_encoding);
+        // TODO: AluRRRShift and ALURRRExtend forms.
+
+        insns.push((
+            Inst::ULoad8 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "41004038",
+            "ldurb w1, [x2]",
+        ));
+        insns.push((
+            Inst::SLoad8 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "41008038",
+            "ldursb x1, [x2]",
+        ));
+        insns.push((
+            Inst::ULoad16 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "41004078",
+            "ldurh w1, [x2]",
+        ));
+        insns.push((
+            Inst::SLoad16 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "41008078",
+            "ldursh x1, [x2]",
+        ));
+        insns.push((
+            Inst::ULoad32 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "410040B8",
+            "ldur w1, [x2]",
+        ));
+        insns.push((
+            Inst::SLoad32 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "410080B8",
+            "ldursw x1, [x2]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "410040F8",
+            "ldur x1, [x2]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: xreg(1),
+                mem: MemArg::BaseSImm9(xreg(2), SImm9::maybe_from_i64(-256).unwrap()),
+            },
+            "410050F8",
+            "ldur x1, [x2, #-256]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: xreg(1),
+                mem: MemArg::BaseSImm9(xreg(2), SImm9::maybe_from_i64(255).unwrap()),
+            },
+            "41F04FF8",
+            "ldur x1, [x2, #255]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: xreg(1),
+                mem: MemArg::BaseUImm12Scaled(
+                    xreg(2),
+                    UImm12Scaled::maybe_from_i64(32760, I64).unwrap(),
+                ),
+            },
+            "41FC7FF9",
+            "ldr x1, [x2, #32760]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: xreg(1),
+                mem: MemArg::BasePlusReg(xreg(2), xreg(3)),
+            },
+            "416863F8",
+            "ldr x1, [x2, x3]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: xreg(1),
+                mem: MemArg::BasePlusRegScaled(xreg(2), xreg(3), I64),
+            },
+            "417863F8",
+            "ldr x1, [x2, x3, lsl #3]",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: xreg(1),
+                mem: MemArg::Label(MemLabel::ConstantPool(64)),
+            },
+            "01020058",
+            "ldr x1, 64",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: xreg(1),
+                mem: MemArg::PreIndexed(xreg(2), SImm9::maybe_from_i64(16).unwrap()),
+            },
+            "410C41F8",
+            "ldr x1, [x2, #16]!",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: xreg(1),
+                mem: MemArg::PostIndexed(xreg(2), SImm9::maybe_from_i64(16).unwrap()),
+            },
+            "410441F8",
+            "ldr x1, [x2], #16",
+        ));
+
+        insns.push((
+            Inst::Store8 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "41000038",
+            "sturb w1, [x2]",
+        ));
+        insns.push((
+            Inst::Store8 {
+                rd: xreg(1),
+                mem: MemArg::BaseUImm12Scaled(
+                    xreg(2),
+                    UImm12Scaled::maybe_from_i64(4095, I8).unwrap(),
+                ),
+            },
+            "41FC3F39",
+            "strb w1, [x2, #4095]",
+        ));
+        insns.push((
+            Inst::Store16 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "41000078",
+            "sturh w1, [x2]",
+        ));
+        insns.push((
+            Inst::Store16 {
+                rd: xreg(1),
+                mem: MemArg::BaseUImm12Scaled(
+                    xreg(2),
+                    UImm12Scaled::maybe_from_i64(8190, I16).unwrap(),
+                ),
+            },
+            "41FC3F79",
+            "strh w1, [x2, #8190]",
+        ));
+        insns.push((
+            Inst::Store32 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "410000B8",
+            "stur w1, [x2]",
+        ));
+        insns.push((
+            Inst::Store32 {
+                rd: xreg(1),
+                mem: MemArg::BaseUImm12Scaled(
+                    xreg(2),
+                    UImm12Scaled::maybe_from_i64(16380, I32).unwrap(),
+                ),
+            },
+            "41FC3FB9",
+            "str w1, [x2, #16380]",
+        ));
+        insns.push((
+            Inst::Store64 {
+                rd: xreg(1),
+                mem: MemArg::Base(xreg(2)),
+            },
+            "410000F8",
+            "stur x1, [x2]",
+        ));
+        insns.push((
+            Inst::Store64 {
+                rd: xreg(1),
+                mem: MemArg::BaseUImm12Scaled(
+                    xreg(2),
+                    UImm12Scaled::maybe_from_i64(32760, I64).unwrap(),
+                ),
+            },
+            "41FC3FF9",
+            "str x1, [x2, #32760]",
+        ));
+        insns.push((
+            Inst::Store64 {
+                rd: xreg(1),
+                mem: MemArg::BasePlusReg(xreg(2), xreg(3)),
+            },
+            "416823F8",
+            "str x1, [x2, x3]",
+        ));
+        insns.push((
+            Inst::Store64 {
+                rd: xreg(1),
+                mem: MemArg::BasePlusRegScaled(xreg(2), xreg(3), I64),
+            },
+            "417823F8",
+            "str x1, [x2, x3, lsl #3]",
+        ));
+        insns.push((
+            Inst::Store64 {
+                rd: xreg(1),
+                mem: MemArg::PreIndexed(xreg(2), SImm9::maybe_from_i64(16).unwrap()),
+            },
+            "410C01F8",
+            "str x1, [x2, #16]!",
+        ));
+        insns.push((
+            Inst::Store64 {
+                rd: xreg(1),
+                mem: MemArg::PostIndexed(xreg(2), SImm9::maybe_from_i64(16).unwrap()),
+            },
+            "410401F8",
+            "str x1, [x2], #16",
+        ));
+
+        insns.push((
+            Inst::StoreP64 {
+                rt: xreg(8),
+                rt2: xreg(9),
+                mem: PairMemArg::Base(xreg(10)),
+            },
+            "482500A9",
+            "stp x8, x9, [x10]",
+        ));
+        insns.push((
+            Inst::StoreP64 {
+                rt: xreg(8),
+                rt2: xreg(9),
+                mem: PairMemArg::BaseSImm7(xreg(10), SImm7::maybe_from_i64(63).unwrap()),
+            },
+            "48A51FA9",
+            "stp x8, x9, [x10, #504]",
+        ));
+        insns.push((
+            Inst::StoreP64 {
+                rt: xreg(8),
+                rt2: xreg(9),
+                mem: PairMemArg::BaseSImm7(xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
+            },
+            "482520A9",
+            "stp x8, x9, [x10, #-512]",
+        ));
+        insns.push((
+            Inst::StoreP64 {
+                rt: xreg(8),
+                rt2: xreg(9),
+                mem: PairMemArg::PreIndexed(xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
+            },
+            "4825A0A9",
+            "stp x8, x9, [x10, #-512]!",
+        ));
+        insns.push((
+            Inst::StoreP64 {
+                rt: xreg(8),
+                rt2: xreg(9),
+                mem: PairMemArg::PostIndexed(xreg(10), SImm7::maybe_from_i64(63).unwrap()),
+            },
+            "48A59FA8",
+            "stp x8, x9, [x10], #504",
+        ));
+
+        insns.push((
+            Inst::LoadP64 {
+                rt: xreg(8),
+                rt2: xreg(9),
+                mem: PairMemArg::Base(xreg(10)),
+            },
+            "482540A9",
+            "ldp x8, x9, [x10]",
+        ));
+        insns.push((
+            Inst::LoadP64 {
+                rt: xreg(8),
+                rt2: xreg(9),
+                mem: PairMemArg::BaseSImm7(xreg(10), SImm7::maybe_from_i64(63).unwrap()),
+            },
+            "48A55FA9",
+            "ldp x8, x9, [x10, #504]",
+        ));
+        insns.push((
+            Inst::LoadP64 {
+                rt: xreg(8),
+                rt2: xreg(9),
+                mem: PairMemArg::BaseSImm7(xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
+            },
+            "482560A9",
+            "ldp x8, x9, [x10, #-512]",
+        ));
+        insns.push((
+            Inst::LoadP64 {
+                rt: xreg(8),
+                rt2: xreg(9),
+                mem: PairMemArg::PreIndexed(xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
+            },
+            "4825E0A9",
+            "ldp x8, x9, [x10, #-512]!",
+        ));
+        insns.push((
+            Inst::LoadP64 {
+                rt: xreg(8),
+                rt2: xreg(9),
+                mem: PairMemArg::PostIndexed(xreg(10), SImm7::maybe_from_i64(63).unwrap()),
+            },
+            "48A5DFA8",
+            "ldp x8, x9, [x10], #504",
+        ));
+
+        insns.push((
+            Inst::Mov {
+                rd: xreg(8),
+                rm: xreg(9),
+            },
+            "E80309AA",
+            "mov x8, x9",
+        ));
+
+        insns.push((
+            Inst::MovZ {
+                rd: xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0x0000_0000_0000_ffff).unwrap(),
+            },
+            "E8FF9FD2",
+            "movz x8, #65535",
+        ));
+        insns.push((
+            Inst::MovZ {
+                rd: xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0x0000_0000_ffff_0000).unwrap(),
+            },
+            "E8FFBFD2",
+            "movz x8, #4294901760",
+        ));
+        insns.push((
+            Inst::MovZ {
+                rd: xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0x0000_ffff_0000_0000).unwrap(),
+            },
+            "E8FFDFD2",
+            "movz x8, #281470681743360",
+        ));
+        insns.push((
+            Inst::MovZ {
+                rd: xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0xffff_0000_0000_0000).unwrap(),
+            },
+            "E8FFFFD2",
+            "movz x8, #18446462598732840960",
+        ));
+
+        insns.push((
+            Inst::MovN {
+                rd: xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0x0000_0000_0000_ffff).unwrap(),
+            },
+            "E8FF9F92",
+            "movn x8, #65535",
+        ));
+        insns.push((
+            Inst::MovN {
+                rd: xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0x0000_0000_ffff_0000).unwrap(),
+            },
+            "E8FFBF92",
+            "movn x8, #4294901760",
+        ));
+        insns.push((
+            Inst::MovN {
+                rd: xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0x0000_ffff_0000_0000).unwrap(),
+            },
+            "E8FFDF92",
+            "movn x8, #281470681743360",
+        ));
+        insns.push((
+            Inst::MovN {
+                rd: xreg(8),
+                imm: MoveWideConst::maybe_from_u64(0xffff_0000_0000_0000).unwrap(),
+            },
+            "E8FFFF92",
+            "movn x8, #18446462598732840960",
+        ));
+
+        insns.push((
+            Inst::Jump {
+                dest: BranchTarget::ResolvedOffset(0, 64),
+            },
+            "10000014",
+            "b block0",
+        ));
+
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Zero(xreg(8)),
+            },
+            "080200B4",
+            "cbz x8, block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: true,
+                kind: CondBrKind::Zero(xreg(8)),
+            },
+            "080200B5",
+            "cbnz x8, block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::NotZero(xreg(8)),
+            },
+            "080200B5",
+            "cbnz x8, block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: true,
+                kind: CondBrKind::NotZero(xreg(8)),
+            },
+            "080200B4",
+            "cbz x8, block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Eq),
+            },
+            "00020054",
+            "b.eq block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Ne),
+            },
+            "01020054",
+            "b.ne block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: true,
+                kind: CondBrKind::Cond(Cond::Ne),
+            },
+            "00020054",
+            "b.eq block0",
+        ));
+
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Hs),
+            },
+            "02020054",
+            "b.hs block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Lo),
+            },
+            "03020054",
+            "b.lo block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Mi),
+            },
+            "04020054",
+            "b.mi block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Pl),
+            },
+            "05020054",
+            "b.pl block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Vs),
+            },
+            "06020054",
+            "b.vs block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Vc),
+            },
+            "07020054",
+            "b.vc block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Hi),
+            },
+            "08020054",
+            "b.hi block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Ls),
+            },
+            "09020054",
+            "b.ls block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Ge),
+            },
+            "0A020054",
+            "b.ge block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Lt),
+            },
+            "0B020054",
+            "b.lt block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Gt),
+            },
+            "0C020054",
+            "b.gt block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Le),
+            },
+            "0D020054",
+            "b.le block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Al),
+            },
+            "0E020054",
+            "b.al block0",
+        ));
+        insns.push((
+            Inst::CondBrLowered {
+                target: BranchTarget::ResolvedOffset(0, 64),
+                inverted: false,
+                kind: CondBrKind::Cond(Cond::Nv),
+            },
+            "0F020054",
+            "b.nv block0",
+        ));
+
+        insns.push((
+            Inst::CondBrLoweredCompound {
+                taken: BranchTarget::ResolvedOffset(0, 64),
+                not_taken: BranchTarget::ResolvedOffset(1, 128),
+                kind: CondBrKind::Cond(Cond::Le),
+            },
+            "0D02005420000014",
+            "b.le block0 ; b block1",
+        ));
+
+        let rru = create_reg_universe();
+        for (insn, expected_encoding, expected_printing) in insns {
+            println!(
+                "ARM64: {:?}, {}, {}",
+                insn, expected_encoding, expected_printing
+            );
+
+            // Check the printed text is as expected.
+            let actual_printing = insn.show_rru(Some(&rru));
+            assert_eq!(expected_printing, actual_printing);
+
+            // Check the encoding is as expected.
+            let mut sink = test_utils::TestCodeSink::new();
+            insn.emit(&mut sink);
+            let actual_encoding = &sink.stringify();
+            assert_eq!(expected_encoding, actual_encoding);
+        }
+    }
+
+    #[test]
+    fn test_cond_invert() {
+        for cond in vec![
+            Cond::Eq,
+            Cond::Ne,
+            Cond::Hs,
+            Cond::Lo,
+            Cond::Mi,
+            Cond::Pl,
+            Cond::Vs,
+            Cond::Vc,
+            Cond::Hi,
+            Cond::Ls,
+            Cond::Ge,
+            Cond::Lt,
+            Cond::Gt,
+            Cond::Le,
+            Cond::Al,
+            Cond::Nv,
+        ]
+        .into_iter()
+        {
+            assert_eq!(cond.invert().invert(), cond);
+        }
     }
 }
 
