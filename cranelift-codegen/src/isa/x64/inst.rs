@@ -700,6 +700,10 @@ fn low8willSXto64(x: u32) -> bool {
     let xs = (x as i32) as i64;
     xs == ((xs << 56) >> 56)
 }
+fn low32willSXto64(x: u64) -> bool {
+    let xs = x as i64;
+    xs == ((xs << 32) >> 32)
+}
 //fn low16willSXto64(x: u32) -> bool {
 //    let xs = (x as i32) as i64;
 //    xs == ((xs << 48) >> 48)
@@ -715,7 +719,7 @@ pub fn i_Alu_RMI_R(is64: bool, op: RMI_R_Op, src: RMI, dst: Reg) -> Inst {
 
 pub fn i_Imm_R(dstIs64: bool, simm64: u64, dst: Reg) -> Inst {
     if !dstIs64 {
-        debug_assert!(simm64 <= 0xFFFF_FFFF);
+        debug_assert!(low32willSXto64(simm64));
     }
     Inst::Imm_R {
         dstIs64,
@@ -859,13 +863,21 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
             simm64,
             dst,
         } => {
-            let name = if *dstIs64 { "movabsq" } else { "movl" };
-            format!(
-                "{} ${}, {}",
-                ljustify(name.to_string()),
-                simm64,
-                show_ireg_sized(*dst, mb_rru, sizeLQ(*dstIs64))
-            )
+            if *dstIs64 {
+                format!(
+                    "{} ${}, {}",
+                    ljustify("movabsq".to_string()),
+                    *simm64 as i64,
+                    show_ireg_sized(*dst, mb_rru, 8)
+                )
+            } else {
+                format!(
+                    "{} ${}, {}",
+                    ljustify("movl".to_string()),
+                    (*simm64 as u32) as i32,
+                    show_ireg_sized(*dst, mb_rru, 4)
+                )
+            }
         }
         Inst::Mov_R_R { is64, src, dst } => format!(
             "{} {}, {}",
@@ -1555,19 +1567,33 @@ fn emit_simm<CS: CodeSink>(sink: &mut CS, size: u8, simm32: u32) {
 // following situations.  Do this by creating the cross product resulting from
 // applying the following rules to each operand:
 //
-// * for any insn that mentions a register: one test using a register encoding
-//   < 8 and a second one using a register with encoding >= 8.  This checks REX
-//   prefix construction.
+// * for any insn that mentions a register: one test using a register from the
+//   group [rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi] and a second one using a
+//   register from the group [r8, r9, r10, r11, r12, r13, r14, r15].  This
+//   helps detect incorrect REX prefix construction.
 //
-// * for any insn that mentions a byte register: one test for each encoding
-//   group [al .. dl], [bpl, spl, sil, dil], [r8b .. r11b, r12b .. r15b].
-//   This checks that apparently-redundant REX prefixes are retained.
+// * for any insn that mentions a byte register: one test for each of the four
+//   encoding groups [al, cl, dl, bl], [spl, bpl, sil, dil], [r8b .. r11b] and
+//   [r12b .. r15b].  This checks that apparently-redundant REX prefixes are
+//   retained when required.
 //
 // * for any insn that contains an immediate field, check the following cases:
 //   field is zero, field is in simm8 range (-128 .. 127), field is in simm32
 //   range (-0x8000_0000 .. 0x7FFF_FFFF).  This is because some instructions
 //   that require a 32-bit immediate have a short-form encoding when the imm
 //   is in simm8 range.
+//
+// * for all instructions, also add a test that uses only low-half registers
+//   (rax .. rdi, xmm0 .. xmm7) etc, so as to check that any redundant REX
+//   prefixes are correctly omitted.
+//
+// When choosing registers for a test, avoid using registers with the same
+// offset within a given group.  For example, don't use rax and r8, since they
+// both have the lowest 3 bits as 000, and so the test won't detect errors
+// where those 3-bit register sub-fields are confused by emitter.  Instead use
+// (eg) rax (lo3 = 000) and r9 (lo3 = 001).  Similarly, don't use (eg) cl and
+// bpl since they have the same offset in their group; use instead (eg) cl and
+// sil.
 //
 // Following these rules creates large numbers of test cases, but it's the
 // only way to make the emitter reliable.
@@ -1604,9 +1630,11 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
                         );
                     }
                     RMI::I { simm32 } => {
+                        let useImm8 = low8willSXto32(*simm32);
+                        let opcode = if useImm8 { 0x6B } else { 0x69 };
                         // Yes, really, regG twice.
-                        emit_REX_OPCODES_MODRM_regG_regE(sink, 0x69, 1, *regG, *regG, flags);
-                        sink.put4(*simm32);
+                        emit_REX_OPCODES_MODRM_regG_regE(sink, opcode, 1, *regG, *regG, flags);
+                        emit_simm(sink, if useImm8 { 1 } else { 4 }, *simm32);
                     }
                 }
             } else {
@@ -1642,11 +1670,12 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
                         );
                     }
                     RMI::I { simm32 } => {
-                        let opcode = 0x81;
+                        let useImm8 = low8willSXto32(*simm32);
+                        let opcode = if useImm8 { 0x83 } else { 0x81 };
                         // And also here we use the "normal" G-E ordering.
                         let encG = iregEnc(*regG);
                         emit_REX_OPCODES_MODRM_encG_encE(sink, opcode, 1, subopcode_I, encG, flags);
-                        sink.put4(*simm32);
+                        emit_simm(sink, if useImm8 { 1 } else { 4 }, *simm32);
                     }
                 }
             }
@@ -1866,12 +1895,12 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
             if *size == 1 {
                 // Here, a redundant REX prefix changes the meaning of the
                 // instruction.
-                let encE = iregEnc(*regG);
-                if encE >= 4 && encE <= 7 {
+                let encG = iregEnc(*regG);
+                if encG >= 4 && encG <= 7 {
                     retainRedundantRex = F_RETAIN_REDUNDANT_REX;
                 }
             }
-            let flags = match size {
+            let mut flags = match size {
                 8 => F_NONE,
                 4 => F_CLEAR_REX_W,
                 2 => F_CLEAR_REX_W | F_PREFIX_66,
@@ -1881,6 +1910,14 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
             match srcE {
                 RMI::R { reg: regE } => {
                     let opcode = if *size == 1 { 0x38 } else { 0x39 };
+                    if *size == 1 {
+                        // We also need to check whether the E register forces
+                        // the use of a redundant REX.
+                        let encE = iregEnc(*regE);
+                        if encE >= 4 && encE <= 7 {
+                            flags |= F_RETAIN_REDUNDANT_REX;
+                        }
+                    }
                     // Same comment re swapped args as for Alu_RMI_R.
                     emit_REX_OPCODES_MODRM_regG_regE(sink, opcode, 1, *regE, *regG, flags);
                 }
@@ -2081,6 +2118,9 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
 //=============================================================================
 // Tests for the emitter
 
+// See comments at the top of |fn x64_emit| for advice on how to create
+// reliable test cases.
+
 // to see stdout: cargo test -- --nocapture
 //
 // for this specific case:
@@ -2116,9 +2156,13 @@ fn test_x64_insn_encoding_and_printing() {
 
     let mut insns = Vec::<(Inst, &str, &str)>::new();
 
+    // ========================================================
     // Cases aimed at checking Addr-esses: IR (Imm + Reg)
     //
-    // offset zero
+    // These are just a bunch of loads with all supported (by the emitter)
+    // permutations of address formats.
+    //
+    // Addr_IR, offset zero
     insns.push((
         i_Mov64_M_R(Addr_IR(0, rax), rdi),
         "488B38",
@@ -2199,7 +2243,9 @@ fn test_x64_insn_encoding_and_printing() {
         "498B3F",
         "movq    0(%r15), %rdi",
     ));
-    // offset simm8, hi
+
+    // ========================================================
+    // Addr_IR, offset max simm8
     insns.push((
         i_Mov64_M_R(Addr_IR(127, rax), rdi),
         "488B787F",
@@ -2280,7 +2326,9 @@ fn test_x64_insn_encoding_and_printing() {
         "498B7F7F",
         "movq    127(%r15), %rdi",
     ));
-    // offset simm8, lo
+
+    // ========================================================
+    // Addr_IR, offset min simm8
     insns.push((
         i_Mov64_M_R(Addr_IR(-128i32 as u32, rax), rdi),
         "488B7880",
@@ -2361,7 +2409,9 @@ fn test_x64_insn_encoding_and_printing() {
         "498B7F80",
         "movq    -128(%r15), %rdi",
     ));
-    // offset simm32, minimal hi
+
+    // ========================================================
+    // Addr_IR, offset minimal positive simm32
     insns.push((
         i_Mov64_M_R(Addr_IR(128, rax), rdi),
         "488BB880000000",
@@ -2442,7 +2492,9 @@ fn test_x64_insn_encoding_and_printing() {
         "498BBF80000000",
         "movq    128(%r15), %rdi",
     ));
-    // offset simm32, minimal lo
+
+    // ========================================================
+    // Addr_IR, offset maximal negative simm32
     insns.push((
         i_Mov64_M_R(Addr_IR(-129i32 as u32, rax), rdi),
         "488BB87FFFFFFF",
@@ -2523,7 +2575,9 @@ fn test_x64_insn_encoding_and_printing() {
         "498BBF7FFFFFFF",
         "movq    -129(%r15), %rdi",
     ));
-    // offset simm32, large hi
+
+    // ========================================================
+    // Addr_IR, offset large positive simm32
     insns.push((
         i_Mov64_M_R(Addr_IR(0x17732077, rax), rdi),
         "488BB877207317",
@@ -2604,7 +2658,9 @@ fn test_x64_insn_encoding_and_printing() {
         "498BBF77207317",
         "movq    393420919(%r15), %rdi",
     ));
-    // offset simm32, large lo
+
+    // ========================================================
+    // Addr_IR, offset large negative simm32
     insns.push((
         i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rax), rdi),
         "488BB8D9A6BECE",
@@ -2686,11 +2742,12 @@ fn test_x64_insn_encoding_and_printing() {
         "movq    -826366247(%r15), %rdi",
     ));
 
+    // ========================================================
     // Cases aimed at checking Addr-esses: IRRS (Imm + Reg + (Reg << Shift))
     // Note these don't check the case where the index reg is RSP, since we
     // don't encode any of those.
     //
-    // offset simm8
+    // Addr_IRRS, offset max simm8
     insns.push((
         i_Mov64_M_R(Addr_IRRS(127, rax, rax, 0), r11),
         "4C8B5C007F",
@@ -2731,6 +2788,9 @@ fn test_x64_insn_encoding_and_printing() {
         "4D8B5C3F7F",
         "movq    127(%r15,%rdi,1), %r11",
     ));
+
+    // ========================================================
+    // Addr_IRRS, offset min simm8
     insns.push((
         i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rax, r8, 2), r11),
         "4E8B5C8080",
@@ -2771,7 +2831,9 @@ fn test_x64_insn_encoding_and_printing() {
         "4F8B5CBF80",
         "movq    -128(%r15,%r15,4), %r11",
     ));
-    // offset simm32
+
+    // ========================================================
+    // Addr_IRRS, offset large positive simm32
     insns.push((
         i_Mov64_M_R(Addr_IRRS(0x4f6625be, rax, rax, 0), r11),
         "4C8B9C00BE25664F",
@@ -2812,6 +2874,9 @@ fn test_x64_insn_encoding_and_printing() {
         "4D8B9C3FBE25664F",
         "movq    1332094398(%r15,%rdi,1), %r11",
     ));
+
+    // ========================================================
+    // Addr_IRRS, offset large negative simm32
     insns.push((
         i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rax, r8, 2), r11),
         "4E8B9C8070E9B2D9",
@@ -2853,195 +2918,12 @@ fn test_x64_insn_encoding_and_printing() {
         "movq    -642586256(%r15,%r15,4), %r11",
     ));
 
-    // Check sub-word printing of integer registers
-    insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), rdx),
-        "01CA",
-        "addl    %ecx, %edx",
-    ));
-    insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_R(rcx), rdx),
-        "4801CA",
-        "addq    %rcx, %rdx",
-    ));
-    //
-    insns.push((
-        i_Imm_R(false, 1234567, r15),
-        "41BF87D61200",
-        "movl    $1234567, %r15d",
-    ));
-    insns.push((
-        i_Imm_R(true, 1234567898765, r15),
-        "49BF8D26FB711F010000",
-        "movabsq $1234567898765, %r15",
-    ));
-    //
-    insns.push((
-        i_MovZX_M_R(ExtMode::BL, Addr_IR(-0x80i32 as u32, rax), r8),
-        "440FB64080",
-        "movzbl  -128(%rax), %r8d",
-    ));
-    insns.push((
-        i_MovZX_M_R(ExtMode::BQ, Addr_IR(-0x80i32 as u32, rax), r8),
-        "4C0FB64080",
-        "movzbq  -128(%rax), %r8",
-    ));
-    insns.push((
-        i_MovZX_M_R(ExtMode::WL, Addr_IR(-0x80i32 as u32, rax), r8),
-        "440FB74080",
-        "movzwl  -128(%rax), %r8d",
-    ));
-    insns.push((
-        i_MovZX_M_R(ExtMode::WQ, Addr_IR(-0x80i32 as u32, rax), r8),
-        "4C0FB74080",
-        "movzwq  -128(%rax), %r8",
-    ));
-    insns.push((
-        i_MovZX_M_R(ExtMode::LQ, Addr_IR(-0x80i32 as u32, rax), r8),
-        "448B4080",
-        "movl    -128(%rax), %r8d",
-    ));
-    //
-    insns.push((
-        i_MovSX_M_R(ExtMode::BL, Addr_IR(-0x80i32 as u32, rax), r8),
-        "440FBE4080",
-        "movsbl  -128(%rax), %r8d",
-    ));
-    insns.push((
-        i_MovSX_M_R(ExtMode::BQ, Addr_IR(-0x80i32 as u32, rax), r8),
-        "4C0FBE4080",
-        "movsbq  -128(%rax), %r8",
-    ));
-    insns.push((
-        i_MovSX_M_R(ExtMode::WL, Addr_IR(-0x80i32 as u32, rax), r8),
-        "440FBF4080",
-        "movswl  -128(%rax), %r8d",
-    ));
-    insns.push((
-        i_MovSX_M_R(ExtMode::WQ, Addr_IR(-0x80i32 as u32, rax), r8),
-        "4C0FBF4080",
-        "movswq  -128(%rax), %r8",
-    ));
-    insns.push((
-        i_MovSX_M_R(ExtMode::LQ, Addr_IR(-0x80i32 as u32, rax), r8),
-        "4C634080",
-        "movslq  -128(%rax), %r8",
-    ));
-    //
-    insns.push((
-        i_Mov_R_M(1, rsi, Addr_IRRS(0x7F, rax, r8, 3)),
-        "428874C07F",
-        "movb    %sil, 127(%rax,%r8,8)",
-    ));
-    insns.push((
-        i_Mov_R_M(2, rsi, Addr_IRRS(0x7F, rax, r8, 3)),
-        "66428974C07F",
-        "movw    %si, 127(%rax,%r8,8)",
-    ));
-    insns.push((
-        i_Mov_R_M(4, rsi, Addr_IRRS(0x7F, rax, r8, 3)),
-        "428974C07F",
-        "movl    %esi, 127(%rax,%r8,8)",
-    ));
-    insns.push((
-        i_Mov_R_M(8, rsi, Addr_IRRS(0x7F, rax, r8, 3)),
-        "4A8974C07F",
-        "movq    %rsi, 127(%rax,%r8,8)",
-    ));
-    //
-    insns.push((
-        i_Shift_R(false, ShiftKind::Left, 0, rdi),
-        "D3E7",
-        "shll    %cl, %edi",
-    ));
-    insns.push((
-        i_Shift_R(false, ShiftKind::Left, 5, rdi),
-        "C1E705",
-        "shll    $5, %edi",
-    ));
-    insns.push((
-        i_Shift_R(true, ShiftKind::Left, 5, rdi),
-        "48C1E705",
-        "shlq    $5, %rdi",
-    ));
-    insns.push((
-        i_Shift_R(true, ShiftKind::RightZ, 5, rdi),
-        "48C1EF05",
-        "shrq    $5, %rdi",
-    ));
-    insns.push((
-        i_Shift_R(true, ShiftKind::RightS, 5, rdi),
-        "48C1FF05",
-        "sarq    $5, %rdi",
-    ));
-    //
-    insns.push((i_Cmp_RMI_R(1, RMI_R(rcx), rdx), "38CA", "cmpb    %cl, %dl"));
-    insns.push((
-        i_Cmp_RMI_R(2, RMI_R(rcx), rdx),
-        "6639CA",
-        "cmpw    %cx, %dx",
-    ));
-    insns.push((
-        i_Cmp_RMI_R(4, RMI_R(rcx), rdx),
-        "39CA",
-        "cmpl    %ecx, %edx",
-    ));
-    insns.push((
-        i_Cmp_RMI_R(8, RMI_R(rcx), rdx),
-        "4839CA",
-        "cmpq    %rcx, %rdx",
-    ));
-    insns.push((
-        i_Cmp_RMI_R(1, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx),
-        "423A54C07F",
-        "cmpb    127(%rax,%r8,8), %dl",
-    ));
-    insns.push((
-        i_Cmp_RMI_R(2, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx),
-        "66423B54C07F",
-        "cmpw    127(%rax,%r8,8), %dx",
-    ));
-    insns.push((
-        i_Cmp_RMI_R(4, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx),
-        "423B54C07F",
-        "cmpl    127(%rax,%r8,8), %edx",
-    ));
-    insns.push((
-        i_Cmp_RMI_R(8, RMI_M(Addr_IRRS(0x7F, rax, r8, 3)), rdx),
-        "4A3B54C07F",
-        "cmpq    127(%rax,%r8,8), %rdx",
-    ));
-    insns.push((
-        i_Cmp_RMI_R(1, RMI_I(123), rdx),
-        "80FA7B",
-        "cmpb    $123, %dl",
-    ));
-    insns.push((
-        i_Cmp_RMI_R(2, RMI_I(456), rdx),
-        "6681FAC801",
-        "cmpw    $456, %dx",
-    ));
-    insns.push((
-        i_Cmp_RMI_R(4, RMI_I(789), rdx),
-        "81FA15030000",
-        "cmpl    $789, %edx",
-    ));
-    insns.push((
-        i_Cmp_RMI_R(8, RMI_I(-123i32 as u32), rdx),
-        "4883FA85",
-        "cmpq    $-123, %rdx",
-    ));
-    //
-    insns.push((i_Push64(RMI_R(rcx)), "51", "pushq   %rcx"));
-    insns.push((
-        i_Push64(RMI_M(Addr_IR(0x7FFF_FFFF, rax))),
-        "FFB0FFFFFF7F",
-        "pushq   2147483647(%rax)",
-    ));
-    insns.push((i_Push64(RMI_I(456)), "68C8010000", "pushq   $456"));
+    // End of test cases for Addr
+    // ========================================================
 
-    // Minimal general tests for each insn.  Don't forget to include cases
-    // that test for removal of redundant REX prefixes.
+    // ========================================================
+    // General tests for each insn.  Don't forget to follow the
+    // guidelines commented just prior to |fn x64_emit|.
     //
     // Alu_RMI_R
     insns.push((
@@ -3075,14 +2957,44 @@ fn test_x64_insn_encoding_and_printing() {
         "addl    99(%rdi), %esi",
     ));
     insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_I(-127i32 as u32), rdx),
+        "4883C281",
+        "addq    $-127, %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_I(-129i32 as u32), rdx),
+        "4881C27FFFFFFF",
+        "addq    $-129, %rdx",
+    ));
+    insns.push((
         i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_I(76543210), rdx),
         "4881C2EAF48F04",
         "addq    $76543210, %rdx",
     ));
     insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-127i32 as u32), r8),
+        "4183C081",
+        "addl    $-127, %r8d",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-129i32 as u32), r8),
+        "4181C07FFFFFFF",
+        "addl    $-129, %r8d",
+    ));
+    insns.push((
         i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-76543210i32 as u32), r8),
         "4181C0160B70FB",
         "addl    $-76543210, %r8d",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-127i32 as u32), rsi),
+        "83C681",
+        "addl    $-127, %esi",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-129i32 as u32), rsi),
+        "81C67FFFFFFF",
+        "addl    $-129, %esi",
     ));
     insns.push((
         i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(76543210), rsi),
@@ -3142,9 +3054,29 @@ fn test_x64_insn_encoding_and_printing() {
         "imull   99(%rdi), %esi",
     ));
     insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_I(-127i32 as u32), rdx),
+        "486BD281",
+        "imulq   $-127, %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_I(-129i32 as u32), rdx),
+        "4869D27FFFFFFF",
+        "imulq   $-129, %rdx",
+    ));
+    insns.push((
         i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_I(76543210), rdx),
         "4869D2EAF48F04",
         "imulq   $76543210, %rdx",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-127i32 as u32), r8),
+        "456BC081",
+        "imull   $-127, %r8d",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-129i32 as u32), r8),
+        "4569C07FFFFFFF",
+        "imull   $-129, %r8d",
     ));
     insns.push((
         i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-76543210i32 as u32), r8),
@@ -3152,16 +3084,33 @@ fn test_x64_insn_encoding_and_printing() {
         "imull   $-76543210, %r8d",
     ));
     insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-127i32 as u32), rsi),
+        "6BF681",
+        "imull   $-127, %esi",
+    ));
+    insns.push((
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-129i32 as u32), rsi),
+        "69F67FFFFFFF",
+        "imull   $-129, %esi",
+    ));
+    insns.push((
         i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(76543210), rsi),
         "69F6EAF48F04",
         "imull   $76543210, %esi",
     ));
-    //
+
+    // ========================================================
     // Imm_R
+    //
     insns.push((
         i_Imm_R(false, 1234567, r14),
         "41BE87D61200",
         "movl    $1234567, %r14d",
+    ));
+    insns.push((
+        i_Imm_R(false, -126i64 as u64, r14),
+        "41BE82FFFFFF",
+        "movl    $-126, %r14d",
     ));
     insns.push((
         i_Imm_R(true, 1234567898765, r14),
@@ -3169,16 +3118,32 @@ fn test_x64_insn_encoding_and_printing() {
         "movabsq $1234567898765, %r14",
     ));
     insns.push((
+        i_Imm_R(true, -126i64 as u64, r14),
+        "49BE82FFFFFFFFFFFFFF",
+        "movabsq $-126, %r14",
+    ));
+    insns.push((
         i_Imm_R(false, 1234567, rcx),
         "B987D61200",
         "movl    $1234567, %ecx",
+    ));
+    insns.push((
+        i_Imm_R(false, -126i64 as u64, rcx),
+        "B982FFFFFF",
+        "movl    $-126, %ecx",
     ));
     insns.push((
         i_Imm_R(true, 1234567898765, rsi),
         "48BE8D26FB711F010000",
         "movabsq $1234567898765, %rsi",
     ));
-    //
+    insns.push((
+        i_Imm_R(true, -126i64 as u64, rbx),
+        "48BB82FFFFFFFFFFFFFF",
+        "movabsq $-126, %rbx",
+    ));
+
+    // ========================================================
     // Mov_R_R
     insns.push((i_Mov_R_R(false, rbx, rsi), "89DE", "movl    %ebx, %esi"));
     insns.push((i_Mov_R_R(false, rbx, r9), "4189D9", "movl    %ebx, %r9d"));
@@ -3188,7 +3153,8 @@ fn test_x64_insn_encoding_and_printing() {
     insns.push((i_Mov_R_R(true, rbx, r9), "4989D9", "movq    %rbx, %r9"));
     insns.push((i_Mov_R_R(true, r11, rsi), "4C89DE", "movq    %r11, %rsi"));
     insns.push((i_Mov_R_R(true, r12, r9), "4D89E1", "movq    %r12, %r9"));
-    //
+
+    // ========================================================
     // MovZX_M_R
     insns.push((
         i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, rcx), rsi),
@@ -3290,7 +3256,8 @@ fn test_x64_insn_encoding_and_printing() {
         "418B53F9",
         "movl    -7(%r11), %edx",
     ));
-    //
+
+    // ========================================================
     // Mov64_M_R
     insns.push((
         i_Mov64_M_R(Addr_IRRS(179, rax, rbx, 0), rcx),
@@ -3332,7 +3299,8 @@ fn test_x64_insn_encoding_and_printing() {
         "4F8B840AB3000000",
         "movq    179(%r10,%r9,1), %r8",
     ));
-    //
+
+    // ========================================================
     // MovSX_M_R
     insns.push((
         i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, rcx), rsi),
@@ -3434,7 +3402,8 @@ fn test_x64_insn_encoding_and_printing() {
         "496353F9",
         "movslq  -7(%r11), %rdx",
     ));
-    //
+
+    // ========================================================
     // Mov_R_M.  Byte stores are tricky.  Check everything carefully.
     insns.push((
         i_Mov_R_M(8, rax, Addr_IR(99, rdi)),
@@ -3759,12 +3728,18 @@ fn test_x64_insn_encoding_and_printing() {
         "45887E63",
         "movb    %r15b, 99(%r14)",
     ));
-    //
+
+    // ========================================================
     // Shift_R
     insns.push((
         i_Shift_R(false, ShiftKind::Left, 0, rdi),
         "D3E7",
         "shll    %cl, %edi",
+    ));
+    insns.push((
+        i_Shift_R(false, ShiftKind::Left, 0, r12),
+        "41D3E4",
+        "shll    %cl, %r12d",
     ));
     insns.push((
         i_Shift_R(false, ShiftKind::Left, 2, r8),
@@ -3777,6 +3752,11 @@ fn test_x64_insn_encoding_and_printing() {
         "shll    $31, %r13d",
     ));
     insns.push((
+        i_Shift_R(true, ShiftKind::Left, 0, r13),
+        "49D3E5",
+        "shlq    %cl, %r13",
+    ));
+    insns.push((
         i_Shift_R(true, ShiftKind::Left, 0, rdi),
         "48D3E7",
         "shlq    %cl, %rdi",
@@ -3785,6 +3765,11 @@ fn test_x64_insn_encoding_and_printing() {
         i_Shift_R(true, ShiftKind::Left, 2, r8),
         "49C1E002",
         "shlq    $2, %r8",
+    ));
+    insns.push((
+        i_Shift_R(true, ShiftKind::Left, 3, rbx),
+        "48C1E303",
+        "shlq    $3, %rbx",
     ));
     insns.push((
         i_Shift_R(true, ShiftKind::Left, 63, r13),
@@ -3851,7 +3836,8 @@ fn test_x64_insn_encoding_and_printing() {
         "49C1FD3F",
         "sarq    $63, %r13",
     ));
-    //
+
+    // ========================================================
     // Cmp_RMI_R
     insns.push((
         i_Cmp_RMI_R(8, RMI_R(r15), rdx),
@@ -4032,7 +4018,87 @@ fn test_x64_insn_encoding_and_printing() {
         "4080FE4C",
         "cmpb    $76, %sil",
     ));
-    //
+    // Extra byte-cases (paranoia!) for Cmp_RMI_R for first operand = R
+    insns.push((i_Cmp_RMI_R(1, RMI_R(rax), rbx), "38C3", "cmpb    %al, %bl"));
+    insns.push((i_Cmp_RMI_R(1, RMI_R(rbx), rax), "38D8", "cmpb    %bl, %al"));
+    insns.push((i_Cmp_RMI_R(1, RMI_R(rcx), rdx), "38CA", "cmpb    %cl, %dl"));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(rcx), rsi),
+        "4038CE",
+        "cmpb    %cl, %sil",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(rcx), r10),
+        "4138CA",
+        "cmpb    %cl, %r10b",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(rcx), r14),
+        "4138CE",
+        "cmpb    %cl, %r14b",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(rbp), rdx),
+        "4038EA",
+        "cmpb    %bpl, %dl",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(rbp), rsi),
+        "4038EE",
+        "cmpb    %bpl, %sil",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(rbp), r10),
+        "4138EA",
+        "cmpb    %bpl, %r10b",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(rbp), r14),
+        "4138EE",
+        "cmpb    %bpl, %r14b",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(r9), rdx),
+        "4438CA",
+        "cmpb    %r9b, %dl",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(r9), rsi),
+        "4438CE",
+        "cmpb    %r9b, %sil",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(r9), r10),
+        "4538CA",
+        "cmpb    %r9b, %r10b",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(r9), r14),
+        "4538CE",
+        "cmpb    %r9b, %r14b",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(r13), rdx),
+        "4438EA",
+        "cmpb    %r13b, %dl",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(r13), rsi),
+        "4438EE",
+        "cmpb    %r13b, %sil",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(r13), r10),
+        "4538EA",
+        "cmpb    %r13b, %r10b",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, RMI_R(r13), r14),
+        "4538EE",
+        "cmpb    %r13b, %r14b",
+    ));
+
+    // ========================================================
     // Push64
     insns.push((i_Push64(RMI_R(rdi)), "57", "pushq   %rdi"));
     insns.push((i_Push64(RMI_R(r8)), "4150", "pushq   %r8"));
@@ -4065,9 +4131,11 @@ fn test_x64_insn_encoding_and_printing() {
         "685F173B8A",
         "pushq   $-1975838881",
     ));
-    //
+
+    // ========================================================
     // JmpKnown skipped for now
-    //
+
+    // ========================================================
     // JmpUnknown
     insns.push((i_JmpUnknown(RM_R(rbp)), "FFE5", "jmp     *%rbp"));
     insns.push((i_JmpUnknown(RM_R(r11)), "41FFE3", "jmp     *%r11"));
@@ -4081,11 +4149,14 @@ fn test_x64_insn_encoding_and_printing() {
         "41FFA49241010000",
         "jmp     *321(%r10,%rdx,4)",
     ));
-    //
+
+    // ========================================================
     // JmpCond skipped for now
-    //
+
+    // ========================================================
     // CallKnown skipped for now
-    //
+
+    // ========================================================
     // CallUnknown
     insns.push((i_CallUnknown(RM_R(rbp)), "FFD5", "call    *%rbp"));
     insns.push((i_CallUnknown(RM_R(r11)), "41FFD3", "call    *%r11"));
@@ -4099,11 +4170,13 @@ fn test_x64_insn_encoding_and_printing() {
         "41FF949241010000",
         "call    *321(%r10,%rdx,4)",
     ));
-    //
+
+    // ========================================================
     // Ret
     insns.push((i_Ret(), "C3", "ret"));
 
-    // Actually run the tests
+    // ========================================================
+    // Actually run the tests!
     let rru = create_reg_universe();
     for (insn, expected_encoding, expected_printing) in insns {
         println!("     {}", insn.show_rru(Some(&rru)));
