@@ -1582,25 +1582,26 @@ fn emit_simm<CS: CodeSink>(sink: &mut CS, size: u8, simm32: u32) {
 // following situations.  Do this by creating the cross product resulting from
 // applying the following rules to each operand:
 //
-// * for any insn that mentions a register: one test using a register from the
-//   group [rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi] and a second one using a
-//   register from the group [r8, r9, r10, r11, r12, r13, r14, r15].  This
-//   helps detect incorrect REX prefix construction.
+// (1) for any insn that mentions a register: one test using a register from
+//     the group [rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi] and a second one
+//     using a register from the group [r8, r9, r10, r11, r12, r13, r14, r15].
+//     This helps detect incorrect REX prefix construction.
 //
-// * for any insn that mentions a byte register: one test for each of the four
-//   encoding groups [al, cl, dl, bl], [spl, bpl, sil, dil], [r8b .. r11b] and
-//   [r12b .. r15b].  This checks that apparently-redundant REX prefixes are
-//   retained when required.
+// (2) for any insn that mentions a byte register: one test for each of the
+//     four encoding groups [al, cl, dl, bl], [spl, bpl, sil, dil],
+//     [r8b .. r11b] and [r12b .. r15b].  This checks that
+//     apparently-redundant REX prefixes are retained when required.
 //
-// * for any insn that contains an immediate field, check the following cases:
-//   field is zero, field is in simm8 range (-128 .. 127), field is in simm32
-//   range (-0x8000_0000 .. 0x7FFF_FFFF).  This is because some instructions
-//   that require a 32-bit immediate have a short-form encoding when the imm
-//   is in simm8 range.
+// (3) for any insn that contains an immediate field, check the following
+//     cases: field is zero, field is in simm8 range (-128 .. 127), field is
+//     in simm32 range (-0x8000_0000 .. 0x7FFF_FFFF).  This is because some
+//     instructions that require a 32-bit immediate have a short-form encoding
+//     when the imm is in simm8 range.
 //
-// * for all instructions, also add a test that uses only low-half registers
-//   (rax .. rdi, xmm0 .. xmm7) etc, so as to check that any redundant REX
-//   prefixes are correctly omitted.
+// Rules (1), (2) and (3) don't apply for registers within address expressions
+// (|Addr|s).  Those are already pretty well tested, and the registers in them
+// don't have any effect on the containing instruction (apart from possibly
+// require REX prefix bits).
 //
 // When choosing registers for a test, avoid using registers with the same
 // offset within a given group.  For example, don't use rax and r8, since they
@@ -1610,13 +1611,13 @@ fn emit_simm<CS: CodeSink>(sink: &mut CS, size: u8, simm32: u32) {
 // bpl since they have the same offset in their group; use instead (eg) cl and
 // sil.
 //
+// For all instructions, also add a test that uses only low-half registers
+// (rax .. rdi, xmm0 .. xmm7) etc, so as to check that any redundant REX
+// prefixes are correctly omitted.  This low-half restriction must apply to
+// _all_ registers in the insn, even those in address expressions.
+//
 // Following these rules creates large numbers of test cases, but it's the
 // only way to make the emitter reliable.
-//
-// The above rules don't apply for registers within address expressions
-// (|Addr|s).  Those are already pretty well tested, and the registers in them
-// don't have any effect on the containing instruction (apart from possibly
-// require REX prefix bits).
 //
 // Known possible improvements:
 //
