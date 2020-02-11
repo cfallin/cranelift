@@ -107,53 +107,32 @@ impl ARM64ABIBody {
 
 // Get a sequence of instructions and a memory argument that together
 // will compute the address of a location on the stack, relative to FP.
-fn get_stack_addr(fp_offset: i64) -> (Vec<Inst>, MemArg) {
-    if let Some(simm9) = SImm9::maybe_from_i64(fp_offset) {
-        let mem = MemArg::BaseSImm9(fp_reg(), simm9);
-        (vec![], mem)
-    } else {
-        let tmp = spilltmp_reg();
-        let const_data = u64_constant(fp_offset as u64);
-        let const_inst = Inst::ULoad64 {
-            rd: tmp,
-            mem: MemArg::label(MemLabel::ConstantData(const_data)),
-        };
-        let add_inst = Inst::AluRRR {
-            alu_op: ALUOp::Add64,
-            rd: tmp,
-            rn: tmp,
-            rm: fp_reg(),
-        };
-        (vec![const_inst, add_inst], MemArg::Base(tmp))
-    }
+fn get_stack_addr(fp_offset: i64) -> MemArg {
+    MemArg::StackOffset(fp_offset)
 }
 
-fn load_stack(fp_offset: i64, into_reg: Reg, ty: Type) -> Vec<Inst> {
-    let (mut insts, mem) = get_stack_addr(fp_offset);
+fn load_stack(fp_offset: i64, into_reg: Reg, ty: Type) -> Inst {
+    let mem = get_stack_addr(fp_offset);
 
-    let inst = match ty {
+    match ty {
         types::B1 | types::B8 | types::I8 => Inst::ULoad8 { rd: into_reg, mem },
         types::B16 | types::I16 => Inst::ULoad16 { rd: into_reg, mem },
         types::B32 | types::I32 => Inst::ULoad32 { rd: into_reg, mem },
         types::B64 | types::I64 => Inst::ULoad64 { rd: into_reg, mem },
         _ => unimplemented!(),
-    };
-    insts.push(inst);
-    insts
+    }
 }
 
-fn store_stack(fp_offset: i64, from_reg: Reg, ty: Type) -> Vec<Inst> {
-    let (mut insts, mem) = get_stack_addr(fp_offset);
+fn store_stack(fp_offset: i64, from_reg: Reg, ty: Type) -> Inst {
+    let mem = get_stack_addr(fp_offset);
 
-    let inst = match ty {
+    match ty {
         types::B1 | types::B8 | types::I8 => Inst::Store8 { rd: from_reg, mem },
         types::B16 | types::I16 => Inst::Store16 { rd: from_reg, mem },
         types::B32 | types::I32 => Inst::Store32 { rd: from_reg, mem },
         types::B64 | types::I64 => Inst::Store64 { rd: from_reg, mem },
         _ => unimplemented!(),
-    };
-    insts.push(inst);
-    insts
+    }
 }
 
 fn is_callee_save(r: RealReg) -> bool {
@@ -240,19 +219,19 @@ impl ABIBody<Inst> for ARM64ABIBody {
         self.stackslots.len()
     }
 
-    fn load_arg(&self, idx: usize, into_reg: Reg) -> Vec<Inst> {
+    fn load_arg(&self, idx: usize, into_reg: Reg) -> Inst {
         match &self.args[idx] {
             &ABIArg::Reg(r) => {
-                return vec![Inst::gen_move(into_reg, r.to_reg())];
+                return Inst::gen_move(into_reg, r.to_reg());
             }
             _ => unimplemented!(),
         }
     }
 
-    fn store_retval(&self, idx: usize, from_reg: Reg) -> Vec<Inst> {
+    fn store_retval(&self, idx: usize, from_reg: Reg) -> Inst {
         match &self.rets[idx] {
             &ABIRet::Reg(r) => {
-                return vec![Inst::gen_move(r.to_reg(), from_reg)];
+                return Inst::gen_move(r.to_reg(), from_reg);
             }
             _ => unimplemented!(),
         }
@@ -266,20 +245,14 @@ impl ABIBody<Inst> for ARM64ABIBody {
         self.clobbered = clobbered;
     }
 
-    fn load_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, into_reg: Reg) -> Vec<Inst> {
+    fn load_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, into_reg: Reg) -> Inst {
         // Offset from beginning of stackslot area, which is at FP - stackslots_size.
         let stack_off = self.stackslots[slot.as_u32() as usize] as i64;
         let fp_off: i64 = -(self.stackslots_size as i64) + stack_off + (offset as i64);
         load_stack(fp_off, into_reg, ty)
     }
 
-    fn store_stackslot(
-        &self,
-        slot: StackSlot,
-        offset: usize,
-        ty: Type,
-        from_reg: Reg,
-    ) -> Vec<Inst> {
+    fn store_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, from_reg: Reg) -> Inst {
         // Offset from beginning of stackslot area, which is at FP - stackslots_size.
         let stack_off = self.stackslots[slot.as_u32() as usize] as i64;
         let fp_off: i64 = -(self.stackslots_size as i64) + stack_off + (offset as i64);
@@ -287,7 +260,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
     }
 
     // Load from a spillslot.
-    fn load_spillslot(&self, slot: SpillSlot, ty: Type, into_reg: Reg) -> Vec<Inst> {
+    fn load_spillslot(&self, slot: SpillSlot, ty: Type, into_reg: Reg) -> Inst {
         // Note that when spills/fills are generated, we don't yet know how many
         // spillslots there will be, so we allocate *downward* from the beginning
         // of the stackslot area. Hence: FP - stackslot_size - 8*spillslot -
@@ -299,7 +272,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
     }
 
     // Store to a spillslot.
-    fn store_spillslot(&self, slot: SpillSlot, ty: Type, from_reg: Reg) -> Vec<Inst> {
+    fn store_spillslot(&self, slot: SpillSlot, ty: Type, from_reg: Reg) -> Inst {
         let slot = slot.get() as i64;
         let ty_size = self.get_spillslot_size(from_reg.get_class(), ty) * 8;
         let fp_off: i64 = -(self.stackslots_size as i64) - (8 * slot) - ty_size as i64;
@@ -425,11 +398,11 @@ impl ABIBody<Inst> for ARM64ABIBody {
         }
     }
 
-    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, ty: Type) -> Vec<Inst> {
+    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, ty: Type) -> Inst {
         self.store_spillslot(to_slot, ty, from_reg.to_reg())
     }
 
-    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, ty: Type) -> Vec<Inst> {
+    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, ty: Type) -> Inst {
         self.load_spillslot(from_slot, ty, to_reg.to_reg())
     }
 }

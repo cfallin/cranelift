@@ -190,18 +190,16 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         if let Some(entry_bb) = self.f.layout.entry_block() {
             for (i, param) in self.f.dfg.block_params(entry_bb).iter().enumerate() {
                 let reg = self.value_regs[*param];
-                for insn in self.vcode.abi().load_arg(i, reg).into_iter() {
-                    self.vcode.push(insn);
-                }
+                let insn = self.vcode.abi().load_arg(i, reg);
+                self.vcode.push(insn);
             }
         }
     }
 
     fn gen_retval_setup(&mut self) {
         for (i, r) in self.retval_regs.iter().enumerate() {
-            for insn in self.vcode.abi().store_retval(i, *r).into_iter() {
-                self.vcode.push(insn);
-            }
+            let insn = self.vcode.abi().store_retval(i, *r);
+            self.vcode.push(insn);
         }
     }
 

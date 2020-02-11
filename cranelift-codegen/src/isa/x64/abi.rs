@@ -45,11 +45,11 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn load_arg(&self, _idx: usize, _into_reg: Reg) -> Vec<Inst> {
+    fn load_arg(&self, _idx: usize, _into_reg: Reg) -> Inst {
         unimplemented!()
     }
 
-    fn store_retval(&self, _idx: usize, _from_reg: Reg) -> Vec<Inst> {
+    fn store_retval(&self, _idx: usize, _from_reg: Reg) -> Inst {
         unimplemented!()
     }
 
@@ -61,31 +61,19 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn load_stackslot(
-        &self,
-        _slot: StackSlot,
-        _offset: usize,
-        _ty: Type,
-        _into_reg: Reg,
-    ) -> Vec<Inst> {
+    fn load_stackslot(&self, _slot: StackSlot, _offset: usize, _ty: Type, _into_reg: Reg) -> Inst {
         unimplemented!()
     }
 
-    fn store_stackslot(
-        &self,
-        _slot: StackSlot,
-        _offset: usize,
-        _ty: Type,
-        _from_reg: Reg,
-    ) -> Vec<Inst> {
+    fn store_stackslot(&self, _slot: StackSlot, _offset: usize, _ty: Type, _from_reg: Reg) -> Inst {
         unimplemented!()
     }
 
-    fn load_spillslot(&self, _slot: SpillSlot, _ty: Type, _into_reg: Reg) -> Vec<Inst> {
+    fn load_spillslot(&self, _slot: SpillSlot, _ty: Type, _into_reg: Reg) -> Inst {
         unimplemented!()
     }
 
-    fn store_spillslot(&self, _slot: SpillSlot, _ty: Type, _from_reg: Reg) -> Vec<Inst> {
+    fn store_spillslot(&self, _slot: SpillSlot, _ty: Type, _from_reg: Reg) -> Inst {
         unimplemented!()
     }
 
@@ -107,11 +95,11 @@ impl ABIBody<Inst> for X64ABIBody {
         }
     }
 
-    fn gen_spill(&self, _to_slot: SpillSlot, _from_reg: RealReg, _ty: Type) -> Vec<Inst> {
+    fn gen_spill(&self, _to_slot: SpillSlot, _from_reg: RealReg, _ty: Type) -> Inst {
         unimplemented!()
     }
 
-    fn gen_reload(&self, _to_reg: RealReg, _from_slot: SpillSlot, _ty: Type) -> Vec<Inst> {
+    fn gen_reload(&self, _to_reg: RealReg, _from_slot: SpillSlot, _ty: Type) -> Inst {
         unimplemented!()
     }
 }

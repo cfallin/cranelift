@@ -23,13 +23,29 @@ use std::string::{String, ToString};
 //=============================================================================
 // Registers, the Universe thereof, and printing
 
+const XREG_INDICES: [u8; 31] = [
+    // X0 - X7
+    32, 33, 34, 35, 36, 37, 38, 39, // X8 - X14
+    40, 41, 42, 43, 44, 45, 46, // X15
+    59, // X16, X17
+    47, 48, // X18
+    60, // X19 - X28
+    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, // X29
+    61, // X30
+    62,
+];
+
+const ZERO_REG_INDEX: u8 = 63;
+
+const SP_REG_INDEX: u8 = 64;
+
 /// Get a reference to an X-register (integer register).
 pub fn xreg(num: u8) -> Reg {
-    assert!(num < 32);
+    assert!(num < 31);
     Reg::new_real(
         RegClass::I64,
         /* enc = */ num,
-        /* index = */ 32u8 + num,
+        /* index = */ XREG_INDICES[num as usize],
     )
 }
 
@@ -41,11 +57,12 @@ pub fn vreg(num: u8) -> Reg {
 
 /// Get a reference to the zero-register.
 pub fn zero_reg() -> Reg {
-    // This should be the same as what xreg(31) returns.
+    // This should be the same as what xreg(31) returns, except that
+    // we use the special index into the register index space.
     Reg::new_real(
         RegClass::I64,
         /* enc = */ 31,
-        /* index = */ 32u8 + 31,
+        /* index = */ ZERO_REG_INDEX,
     )
 }
 
@@ -59,7 +76,7 @@ pub fn stack_reg() -> Reg {
     Reg::new_real(
         RegClass::I64,
         /* enc = */ 31,
-        /* index = */ 32u8 + 31 + 1,
+        /* index = */ SP_REG_INDEX,
     )
 }
 
@@ -107,6 +124,9 @@ pub fn create_reg_universe() -> RealRegUniverse {
     }
     let v_reg_last = v_reg_base + v_reg_count - 1;
 
+    // Add the X registers. N.B.: the order here must match the order implied
+    // by XREG_INDICES, ZERO_REG_INDEX, and SP_REG_INDEX above.
+
     let x_reg_base = 32u8; // in contiguous real-register index space
     let mut x_reg_count = 0;
     for i in 0u8..32u8 {
@@ -143,6 +163,12 @@ pub fn create_reg_universe() -> RealRegUniverse {
     // to 65, which is potentially inconvenient from a compiler performance
     // standpoint.  We could possibly drop back to 64 by "losing" a vector
     // register in future.
+
+    // Assert sanity: the indices in the register structs must match their
+    // actual indices in the array.
+    for (i, reg) in regs.iter().enumerate() {
+        assert_eq!(i, reg.0.get_index());
+    }
 
     RealRegUniverse {
         regs,
@@ -526,6 +552,8 @@ pub enum MemArg {
     Label(MemLabel),
     PreIndexed(Reg, SImm9),
     PostIndexed(Reg, SImm9),
+    /// Offset from the frame pointer.
+    StackOffset(i64),
 }
 
 impl MemArg {
@@ -911,6 +939,9 @@ fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Reg>) {
         &MemArg::PreIndexed(reg, ..) | &MemArg::PostIndexed(reg, ..) => {
             modified.insert(reg);
         }
+        &MemArg::StackOffset(..) => {
+            used.insert(fp_reg());
+        }
     }
 }
 
@@ -1050,6 +1081,7 @@ fn arm64_map_regs(
             &MemArg::Label(ref l) => MemArg::Label(l.clone()),
             &MemArg::PreIndexed(r, simm9) => MemArg::PreIndexed(map(u, r), simm9),
             &MemArg::PostIndexed(r, simm9) => MemArg::PostIndexed(map(u, r), simm9),
+            &MemArg::StackOffset(off) => MemArg::StackOffset(off),
         }
     }
 
@@ -1242,6 +1274,38 @@ fn arm64_map_regs(
     *inst = newval;
 }
 
+//============================================================================
+// Memory addressing mode finalization: convert "special" modes (e.g.,
+// generic arbitrary stack offset) into real addressing modes, possibly by
+// emitting some helper instructions that come immediately before the use
+// of this amod.
+
+fn mem_finalize(mem: &MemArg) -> (Vec<Inst>, MemArg) {
+    match mem {
+        &MemArg::StackOffset(fp_offset) => {
+            if let Some(simm9) = SImm9::maybe_from_i64(fp_offset) {
+                let mem = MemArg::BaseSImm9(fp_reg(), simm9);
+                (vec![], mem)
+            } else {
+                let tmp = spilltmp_reg();
+                let const_data = u64_constant(fp_offset as u64);
+                let const_inst = Inst::ULoad64 {
+                    rd: tmp,
+                    mem: MemArg::label(MemLabel::ConstantData(const_data)),
+                };
+                let add_inst = Inst::AluRRR {
+                    alu_op: ALUOp::Add64,
+                    rd: tmp,
+                    rn: tmp,
+                    rm: fp_reg(),
+                };
+                (vec![const_inst, add_inst], MemArg::Base(tmp))
+            }
+        }
+        _ => (vec![], mem.clone()),
+    }
+}
+
 //=============================================================================
 // Instructions and subcomponents: emission
 
@@ -1357,7 +1421,6 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     ALUOp::And64 => 0b10001010_000,
                     ALUOp::SubS32 => 0b01101011_000,
                     ALUOp::SubS64 => 0b11101011_000,
-                    _ => unimplemented!(),
                 };
                 sink.put4(enc_arith_rrr(top11, 0b000_000, rd, rn, rm));
             }
@@ -1423,6 +1486,12 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem } => {
+                let (mem_insts, mem) = mem_finalize(mem);
+
+                for inst in mem_insts.into_iter() {
+                    inst.emit(sink);
+                }
+
                 // This is the base opcode (top 10 bits) for the "unscaled
                 // immediate" form (BaseSImm9). Other addressing modes will OR in
                 // other values for bits 24/25 (bits 1/2 of this constant).
@@ -1436,7 +1505,7 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     &Inst::ULoad64 { .. } => 0b1111100001,
                     _ => unreachable!(),
                 };
-                match mem {
+                match &mem {
                     &MemArg::Base(reg) => {
                         sink.put4(enc_ldst_simm9(op, SImm9::zero(), 0b00, reg, rd));
                     }
@@ -1484,6 +1553,8 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     &MemArg::PostIndexed(reg, simm9) => {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b01, reg, rd));
                     }
+                    // Eliminated by `mem_finalize()` above.
+                    &MemArg::StackOffset(..) => panic!("Should not see StackOffset here!"),
                 }
             }
 
@@ -1491,6 +1562,12 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem } => {
+                let (mem_insts, mem) = mem_finalize(mem);
+
+                for inst in mem_insts.into_iter() {
+                    inst.emit(sink);
+                }
+
                 let op = match self {
                     &Inst::Store8 { .. } => 0b0011100000,
                     &Inst::Store16 { .. } => 0b0111100000,
@@ -1498,7 +1575,7 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     &Inst::Store64 { .. } => 0b1111100000,
                     _ => unreachable!(),
                 };
-                match mem {
+                match &mem {
                     &MemArg::Base(reg) => {
                         sink.put4(enc_ldst_simm9(op, SImm9::zero(), 0b00, reg, rd));
                     }
@@ -1523,6 +1600,8 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     &MemArg::PostIndexed(reg, simm9) => {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b01, reg, rd));
                     }
+                    // Eliminated by `mem_finalize()` above.
+                    &MemArg::StackOffset(..) => panic!("Should not see StackOffset here!"),
                 }
             }
 
@@ -1921,6 +2000,8 @@ impl ShowWithRRU for MemArg {
             &MemArg::PostIndexed(r, simm9) => {
                 format!("[{}], {}", r.show_rru(mb_rru), simm9.show_rru(mb_rru))
             }
+            // Eliminated by `mem_finalize()`.
+            &MemArg::StackOffset(..) => panic!("Unexpected StackOffset mem-arg mode!"),
         }
     }
 }
@@ -1978,6 +2059,19 @@ impl ShowWithRRU for BranchTarget {
             &BranchTarget::ResolvedOffset(block, _) => format!("block{}", block),
         }
     }
+}
+fn mem_finalize_for_show(mem: &MemArg, mb_rru: Option<&RealRegUniverse>) -> (String, MemArg) {
+    let (mem_insts, mem) = mem_finalize(mem);
+    let mut mem_str = mem_insts
+        .into_iter()
+        .map(|inst| inst.show_rru(mb_rru))
+        .collect::<Vec<_>>()
+        .join(" ; ");
+    if !mem_str.is_empty() {
+        mem_str += " ; ";
+    }
+
+    (mem_str, mem)
 }
 
 impl ShowWithRRU for Inst {
@@ -2084,7 +2178,9 @@ impl ShowWithRRU for Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem } => {
-                let is_unscaled_base = match mem {
+                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru);
+
+                let is_unscaled_base = match &mem {
                     &MemArg::Base(..) | &MemArg::BaseSImm9(..) => true,
                     _ => false,
                 };
@@ -2105,16 +2201,17 @@ impl ShowWithRRU for Inst {
                     (&Inst::ULoad64 { .. }, true) => ("ldur", false),
                     _ => unreachable!(),
                 };
-                // TODO: LDUR* variants when "unscaled" (SImm9) offset.
                 let rd = show_ireg_sized(rd, mb_rru, is32);
                 let mem = mem.show_rru(mb_rru);
-                format!("{} {}, {}", op, rd, mem)
+                format!("{}{} {}, {}", mem_str, op, rd, mem)
             }
             &Inst::Store8 { rd, ref mem }
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem } => {
-                let is_unscaled_base = match mem {
+                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru);
+
+                let is_unscaled_base = match &mem {
                     &MemArg::Base(..) | &MemArg::BaseSImm9(..) => true,
                     _ => false,
                 };
@@ -2131,7 +2228,7 @@ impl ShowWithRRU for Inst {
                 };
                 let rd = show_ireg_sized(rd, mb_rru, is32);
                 let mem = mem.show_rru(mb_rru);
-                format!("{} {}, {}", op, rd, mem)
+                format!("{}{} {}, {}", mem_str, op, rd, mem)
             }
             &Inst::StoreP64 { rt, rt2, ref mem } => {
                 let rt = rt.show_rru(mb_rru);
@@ -2588,6 +2685,14 @@ mod test {
             },
             "410441F8",
             "ldr x1, [x2], #16",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: xreg(1),
+                mem: MemArg::StackOffset(32768),
+            },
+            "0F000058EF011D8BE10140F8",
+            "ldr x15, !!constant!! ; add x15, x15, fp ; ldur x1, [x15]",
         ));
 
         insns.push((

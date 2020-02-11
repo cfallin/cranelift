@@ -24,10 +24,10 @@ pub trait ABIBody<I: VCodeInst> {
     fn num_stackslots(&self) -> usize;
 
     /// Generate an argument load sequence, given a destination register.
-    fn load_arg(&self, idx: usize, into_reg: Reg) -> Vec<I>;
+    fn load_arg(&self, idx: usize, into_reg: Reg) -> I;
 
     /// Generate a return-value store sequence, given a source register.
-    fn store_retval(&self, idx: usize, from_reg: Reg) -> Vec<I>;
+    fn store_retval(&self, idx: usize, from_reg: Reg) -> I;
 
     // -----------------------------------------------------------------
     // Every function above this line may only be called pre-regalloc.
@@ -43,16 +43,16 @@ pub trait ABIBody<I: VCodeInst> {
     fn set_clobbered(&mut self, clobbered: Set<RealReg>);
 
     /// Load from a stackslot.
-    fn load_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, into_reg: Reg) -> Vec<I>;
+    fn load_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, into_reg: Reg) -> I;
 
     /// Store to a stackslot.
-    fn store_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, from_reg: Reg) -> Vec<I>;
+    fn store_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, from_reg: Reg) -> I;
 
     /// Load from a spillslot.
-    fn load_spillslot(&self, slot: SpillSlot, ty: Type, into_reg: Reg) -> Vec<I>;
+    fn load_spillslot(&self, slot: SpillSlot, ty: Type, into_reg: Reg) -> I;
 
     /// Store to a spillslot.
-    fn store_spillslot(&self, slot: SpillSlot, ty: Type, from_reg: Reg) -> Vec<I>;
+    fn store_spillslot(&self, slot: SpillSlot, ty: Type, from_reg: Reg) -> I;
 
     /// Generate a prologue, post-regalloc. This should include any stack frame
     /// or other setup necessary to use the other methods (`load_arg`,
@@ -69,10 +69,10 @@ pub trait ABIBody<I: VCodeInst> {
     fn get_spillslot_size(&self, rc: RegClass, ty: Type) -> u32;
 
     /// Generate a spill.
-    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, ty: Type) -> Vec<I>;
+    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, ty: Type) -> I;
 
     /// Generate a reload (fill).
-    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, ty: Type) -> Vec<I>;
+    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, ty: Type) -> I;
 }
 
 /// Trait implemented by an object that tracks ABI-related state and can

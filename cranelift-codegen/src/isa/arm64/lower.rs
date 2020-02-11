@@ -33,7 +33,6 @@ fn is_alu_op(op: Opcode, ctrl_typevar: Type) -> bool {
     op_to_aluop(op, ctrl_typevar).is_some()
 }
 
-
 //============================================================================
 // Result enum types.
 //
