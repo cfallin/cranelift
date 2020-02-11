@@ -385,9 +385,12 @@ pub enum Addr {
     },
 }
 pub fn Addr_IR(simm32: u32, base: Reg) -> Addr {
+    debug_assert!(base.get_class() == RegClass::I64);
     Addr::IR { simm32, base }
 }
 pub fn Addr_IRRS(simm32: u32, base: Reg, index: Reg, shift: u8) -> Addr {
+    debug_assert!(base.get_class() == RegClass::I64);
+    debug_assert!(index.get_class() == RegClass::I64);
     debug_assert!(shift <= 3);
     Addr::IRRS {
         simm32,
@@ -428,6 +431,7 @@ pub enum RMI {
     I { simm32: u32 },
 }
 pub fn RMI_R(reg: Reg) -> RMI {
+    debug_assert!(reg.get_class() == RegClass::I64);
     RMI::R { reg }
 }
 pub fn RMI_M(addr: Addr) -> RMI {
@@ -457,6 +461,7 @@ pub enum RM {
     M { addr: Addr },
 }
 pub fn RM_R(reg: Reg) -> RM {
+    debug_assert!(reg.get_class() == RegClass::I64);
     RM::R { reg }
 }
 pub fn RM_M(addr: Addr) -> RM {
@@ -714,10 +719,12 @@ fn low8willSXto32(x: u32) -> bool {
 }
 
 pub fn i_Alu_RMI_R(is64: bool, op: RMI_R_Op, src: RMI, dst: Reg) -> Inst {
+    debug_assert!(dst.get_class() == RegClass::I64);
     Inst::Alu_RMI_R { is64, op, src, dst }
 }
 
 pub fn i_Imm_R(dstIs64: bool, simm64: u64, dst: Reg) -> Inst {
+    debug_assert!(dst.get_class() == RegClass::I64);
     if !dstIs64 {
         debug_assert!(low32willSXto64(simm64));
     }
@@ -729,18 +736,23 @@ pub fn i_Imm_R(dstIs64: bool, simm64: u64, dst: Reg) -> Inst {
 }
 
 pub fn i_Mov_R_R(is64: bool, src: Reg, dst: Reg) -> Inst {
+    debug_assert!(src.get_class() == RegClass::I64);
+    debug_assert!(dst.get_class() == RegClass::I64);
     Inst::Mov_R_R { is64, src, dst }
 }
 
 pub fn i_MovZX_M_R(extMode: ExtMode, addr: Addr, dst: Reg) -> Inst {
+    debug_assert!(dst.get_class() == RegClass::I64);
     Inst::MovZX_M_R { extMode, addr, dst }
 }
 
 pub fn i_Mov64_M_R(addr: Addr, dst: Reg) -> Inst {
+    debug_assert!(dst.get_class() == RegClass::I64);
     Inst::Mov64_M_R { addr, dst }
 }
 
 pub fn i_MovSX_M_R(extMode: ExtMode, addr: Addr, dst: Reg) -> Inst {
+    debug_assert!(dst.get_class() == RegClass::I64);
     Inst::MovSX_M_R { extMode, addr, dst }
 }
 
@@ -750,6 +762,7 @@ pub fn i_Mov_R_M(
     addr: Addr,
 ) -> Inst {
     debug_assert!(size == 8 || size == 4 || size == 2 || size == 1);
+    debug_assert!(src.get_class() == RegClass::I64);
     Inst::Mov_R_M { size, src, addr }
 }
 
@@ -760,6 +773,7 @@ pub fn i_Shift_R(
     dst: Reg,
 ) -> Inst {
     debug_assert!(nBits < if is64 { 64 } else { 32 });
+    debug_assert!(dst.get_class() == RegClass::I64);
     Inst::Shift_R {
         is64,
         kind,
@@ -774,6 +788,7 @@ pub fn i_Cmp_RMI_R(
     dst: Reg,
 ) -> Inst {
     debug_assert!(size == 8 || size == 4 || size == 2 || size == 1);
+    debug_assert!(dst.get_class() == RegClass::I64);
     Inst::Cmp_RMI_R { size, src, dst }
 }
 
