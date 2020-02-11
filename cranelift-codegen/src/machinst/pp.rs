@@ -1,7 +1,9 @@
 //! Pretty-printing for machine code (virtual-registerized or final).
 
-use regalloc::{RealRegUniverse, Reg};
+use regalloc::{RealRegUniverse, Reg, WritableReg};
 
+use std::fmt::Debug;
+use std::hash::Hash;
 use std::string::{String, ToString};
 
 // FIXME: Should this go into regalloc.rs instead?
@@ -50,5 +52,15 @@ impl ShowWithRRU for Reg {
         // since interpretation of the size is target specific, but this code
         // is used by all targets.
         panic!("Reg::show_rru_sized: impossible to implement");
+    }
+}
+
+impl<R: ShowWithRRU + Copy + Ord + Hash + Eq + Debug> ShowWithRRU for WritableReg<R> {
+    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+        self.to_reg().show_rru(mb_rru)
+    }
+
+    fn show_rru_sized(&self, mb_rru: Option<&RealRegUniverse>, size: u8) -> String {
+        self.to_reg().show_rru_sized(mb_rru, size)
     }
 }

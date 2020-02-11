@@ -12,7 +12,7 @@ use crate::machinst::*;
 use crate::isa::arm64::inst::*;
 use crate::isa::arm64::Arm64Backend;
 
-use regalloc::{RealReg, Reg, RegClass, VirtualReg};
+use regalloc::{RealReg, Reg, RegClass, VirtualReg, WritableReg};
 
 use smallvec::SmallVec;
 
@@ -186,7 +186,7 @@ fn input_to_reg<'a>(ctx: Ctx<'a>, input: InsnInput) -> Reg {
 }
 
 /// Lower an instruction output to a reg.
-fn output_to_reg<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Reg {
+fn output_to_reg<'a>(ctx: Ctx<'a>, out: InsnOutput) -> WritableReg<Reg> {
     ctx.output(out.insn, out.output)
 }
 
@@ -237,7 +237,7 @@ fn output_to_rse<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSE {
     }
 
     // Otherwise, just return the register corresponding to the output.
-    ResultRSE::Reg(output_to_reg(ctx, out))
+    ResultRSE::Reg(output_to_reg(ctx, out).to_reg())
 }
 
 /// Lower an instruction output to a reg, reg/shift, reg/extend, or 12-bit immediate operand.
@@ -285,7 +285,7 @@ fn input_to_rse_immlogic<'a>(ctx: Ctx<'a>, input: InsnInput) -> ResultRSEImmLogi
     }
 }
 
-fn alu_inst_imm12(op: ALUOp, rd: Reg, rn: Reg, rm: ResultRSEImm12) -> Inst {
+fn alu_inst_imm12(op: ALUOp, rd: WritableReg<Reg>, rn: Reg, rm: ResultRSEImm12) -> Inst {
     match rm {
         ResultRSEImm12::Imm12(imm12) => Inst::AluRRImm12 {
             alu_op: op,
@@ -352,15 +352,15 @@ fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset:
         ctx.emit(Inst::AluRRR {
             alu_op: ALUOp::Add64,
             rd: addr.clone(),
-            rn: addr.clone(),
+            rn: addr.to_reg(),
             rm: reg.clone(),
         });
     }
 
-    MemArg::Base(addr)
+    MemArg::Base(addr.to_reg())
 }
 
-fn lower_constant<'a>(ctx: Ctx<'a>, rd: Reg, value: u64) {
+fn lower_constant<'a>(ctx: Ctx<'a>, rd: WritableReg<Reg>, value: u64) {
     if let Some(imm) = MoveWideConst::maybe_from_u64(value) {
         // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVZ
         ctx.emit(Inst::MovZ { rd, imm });
@@ -677,7 +677,7 @@ impl LowerBackend for Arm64Backend {
                     );
                     let ty = ctx.input_ty(branches[0], 0);
                     let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
-                    let rd = zero_reg();
+                    let rd = writable_zero_reg();
                     ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
                     let cond = lower_condcode(inst_condcode(ctx.data(branches[0])).unwrap());
                     ctx.emit(Inst::CondBr {

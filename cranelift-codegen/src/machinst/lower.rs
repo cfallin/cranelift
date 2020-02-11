@@ -12,7 +12,7 @@ use crate::machinst::{
 use crate::num_uses::NumUses;
 
 use regalloc::Function as RegallocFunction;
-use regalloc::{RealReg, Reg, RegClass, VirtualReg};
+use regalloc::{RealReg, Reg, WritableReg, RegClass, VirtualReg};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -38,7 +38,7 @@ pub trait LowerCtx<I> {
     /// Get the `idx`th input to the given IR instruction as a virtual register.
     fn input(&self, ir_inst: Inst, idx: usize) -> Reg;
     /// Get the `idx`th output of the given IR instruction as a virtual register.
-    fn output(&self, ir_inst: Inst, idx: usize) -> Reg;
+    fn output(&self, ir_inst: Inst, idx: usize) -> WritableReg<Reg>;
     /// Get the number of inputs to the given IR instruction.
     fn num_inputs(&self, ir_inst: Inst) -> usize;
     /// Get the number of outputs to the given IR instruction.
@@ -48,13 +48,13 @@ pub trait LowerCtx<I> {
     /// Get the type for an instruction's output.
     fn output_ty(&self, ir_inst: Inst, idx: usize) -> Type;
     /// Get a new temp.
-    fn tmp(&mut self, rc: RegClass, ty: Type) -> Reg;
+    fn tmp(&mut self, rc: RegClass, ty: Type) -> WritableReg<Reg>;
     /// Get the number of block params.
     fn num_bb_params(&self, bb: Block) -> usize;
     /// Get the register for a block param.
     fn bb_param(&self, bb: Block, idx: usize) -> Reg;
     /// Get the register for a return value.
-    fn retval(&self, idx: usize) -> Reg;
+    fn retval(&self, idx: usize) -> WritableReg<Reg>;
 }
 
 /// A machine backend.
@@ -189,7 +189,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
     fn gen_arg_setup(&mut self) {
         if let Some(entry_bb) = self.f.layout.entry_block() {
             for (i, param) in self.f.dfg.block_params(entry_bb).iter().enumerate() {
-                let reg = self.value_regs[*param];
+                let reg = WritableReg::from_reg(self.value_regs[*param]);
                 let insn = self.vcode.abi().load_arg(i, reg);
                 self.vcode.push(insn);
             }
@@ -338,7 +338,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 .map(|p| self.f.dfg.value_type(*p))
                 .map(|ty| (ty, I::rc_for_type(ty)))
                 .collect();
-            let phi_temps: Vec<Reg> = phi_classes
+            let phi_temps: Vec<WritableReg<Reg>> = phi_classes
                 .into_iter()
                 .map(|(ty, rc)| self.tmp(rc, ty)) // borrows `self` mutably.
                 .collect();
@@ -356,8 +356,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             // Create all of the phi defs (writes) from temps to block params.
             for (i, param) in self.f.dfg.block_params(orig_block).iter().enumerate() {
                 //println!("bb arg {} is {}", i, param);
-                let src_reg = phi_temps[i];
-                let dst_reg = self.value_regs[*param];
+                let src_reg = phi_temps[i].to_reg();
+                let dst_reg = WritableReg::from_reg(self.value_regs[*param]);
                 self.vcode.push(I::gen_move(dst_reg, src_reg));
             }
 
@@ -417,18 +417,18 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     }
 
     /// Get the `idx`th output of the given IR instruction as a virtual register.
-    fn output(&self, ir_inst: Inst, idx: usize) -> Reg {
+    fn output(&self, ir_inst: Inst, idx: usize) -> WritableReg<Reg> {
         let val = self.f.dfg.inst_results(ir_inst)[idx];
-        self.value_regs[val]
+        WritableReg::from_reg(self.value_regs[val])
     }
 
     /// Get a new temp.
-    fn tmp(&mut self, rc: RegClass, ty: Type) -> Reg {
+    fn tmp(&mut self, rc: RegClass, ty: Type) -> WritableReg<Reg> {
         let v = self.next_vreg;
         self.next_vreg += 1;
         let vreg = Reg::new_virtual(rc, v);
         self.vcode.set_vreg_type(vreg.as_virtual_reg().unwrap(), ty);
-        vreg
+        WritableReg::from_reg(vreg)
     }
 
     /// Get the number of inputs for the given IR instruction.
@@ -463,8 +463,8 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     }
 
     /// Get the register for a return value.
-    fn retval(&self, idx: usize) -> Reg {
-        self.retval_regs[idx]
+    fn retval(&self, idx: usize) -> WritableReg<Reg> {
+        WritableReg::from_reg(self.retval_regs[idx])
     }
 }
 

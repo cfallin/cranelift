@@ -13,7 +13,7 @@ use crate::machinst::*;
 
 use alloc::vec::Vec;
 
-use regalloc::{RealReg, Reg, RegClass, Set, SpillSlot};
+use regalloc::{RealReg, Reg, RegClass, Set, SpillSlot, WritableReg};
 
 pub struct X64ABIBody {}
 
@@ -45,7 +45,7 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn load_arg(&self, _idx: usize, _into_reg: Reg) -> Inst {
+    fn load_arg(&self, _idx: usize, _into_reg: WritableReg<Reg>) -> Inst {
         unimplemented!()
     }
 
@@ -57,11 +57,11 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn set_clobbered(&mut self, _clobbered: Set<RealReg>) {
+    fn set_clobbered(&mut self, _clobbered: Set<WritableReg<RealReg>>) {
         unimplemented!()
     }
 
-    fn load_stackslot(&self, _slot: StackSlot, _offset: usize, _ty: Type, _into_reg: Reg) -> Inst {
+    fn load_stackslot(&self, _slot: StackSlot, _offset: usize, _ty: Type, _into_reg: WritableReg<Reg>) -> Inst {
         unimplemented!()
     }
 
@@ -69,7 +69,7 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn load_spillslot(&self, _slot: SpillSlot, _ty: Type, _into_reg: Reg) -> Inst {
+    fn load_spillslot(&self, _slot: SpillSlot, _ty: Type, _into_reg: WritableReg<Reg>) -> Inst {
         unimplemented!()
     }
 
@@ -99,7 +99,7 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn gen_reload(&self, _to_reg: RealReg, _from_slot: SpillSlot, _ty: Type) -> Inst {
+    fn gen_reload(&self, _to_reg: WritableReg<RealReg>, _from_slot: SpillSlot, _ty: Type) -> Inst {
         unimplemented!()
     }
 }

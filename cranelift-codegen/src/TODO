@@ -26,6 +26,13 @@ TODO:
   - Get filetest working with new top-level API
   - Make sure all (non-vector) filetests can compile
   - Develop suite of golden-machine-code (or golden-assembly?) tests
+  - verify a bunch of corner / interesting cases
+    - add128 / add-with-carry
+    - conditional select?
+    - bit ops
+    - built-in shifts, extends
+    - multiply-add / multiply-subtract
+    - address of global (with relos)
 
 - Performance tests vs. SpiderMonkey WASM
   - make sure that cranelift-wasm can run (or wasmtime?)

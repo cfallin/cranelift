@@ -13,7 +13,9 @@ use crate::machinst::*;
 
 use regalloc::Map as RegallocMap;
 use regalloc::{InstRegUses, Set};
-use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, NUM_REG_CLASSES};
+use regalloc::{
+    RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, WritableReg, NUM_REG_CLASSES,
+};
 
 use alloc::vec::Vec;
 use smallvec::SmallVec;
@@ -23,15 +25,23 @@ use std::string::{String, ToString};
 //=============================================================================
 // Registers, the Universe thereof, and printing
 
+#[rustfmt::skip]
 const XREG_INDICES: [u8; 31] = [
     // X0 - X7
-    32, 33, 34, 35, 36, 37, 38, 39, // X8 - X14
-    40, 41, 42, 43, 44, 45, 46, // X15
-    59, // X16, X17
-    47, 48, // X18
-    60, // X19 - X28
-    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, // X29
-    61, // X30
+    32, 33, 34, 35, 36, 37, 38, 39,
+    // X8 - X14
+    40, 41, 42, 43, 44, 45, 46,
+    // X15
+    59,
+    // X16, X17
+    47, 48,
+    // X18
+    60,
+    // X19 - X28
+    49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
+    // X29
+    61,
+    // X30
     62,
 ];
 
@@ -49,10 +59,20 @@ pub fn xreg(num: u8) -> Reg {
     )
 }
 
+/// Get a writable reference to an X-register.
+pub fn writable_xreg(num: u8) -> WritableReg<Reg> {
+    WritableReg::from_reg(xreg(num))
+}
+
 /// Get a reference to a V-register (vector/FP register).
 pub fn vreg(num: u8) -> Reg {
     assert!(num < 32);
     Reg::new_real(RegClass::V128, /* enc = */ num, /* index = */ num)
+}
+
+/// Get a writable reference to a V-register.
+pub fn writable_vreg(num: u8) -> WritableReg<Reg> {
+    WritableReg::from_reg(vreg(num))
 }
 
 /// Get a reference to the zero-register.
@@ -64,6 +84,11 @@ pub fn zero_reg() -> Reg {
         /* enc = */ 31,
         /* index = */ ZERO_REG_INDEX,
     )
+}
+
+/// Get a writable reference to the zero-register (this discards a result).
+pub fn writable_zero_reg() -> WritableReg<Reg> {
+    WritableReg::from_reg(zero_reg())
 }
 
 /// Get a reference to the stack-pointer register.
@@ -80,14 +105,29 @@ pub fn stack_reg() -> Reg {
     )
 }
 
+/// Get a writable reference to the stack-pointer register.
+pub fn writable_stack_reg() -> WritableReg<Reg> {
+    WritableReg::from_reg(stack_reg())
+}
+
 /// Get a reference to the link register (x30).
 pub fn link_reg() -> Reg {
     xreg(30)
 }
 
+/// Get a writable reference to the link register.
+pub fn writable_link_reg() -> WritableReg<Reg> {
+    WritableReg::from_reg(link_reg())
+}
+
 /// Get a reference to the frame pointer (x29).
 pub fn fp_reg() -> Reg {
     xreg(29)
+}
+
+/// Get a writable reference to the frame pointer.
+pub fn writable_fp_reg() -> WritableReg<Reg> {
+    WritableReg::from_reg(fp_reg())
 }
 
 /// Get a reference to the "spill temp" register. This register is used to
@@ -98,6 +138,11 @@ pub fn fp_reg() -> Reg {
 /// then perhaps remove the reg from the pool and recompute regalloc.
 pub fn spilltmp_reg() -> Reg {
     xreg(15)
+}
+
+/// Get a writable reference to the spilltmp reg.
+pub fn writable_spilltmp_reg() -> WritableReg<Reg> {
+    WritableReg::from_reg(spilltmp_reg())
 }
 
 /// Create the register universe for ARM64.
@@ -550,8 +595,8 @@ pub enum MemArg {
     BasePlusReg(Reg, Reg),
     BasePlusRegScaled(Reg, Reg, Type),
     Label(MemLabel),
-    PreIndexed(Reg, SImm9),
-    PostIndexed(Reg, SImm9),
+    PreIndexed(WritableReg<Reg>, SImm9),
+    PostIndexed(WritableReg<Reg>, SImm9),
     /// Offset from the frame pointer.
     StackOffset(i64),
 }
@@ -591,8 +636,8 @@ impl MemArg {
 pub enum PairMemArg {
     Base(Reg),
     BaseSImm7(Reg, SImm7),
-    PreIndexed(Reg, SImm7),
-    PostIndexed(Reg, SImm7),
+    PreIndexed(WritableReg<Reg>, SImm7),
+    PostIndexed(WritableReg<Reg>, SImm7),
 }
 
 //=============================================================================
@@ -791,7 +836,7 @@ pub enum Inst {
     /// An ALU operation with two register sources and a register destination.
     AluRRR {
         alu_op: ALUOp,
-        rd: Reg,
+        rd: WritableReg<Reg>,
         rn: Reg,
         rm: Reg,
     },
@@ -799,21 +844,21 @@ pub enum Inst {
     /// destination.
     AluRRImm12 {
         alu_op: ALUOp,
-        rd: Reg,
+        rd: WritableReg<Reg>,
         rn: Reg,
         imm12: Imm12,
     },
     /// An ALU operation with a register source and an immediate-logic source, and a register destination.
     AluRRImmLogic {
         alu_op: ALUOp,
-        rd: Reg,
+        rd: WritableReg<Reg>,
         rn: Reg,
         imml: ImmLogic,
     },
     /// An ALU operation with a register source and an immediate-shiftamt source, and a register destination.
     AluRRImmShift {
         alu_op: ALUOp,
-        rd: Reg,
+        rd: WritableReg<Reg>,
         rn: Reg,
         immshift: ImmShift,
     },
@@ -821,7 +866,7 @@ pub enum Inst {
     /// destination.
     AluRRRShift {
         alu_op: ALUOp,
-        rd: Reg,
+        rd: WritableReg<Reg>,
         rn: Reg,
         rm: Reg,
         shiftop: ShiftOpAndAmt,
@@ -830,25 +875,25 @@ pub enum Inst {
     /// shifted, and a register destination.
     AluRRRExtend {
         alu_op: ALUOp,
-        rd: Reg,
+        rd: WritableReg<Reg>,
         rn: Reg,
         rm: Reg,
         extendop: ExtendOp,
     },
     /// An unsigned (zero-extending) 8-bit load.
-    ULoad8 { rd: Reg, mem: MemArg },
+    ULoad8 { rd: WritableReg<Reg>, mem: MemArg },
     /// A signed (sign-extending) 8-bit load.
-    SLoad8 { rd: Reg, mem: MemArg },
+    SLoad8 { rd: WritableReg<Reg>, mem: MemArg },
     /// An unsigned (zero-extending) 16-bit load.
-    ULoad16 { rd: Reg, mem: MemArg },
+    ULoad16 { rd: WritableReg<Reg>, mem: MemArg },
     /// A signed (sign-extending) 16-bit load.
-    SLoad16 { rd: Reg, mem: MemArg },
+    SLoad16 { rd: WritableReg<Reg>, mem: MemArg },
     /// An unsigned (zero-extending) 32-bit load.
-    ULoad32 { rd: Reg, mem: MemArg },
+    ULoad32 { rd: WritableReg<Reg>, mem: MemArg },
     /// A signed (sign-extending) 32-bit load.
-    SLoad32 { rd: Reg, mem: MemArg },
+    SLoad32 { rd: WritableReg<Reg>, mem: MemArg },
     /// A 64-bit load.
-    ULoad64 { rd: Reg, mem: MemArg },
+    ULoad64 { rd: WritableReg<Reg>, mem: MemArg },
 
     /// An 8-bit store.
     Store8 { rd: Reg, mem: MemArg },
@@ -862,18 +907,28 @@ pub enum Inst {
     /// A store of a pair of registers.
     StoreP64 { rt: Reg, rt2: Reg, mem: PairMemArg },
     /// A load of a pair of registers.
-    LoadP64 { rt: Reg, rt2: Reg, mem: PairMemArg },
+    LoadP64 {
+        rt: WritableReg<Reg>,
+        rt2: WritableReg<Reg>,
+        mem: PairMemArg,
+    },
 
     /// A MOV instruction. These are encoded as ORR's (AluRRR form) but we
     /// keep them separate at the `Inst` level for better pretty-printing
     /// and faster `is_move()` logic.
-    Mov { rd: Reg, rm: Reg },
+    Mov { rd: WritableReg<Reg>, rm: Reg },
 
     /// A MOVZ with a 16-bit immediate.
-    MovZ { rd: Reg, imm: MoveWideConst },
+    MovZ {
+        rd: WritableReg<Reg>,
+        imm: MoveWideConst,
+    },
 
     /// A MOVN with a 16-bit immediate.
-    MovN { rd: Reg, imm: MoveWideConst },
+    MovN {
+        rd: WritableReg<Reg>,
+        imm: MoveWideConst,
+    },
 
     /// A machine call instruction.
     Call { dest: FuncRef },
@@ -915,7 +970,7 @@ pub enum Inst {
 
 impl Inst {
     /// Create a move instruction.
-    pub fn mov(to_reg: Reg, from_reg: Reg) -> Inst {
+    pub fn mov(to_reg: WritableReg<Reg>, from_reg: Reg) -> Inst {
         Inst::Mov {
             rd: to_reg,
             rm: from_reg,
@@ -926,7 +981,7 @@ impl Inst {
 //=============================================================================
 // Instructions: get_regs
 
-fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Reg>) {
+fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<WritableReg<Reg>>) {
     match memarg {
         &MemArg::Base(reg) | &MemArg::BaseSImm9(reg, ..) | &MemArg::BaseUImm12Scaled(reg, ..) => {
             used.insert(reg);
@@ -945,7 +1000,11 @@ fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Reg>) {
     }
 }
 
-fn pairmemarg_regs(pairmemarg: &PairMemArg, used: &mut Set<Reg>, modified: &mut Set<Reg>) {
+fn pairmemarg_regs(
+    pairmemarg: &PairMemArg,
+    used: &mut Set<Reg>,
+    modified: &mut Set<WritableReg<Reg>>,
+) {
     match pairmemarg {
         &PairMemArg::Base(reg) | &PairMemArg::BaseSImm7(reg, ..) => {
             used.insert(reg);
@@ -1065,6 +1124,10 @@ fn arm64_map_regs(
         }
     }
 
+    fn map_wr(m: &RegallocMap<VirtualReg, RealReg>, r: WritableReg<Reg>) -> WritableReg<Reg> {
+        WritableReg::from_reg(map(m, r.to_reg()))
+    }
+
     fn map_mem(u: &RegallocMap<VirtualReg, RealReg>, mem: &MemArg) -> MemArg {
         // N.B.: we take only the pre-map here, but this is OK because the
         // only addressing modes that update registers (pre/post-increment on
@@ -1079,8 +1142,8 @@ fn arm64_map_regs(
                 MemArg::BasePlusRegScaled(map(u, r1), map(u, r2), ty)
             }
             &MemArg::Label(ref l) => MemArg::Label(l.clone()),
-            &MemArg::PreIndexed(r, simm9) => MemArg::PreIndexed(map(u, r), simm9),
-            &MemArg::PostIndexed(r, simm9) => MemArg::PostIndexed(map(u, r), simm9),
+            &MemArg::PreIndexed(r, simm9) => MemArg::PreIndexed(map_wr(u, r), simm9),
+            &MemArg::PostIndexed(r, simm9) => MemArg::PostIndexed(map_wr(u, r), simm9),
             &MemArg::StackOffset(off) => MemArg::StackOffset(off),
         }
     }
@@ -1089,8 +1152,8 @@ fn arm64_map_regs(
         match mem {
             &PairMemArg::Base(reg) => PairMemArg::Base(map(u, reg)),
             &PairMemArg::BaseSImm7(reg, simm7) => PairMemArg::BaseSImm7(map(u, reg), simm7),
-            &PairMemArg::PreIndexed(reg, simm7) => PairMemArg::PreIndexed(map(u, reg), simm7),
-            &PairMemArg::PostIndexed(reg, simm7) => PairMemArg::PostIndexed(map(u, reg), simm7),
+            &PairMemArg::PreIndexed(reg, simm7) => PairMemArg::PreIndexed(map_wr(u, reg), simm7),
+            &PairMemArg::PostIndexed(reg, simm7) => PairMemArg::PostIndexed(map_wr(u, reg), simm7),
         }
     }
 
@@ -1108,7 +1171,7 @@ fn arm64_map_regs(
     let newval = match inst {
         &mut Inst::AluRRR { alu_op, rd, rn, rm } => Inst::AluRRR {
             alu_op,
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             rn: map(u, rn),
             rm: map(u, rm),
         },
@@ -1119,7 +1182,7 @@ fn arm64_map_regs(
             ref imm12,
         } => Inst::AluRRImm12 {
             alu_op,
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             rn: map(u, rn),
             imm12: imm12.clone(),
         },
@@ -1130,7 +1193,7 @@ fn arm64_map_regs(
             ref imml,
         } => Inst::AluRRImmLogic {
             alu_op,
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             rn: map(u, rn),
             imml: imml.clone(),
         },
@@ -1141,7 +1204,7 @@ fn arm64_map_regs(
             ref immshift,
         } => Inst::AluRRImmShift {
             alu_op,
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             rn: map(u, rn),
             immshift: immshift.clone(),
         },
@@ -1153,7 +1216,7 @@ fn arm64_map_regs(
             ref shiftop,
         } => Inst::AluRRRShift {
             alu_op,
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             rn: map(u, rn),
             rm: map(u, rm),
             shiftop: shiftop.clone(),
@@ -1166,37 +1229,37 @@ fn arm64_map_regs(
             ref extendop,
         } => Inst::AluRRRExtend {
             alu_op,
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             rn: map(u, rn),
             rm: map(u, rm),
             extendop: extendop.clone(),
         },
         &mut Inst::ULoad8 { rd, ref mem } => Inst::ULoad8 {
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             mem: map_mem(u, mem),
         },
         &mut Inst::SLoad8 { rd, ref mem } => Inst::SLoad8 {
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             mem: map_mem(u, mem),
         },
         &mut Inst::ULoad16 { rd, ref mem } => Inst::ULoad16 {
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             mem: map_mem(u, mem),
         },
         &mut Inst::SLoad16 { rd, ref mem } => Inst::SLoad16 {
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             mem: map_mem(u, mem),
         },
         &mut Inst::ULoad32 { rd, ref mem } => Inst::ULoad32 {
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             mem: map_mem(u, mem),
         },
         &mut Inst::SLoad32 { rd, ref mem } => Inst::SLoad32 {
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             mem: map_mem(u, mem),
         },
         &mut Inst::ULoad64 { rd, ref mem } => Inst::ULoad64 {
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             mem: map_mem(u, mem),
         },
         &mut Inst::Store8 { rd, ref mem } => Inst::Store8 {
@@ -1221,20 +1284,20 @@ fn arm64_map_regs(
             mem: map_pairmem(u, mem),
         },
         &mut Inst::LoadP64 { rt, rt2, ref mem } => Inst::LoadP64 {
-            rt: map(d, rt),
-            rt2: map(d, rt2),
+            rt: map_wr(d, rt),
+            rt2: map_wr(d, rt2),
             mem: map_pairmem(u, mem),
         },
         &mut Inst::Mov { rd, rm } => Inst::Mov {
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             rm: map(u, rm),
         },
         &mut Inst::MovZ { rd, ref imm } => Inst::MovZ {
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             imm: imm.clone(),
         },
         &mut Inst::MovN { rd, ref imm } => Inst::MovN {
-            rd: map(d, rd),
+            rd: map_wr(d, rd),
             imm: imm.clone(),
         },
         &mut Inst::Jump { dest } => Inst::Jump { dest },
@@ -1287,7 +1350,7 @@ fn mem_finalize(mem: &MemArg) -> (Vec<Inst>, MemArg) {
                 let mem = MemArg::BaseSImm9(fp_reg(), simm9);
                 (vec![], mem)
             } else {
-                let tmp = spilltmp_reg();
+                let tmp = writable_spilltmp_reg();
                 let const_data = u64_constant(fp_offset as u64);
                 let const_inst = Inst::ULoad64 {
                     rd: tmp,
@@ -1296,10 +1359,10 @@ fn mem_finalize(mem: &MemArg) -> (Vec<Inst>, MemArg) {
                 let add_inst = Inst::AluRRR {
                     alu_op: ALUOp::Add64,
                     rd: tmp,
-                    rn: tmp,
+                    rn: tmp.to_reg(),
                     rm: fp_reg(),
                 };
-                (vec![const_inst, add_inst], MemArg::Base(tmp))
+                (vec![const_inst, add_inst], MemArg::Base(tmp.to_reg()))
             }
         }
         _ => (vec![], mem.clone()),
@@ -1314,27 +1377,33 @@ fn machreg_to_gpr(m: Reg) -> u32 {
     m.to_real_reg().get_hw_encoding() as u32
 }
 
-fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: Reg, rn: Reg, rm: Reg) -> u32 {
+fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: WritableReg<Reg>, rn: Reg, rm: Reg) -> u32 {
     ((bits_31_21 as u32) << 21)
         | ((bits_15_10 as u32) << 10)
-        | machreg_to_gpr(rd)
+        | machreg_to_gpr(rd.to_reg())
         | (machreg_to_gpr(rn) << 5)
         | (machreg_to_gpr(rm) << 16)
 }
 
-fn enc_arith_rr_imm12(bits_31_24: u8, immshift: u8, imm12: u16, rn: Reg, rd: Reg) -> u32 {
+fn enc_arith_rr_imm12(
+    bits_31_24: u8,
+    immshift: u8,
+    imm12: u16,
+    rn: Reg,
+    rd: WritableReg<Reg>,
+) -> u32 {
     ((bits_31_24 as u32) << 24)
         | ((immshift as u32) << 22)
         | ((imm12 as u32) << 10)
         | (machreg_to_gpr(rn) << 5)
-        | machreg_to_gpr(rd)
+        | machreg_to_gpr(rd.to_reg())
 }
 
-fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: Reg) -> u32 {
+fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: WritableReg<Reg>) -> u32 {
     ((bits_31_23 as u32) << 23)
         | ((imm_bits as u32) << 10)
         | (machreg_to_gpr(rn) << 5)
-        | machreg_to_gpr(rd)
+        | machreg_to_gpr(rd.to_reg())
 }
 
 fn enc_jump26(op_31_26: u32, off_26_0: u32) -> u32 {
@@ -1361,13 +1430,13 @@ enum MoveWideOpcode {
     MOVZ = 0b10,
 }
 
-fn enc_move_wide(op: MoveWideOpcode, rd: Reg, imm: MoveWideConst) -> u32 {
+fn enc_move_wide(op: MoveWideOpcode, rd: WritableReg<Reg>, imm: MoveWideConst) -> u32 {
     assert!(imm.shift <= 0b11);
     MOVE_WIDE_FIXED
         | (op as u32) << 29
         | (imm.shift as u32) << 21
         | (imm.bits as u32) << 5
-        | machreg_to_gpr(rd)
+        | machreg_to_gpr(rd.to_reg())
 }
 
 fn enc_ldst_pair(op_31_22: u32, simm7: SImm7, rn: Reg, rt: Reg, rt2: Reg) -> u32 {
@@ -1492,6 +1561,9 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     inst.emit(sink);
                 }
 
+                // ldst encoding helpers take Reg, not WritableReg.
+                let rd = rd.to_reg();
+
                 // This is the base opcode (top 10 bits) for the "unscaled
                 // immediate" form (BaseSImm9). Other addressing modes will OR in
                 // other values for bits 24/25 (bits 1/2 of this constant).
@@ -1548,10 +1620,10 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                         }
                     }
                     &MemArg::PreIndexed(reg, simm9) => {
-                        sink.put4(enc_ldst_simm9(op, simm9, 0b11, reg, rd));
+                        sink.put4(enc_ldst_simm9(op, simm9, 0b11, reg.to_reg(), rd));
                     }
                     &MemArg::PostIndexed(reg, simm9) => {
-                        sink.put4(enc_ldst_simm9(op, simm9, 0b01, reg, rd));
+                        sink.put4(enc_ldst_simm9(op, simm9, 0b01, reg.to_reg(), rd));
                     }
                     // Eliminated by `mem_finalize()` above.
                     &MemArg::StackOffset(..) => panic!("Should not see StackOffset here!"),
@@ -1595,10 +1667,10 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                         panic!("Store to a constant-pool entry not allowed!");
                     }
                     &MemArg::PreIndexed(reg, simm9) => {
-                        sink.put4(enc_ldst_simm9(op, simm9, 0b11, reg, rd));
+                        sink.put4(enc_ldst_simm9(op, simm9, 0b11, reg.to_reg(), rd));
                     }
                     &MemArg::PostIndexed(reg, simm9) => {
-                        sink.put4(enc_ldst_simm9(op, simm9, 0b01, reg, rd));
+                        sink.put4(enc_ldst_simm9(op, simm9, 0b01, reg.to_reg(), rd));
                     }
                     // Eliminated by `mem_finalize()` above.
                     &MemArg::StackOffset(..) => panic!("Should not see StackOffset here!"),
@@ -1613,26 +1685,30 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     sink.put4(enc_ldst_pair(0b1010100100, simm7, reg, rt, rt2));
                 }
                 &PairMemArg::PreIndexed(reg, simm7) => {
-                    sink.put4(enc_ldst_pair(0b1010100110, simm7, reg, rt, rt2));
+                    sink.put4(enc_ldst_pair(0b1010100110, simm7, reg.to_reg(), rt, rt2));
                 }
                 &PairMemArg::PostIndexed(reg, simm7) => {
-                    sink.put4(enc_ldst_pair(0b1010100010, simm7, reg, rt, rt2));
+                    sink.put4(enc_ldst_pair(0b1010100010, simm7, reg.to_reg(), rt, rt2));
                 }
             },
-            &Inst::LoadP64 { rt, rt2, ref mem } => match mem {
-                &PairMemArg::Base(reg) => {
-                    sink.put4(enc_ldst_pair(0b1010100101, SImm7::zero(), reg, rt, rt2));
+            &Inst::LoadP64 { rt, rt2, ref mem } => {
+                let rt = rt.to_reg();
+                let rt2 = rt2.to_reg();
+                match mem {
+                    &PairMemArg::Base(reg) => {
+                        sink.put4(enc_ldst_pair(0b1010100101, SImm7::zero(), reg, rt, rt2));
+                    }
+                    &PairMemArg::BaseSImm7(reg, simm7) => {
+                        sink.put4(enc_ldst_pair(0b1010100101, simm7, reg, rt, rt2));
+                    }
+                    &PairMemArg::PreIndexed(reg, simm7) => {
+                        sink.put4(enc_ldst_pair(0b1010100111, simm7, reg.to_reg(), rt, rt2));
+                    }
+                    &PairMemArg::PostIndexed(reg, simm7) => {
+                        sink.put4(enc_ldst_pair(0b1010100011, simm7, reg.to_reg(), rt, rt2));
+                    }
                 }
-                &PairMemArg::BaseSImm7(reg, simm7) => {
-                    sink.put4(enc_ldst_pair(0b1010100101, simm7, reg, rt, rt2));
-                }
-                &PairMemArg::PreIndexed(reg, simm7) => {
-                    sink.put4(enc_ldst_pair(0b1010100111, simm7, reg, rt, rt2));
-                }
-                &PairMemArg::PostIndexed(reg, simm7) => {
-                    sink.put4(enc_ldst_pair(0b1010100011, simm7, reg, rt, rt2));
-                }
-            },
+            }
             &Inst::Mov { rd, rm } => {
                 // Encoded as ORR rd, rm, zero.
                 sink.put4(enc_arith_rrr(0b10101010_000, 0b000_000, rd, zero_reg(), rm));
@@ -1750,7 +1826,7 @@ impl MachInst for Inst {
         arm64_map_regs(self, pre_map, post_map);
     }
 
-    fn is_move(&self) -> Option<(Reg, Reg)> {
+    fn is_move(&self) -> Option<(WritableReg<Reg>, Reg)> {
         match self {
             &Inst::Mov { rd, rm } => Some((rd, rm)),
             _ => None,
@@ -1774,7 +1850,7 @@ impl MachInst for Inst {
         }
     }
 
-    fn gen_move(to_reg: Reg, from_reg: Reg) -> Inst {
+    fn gen_move(to_reg: WritableReg<Reg>, from_reg: Reg) -> Inst {
         Inst::mov(to_reg, from_reg)
     }
 
@@ -1994,12 +2070,16 @@ impl ShowWithRRU for MemArg {
                 )
             }
             &MemArg::Label(ref label) => label.show_rru(mb_rru),
-            &MemArg::PreIndexed(r, simm9) => {
-                format!("[{}, {}]!", r.show_rru(mb_rru), simm9.show_rru(mb_rru))
-            }
-            &MemArg::PostIndexed(r, simm9) => {
-                format!("[{}], {}", r.show_rru(mb_rru), simm9.show_rru(mb_rru))
-            }
+            &MemArg::PreIndexed(r, simm9) => format!(
+                "[{}, {}]!",
+                r.to_reg().show_rru(mb_rru),
+                simm9.show_rru(mb_rru)
+            ),
+            &MemArg::PostIndexed(r, simm9) => format!(
+                "[{}], {}",
+                r.to_reg().show_rru(mb_rru),
+                simm9.show_rru(mb_rru)
+            ),
             // Eliminated by `mem_finalize()`.
             &MemArg::StackOffset(..) => panic!("Unexpected StackOffset mem-arg mode!"),
         }
@@ -2013,12 +2093,16 @@ impl ShowWithRRU for PairMemArg {
             &PairMemArg::BaseSImm7(reg, simm7) => {
                 format!("[{}, {}]", reg.show_rru(mb_rru), simm7.show_rru(mb_rru))
             }
-            &PairMemArg::PreIndexed(reg, simm7) => {
-                format!("[{}, {}]!", reg.show_rru(mb_rru), simm7.show_rru(mb_rru))
-            }
-            &PairMemArg::PostIndexed(reg, simm7) => {
-                format!("[{}], {}", reg.show_rru(mb_rru), simm7.show_rru(mb_rru))
-            }
+            &PairMemArg::PreIndexed(reg, simm7) => format!(
+                "[{}, {}]!",
+                reg.to_reg().show_rru(mb_rru),
+                simm7.show_rru(mb_rru)
+            ),
+            &PairMemArg::PostIndexed(reg, simm7) => format!(
+                "[{}], {}",
+                reg.to_reg().show_rru(mb_rru),
+                simm7.show_rru(mb_rru)
+            ),
         }
     }
 
@@ -2032,12 +2116,12 @@ impl ShowWithRRU for PairMemArg {
             ),
             &PairMemArg::PreIndexed(reg, simm7) => format!(
                 "[{}, {}]!",
-                reg.show_rru(mb_rru),
+                reg.to_reg().show_rru(mb_rru),
                 simm7.show_rru_sized(mb_rru, size)
             ),
             &PairMemArg::PostIndexed(reg, simm7) => format!(
                 "[{}], {}",
-                reg.show_rru(mb_rru),
+                reg.to_reg().show_rru(mb_rru),
                 simm7.show_rru_sized(mb_rru, size)
             ),
         }
@@ -2096,7 +2180,7 @@ impl ShowWithRRU for Inst {
             &Inst::Nop4 => "nop".to_string(),
             &Inst::AluRRR { alu_op, rd, rn, rm } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32);
                 let rn = show_ireg_sized(rn, mb_rru, is32);
                 let rm = show_ireg_sized(rm, mb_rru, is32);
                 format!("{} {}, {}, {}", op, rd, rn, rm)
@@ -2108,7 +2192,7 @@ impl ShowWithRRU for Inst {
                 ref imm12,
             } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32);
                 let rn = show_ireg_sized(rn, mb_rru, is32);
 
                 if imm12.bits == 0 && alu_op == ALUOp::Add64 {
@@ -2126,7 +2210,7 @@ impl ShowWithRRU for Inst {
                 ref imml,
             } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32);
                 let rn = show_ireg_sized(rn, mb_rru, is32);
                 let imml = imml.show_rru(mb_rru);
                 format!("{} {}, {}, {}", op, rd, rn, imml)
@@ -2138,7 +2222,7 @@ impl ShowWithRRU for Inst {
                 ref immshift,
             } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32);
                 let rn = show_ireg_sized(rn, mb_rru, is32);
                 let immshift = immshift.show_rru(mb_rru);
                 format!("{} {}, {}, {}", op, rd, rn, immshift)
@@ -2151,7 +2235,7 @@ impl ShowWithRRU for Inst {
                 ref shiftop,
             } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32);
                 let rn = show_ireg_sized(rn, mb_rru, is32);
                 let rm = show_ireg_sized(rm, mb_rru, is32);
                 let shiftop = shiftop.show_rru(mb_rru);
@@ -2165,7 +2249,7 @@ impl ShowWithRRU for Inst {
                 ref extendop,
             } => {
                 let (op, is32) = op_is32(alu_op);
-                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32);
                 let rn = show_ireg_sized(rn, mb_rru, is32);
                 let rm = show_ireg_sized(rm, mb_rru, is32);
                 let extendop = extendop.show_rru(mb_rru);
@@ -2201,7 +2285,7 @@ impl ShowWithRRU for Inst {
                     (&Inst::ULoad64 { .. }, true) => ("ldur", false),
                     _ => unreachable!(),
                 };
-                let rd = show_ireg_sized(rd, mb_rru, is32);
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32);
                 let mem = mem.show_rru(mb_rru);
                 format!("{}{} {}, {}", mem_str, op, rd, mem)
             }
@@ -2237,23 +2321,23 @@ impl ShowWithRRU for Inst {
                 format!("stp {}, {}, {}", rt, rt2, mem)
             }
             &Inst::LoadP64 { rt, rt2, ref mem } => {
-                let rt = rt.show_rru(mb_rru);
-                let rt2 = rt2.show_rru(mb_rru);
+                let rt = rt.to_reg().show_rru(mb_rru);
+                let rt2 = rt2.to_reg().show_rru(mb_rru);
                 let mem = mem.show_rru_sized(mb_rru, /* size = */ 8);
                 format!("ldp {}, {}, {}", rt, rt2, mem)
             }
             &Inst::Mov { rd, rm } => {
-                let rd = rd.show_rru(mb_rru);
+                let rd = rd.to_reg().show_rru(mb_rru);
                 let rm = rm.show_rru(mb_rru);
                 format!("mov {}, {}", rd, rm)
             }
             &Inst::MovZ { rd, ref imm } => {
-                let rd = rd.show_rru(mb_rru);
+                let rd = rd.to_reg().show_rru(mb_rru);
                 let imm = imm.show_rru(mb_rru);
                 format!("movz {}, {}", rd, imm)
             }
             &Inst::MovN { rd, ref imm } => {
-                let rd = rd.show_rru(mb_rru);
+                let rd = rd.to_reg().show_rru(mb_rru);
                 let imm = imm.show_rru(mb_rru);
                 format!("movn {}, {}", rd, imm)
             }
@@ -2369,7 +2453,7 @@ mod test {
         insns.push((
             Inst::AluRRR {
                 alu_op: ALUOp::Add32,
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 rn: xreg(2),
                 rm: xreg(3),
             },
@@ -2379,7 +2463,7 @@ mod test {
         insns.push((
             Inst::AluRRR {
                 alu_op: ALUOp::Add64,
-                rd: xreg(4),
+                rd: writable_xreg(4),
                 rn: xreg(5),
                 rm: xreg(6),
             },
@@ -2389,7 +2473,7 @@ mod test {
         insns.push((
             Inst::AluRRR {
                 alu_op: ALUOp::Sub32,
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 rn: xreg(2),
                 rm: xreg(3),
             },
@@ -2399,7 +2483,7 @@ mod test {
         insns.push((
             Inst::AluRRR {
                 alu_op: ALUOp::Sub64,
-                rd: xreg(4),
+                rd: writable_xreg(4),
                 rn: xreg(5),
                 rm: xreg(6),
             },
@@ -2409,7 +2493,7 @@ mod test {
         insns.push((
             Inst::AluRRR {
                 alu_op: ALUOp::Orr32,
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 rn: xreg(2),
                 rm: xreg(3),
             },
@@ -2419,7 +2503,7 @@ mod test {
         insns.push((
             Inst::AluRRR {
                 alu_op: ALUOp::Orr64,
-                rd: xreg(4),
+                rd: writable_xreg(4),
                 rn: xreg(5),
                 rm: xreg(6),
             },
@@ -2429,7 +2513,7 @@ mod test {
         insns.push((
             Inst::AluRRR {
                 alu_op: ALUOp::And32,
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 rn: xreg(2),
                 rm: xreg(3),
             },
@@ -2439,7 +2523,7 @@ mod test {
         insns.push((
             Inst::AluRRR {
                 alu_op: ALUOp::And64,
-                rd: xreg(4),
+                rd: writable_xreg(4),
                 rn: xreg(5),
                 rm: xreg(6),
             },
@@ -2449,7 +2533,7 @@ mod test {
         insns.push((
             Inst::AluRRR {
                 alu_op: ALUOp::SubS32,
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 rn: xreg(2),
                 rm: xreg(3),
             },
@@ -2459,7 +2543,7 @@ mod test {
         insns.push((
             Inst::AluRRR {
                 alu_op: ALUOp::SubS64,
-                rd: xreg(4),
+                rd: writable_xreg(4),
                 rn: xreg(5),
                 rm: xreg(6),
             },
@@ -2470,7 +2554,7 @@ mod test {
         insns.push((
             Inst::AluRRImm12 {
                 alu_op: ALUOp::Add32,
-                rd: xreg(7),
+                rd: writable_xreg(7),
                 rn: xreg(8),
                 imm12: Imm12 {
                     bits: 0x123,
@@ -2483,7 +2567,7 @@ mod test {
         insns.push((
             Inst::AluRRImm12 {
                 alu_op: ALUOp::Add32,
-                rd: xreg(7),
+                rd: writable_xreg(7),
                 rn: xreg(8),
                 imm12: Imm12 {
                     bits: 0x123,
@@ -2496,7 +2580,7 @@ mod test {
         insns.push((
             Inst::AluRRImm12 {
                 alu_op: ALUOp::Add64,
-                rd: xreg(7),
+                rd: writable_xreg(7),
                 rn: xreg(8),
                 imm12: Imm12 {
                     bits: 0x123,
@@ -2509,7 +2593,7 @@ mod test {
         insns.push((
             Inst::AluRRImm12 {
                 alu_op: ALUOp::Sub32,
-                rd: xreg(7),
+                rd: writable_xreg(7),
                 rn: xreg(8),
                 imm12: Imm12 {
                     bits: 0x123,
@@ -2522,7 +2606,7 @@ mod test {
         insns.push((
             Inst::AluRRImm12 {
                 alu_op: ALUOp::Sub64,
-                rd: xreg(7),
+                rd: writable_xreg(7),
                 rn: xreg(8),
                 imm12: Imm12 {
                     bits: 0x123,
@@ -2535,7 +2619,7 @@ mod test {
         insns.push((
             Inst::AluRRImm12 {
                 alu_op: ALUOp::SubS32,
-                rd: xreg(7),
+                rd: writable_xreg(7),
                 rn: xreg(8),
                 imm12: Imm12 {
                     bits: 0x123,
@@ -2548,7 +2632,7 @@ mod test {
         insns.push((
             Inst::AluRRImm12 {
                 alu_op: ALUOp::SubS64,
-                rd: xreg(7),
+                rd: writable_xreg(7),
                 rn: xreg(8),
                 imm12: Imm12 {
                     bits: 0x123,
@@ -2565,7 +2649,7 @@ mod test {
 
         insns.push((
             Inst::ULoad8 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::Base(xreg(2)),
             },
             "41004038",
@@ -2573,7 +2657,7 @@ mod test {
         ));
         insns.push((
             Inst::SLoad8 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::Base(xreg(2)),
             },
             "41008038",
@@ -2581,7 +2665,7 @@ mod test {
         ));
         insns.push((
             Inst::ULoad16 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::Base(xreg(2)),
             },
             "41004078",
@@ -2589,7 +2673,7 @@ mod test {
         ));
         insns.push((
             Inst::SLoad16 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::Base(xreg(2)),
             },
             "41008078",
@@ -2597,7 +2681,7 @@ mod test {
         ));
         insns.push((
             Inst::ULoad32 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::Base(xreg(2)),
             },
             "410040B8",
@@ -2605,7 +2689,7 @@ mod test {
         ));
         insns.push((
             Inst::SLoad32 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::Base(xreg(2)),
             },
             "410080B8",
@@ -2613,7 +2697,7 @@ mod test {
         ));
         insns.push((
             Inst::ULoad64 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::Base(xreg(2)),
             },
             "410040F8",
@@ -2621,7 +2705,7 @@ mod test {
         ));
         insns.push((
             Inst::ULoad64 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::BaseSImm9(xreg(2), SImm9::maybe_from_i64(-256).unwrap()),
             },
             "410050F8",
@@ -2629,7 +2713,7 @@ mod test {
         ));
         insns.push((
             Inst::ULoad64 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::BaseSImm9(xreg(2), SImm9::maybe_from_i64(255).unwrap()),
             },
             "41F04FF8",
@@ -2637,7 +2721,7 @@ mod test {
         ));
         insns.push((
             Inst::ULoad64 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::BaseUImm12Scaled(
                     xreg(2),
                     UImm12Scaled::maybe_from_i64(32760, I64).unwrap(),
@@ -2648,7 +2732,7 @@ mod test {
         ));
         insns.push((
             Inst::ULoad64 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::BasePlusReg(xreg(2), xreg(3)),
             },
             "416863F8",
@@ -2656,7 +2740,7 @@ mod test {
         ));
         insns.push((
             Inst::ULoad64 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::BasePlusRegScaled(xreg(2), xreg(3), I64),
             },
             "417863F8",
@@ -2664,7 +2748,7 @@ mod test {
         ));
         insns.push((
             Inst::ULoad64 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::Label(MemLabel::ConstantPool(64)),
             },
             "01020058",
@@ -2672,23 +2756,23 @@ mod test {
         ));
         insns.push((
             Inst::ULoad64 {
-                rd: xreg(1),
-                mem: MemArg::PreIndexed(xreg(2), SImm9::maybe_from_i64(16).unwrap()),
+                rd: writable_xreg(1),
+                mem: MemArg::PreIndexed(writable_xreg(2), SImm9::maybe_from_i64(16).unwrap()),
             },
             "410C41F8",
             "ldr x1, [x2, #16]!",
         ));
         insns.push((
             Inst::ULoad64 {
-                rd: xreg(1),
-                mem: MemArg::PostIndexed(xreg(2), SImm9::maybe_from_i64(16).unwrap()),
+                rd: writable_xreg(1),
+                mem: MemArg::PostIndexed(writable_xreg(2), SImm9::maybe_from_i64(16).unwrap()),
             },
             "410441F8",
             "ldr x1, [x2], #16",
         ));
         insns.push((
             Inst::ULoad64 {
-                rd: xreg(1),
+                rd: writable_xreg(1),
                 mem: MemArg::StackOffset(32768),
             },
             "0F000058EF011D8BE10140F8",
@@ -2790,7 +2874,7 @@ mod test {
         insns.push((
             Inst::Store64 {
                 rd: xreg(1),
-                mem: MemArg::PreIndexed(xreg(2), SImm9::maybe_from_i64(16).unwrap()),
+                mem: MemArg::PreIndexed(writable_xreg(2), SImm9::maybe_from_i64(16).unwrap()),
             },
             "410C01F8",
             "str x1, [x2, #16]!",
@@ -2798,7 +2882,7 @@ mod test {
         insns.push((
             Inst::Store64 {
                 rd: xreg(1),
-                mem: MemArg::PostIndexed(xreg(2), SImm9::maybe_from_i64(16).unwrap()),
+                mem: MemArg::PostIndexed(writable_xreg(2), SImm9::maybe_from_i64(16).unwrap()),
             },
             "410401F8",
             "str x1, [x2], #16",
@@ -2835,7 +2919,7 @@ mod test {
             Inst::StoreP64 {
                 rt: xreg(8),
                 rt2: xreg(9),
-                mem: PairMemArg::PreIndexed(xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
+                mem: PairMemArg::PreIndexed(writable_xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
             },
             "4825A0A9",
             "stp x8, x9, [x10, #-512]!",
@@ -2844,7 +2928,7 @@ mod test {
             Inst::StoreP64 {
                 rt: xreg(8),
                 rt2: xreg(9),
-                mem: PairMemArg::PostIndexed(xreg(10), SImm7::maybe_from_i64(63).unwrap()),
+                mem: PairMemArg::PostIndexed(writable_xreg(10), SImm7::maybe_from_i64(63).unwrap()),
             },
             "48A59FA8",
             "stp x8, x9, [x10], #504",
@@ -2852,8 +2936,8 @@ mod test {
 
         insns.push((
             Inst::LoadP64 {
-                rt: xreg(8),
-                rt2: xreg(9),
+                rt: writable_xreg(8),
+                rt2: writable_xreg(9),
                 mem: PairMemArg::Base(xreg(10)),
             },
             "482540A9",
@@ -2861,8 +2945,8 @@ mod test {
         ));
         insns.push((
             Inst::LoadP64 {
-                rt: xreg(8),
-                rt2: xreg(9),
+                rt: writable_xreg(8),
+                rt2: writable_xreg(9),
                 mem: PairMemArg::BaseSImm7(xreg(10), SImm7::maybe_from_i64(63).unwrap()),
             },
             "48A55FA9",
@@ -2870,8 +2954,8 @@ mod test {
         ));
         insns.push((
             Inst::LoadP64 {
-                rt: xreg(8),
-                rt2: xreg(9),
+                rt: writable_xreg(8),
+                rt2: writable_xreg(9),
                 mem: PairMemArg::BaseSImm7(xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
             },
             "482560A9",
@@ -2879,18 +2963,18 @@ mod test {
         ));
         insns.push((
             Inst::LoadP64 {
-                rt: xreg(8),
-                rt2: xreg(9),
-                mem: PairMemArg::PreIndexed(xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
+                rt: writable_xreg(8),
+                rt2: writable_xreg(9),
+                mem: PairMemArg::PreIndexed(writable_xreg(10), SImm7::maybe_from_i64(-64).unwrap()),
             },
             "4825E0A9",
             "ldp x8, x9, [x10, #-512]!",
         ));
         insns.push((
             Inst::LoadP64 {
-                rt: xreg(8),
-                rt2: xreg(9),
-                mem: PairMemArg::PostIndexed(xreg(10), SImm7::maybe_from_i64(63).unwrap()),
+                rt: writable_xreg(8),
+                rt2: writable_xreg(9),
+                mem: PairMemArg::PostIndexed(writable_xreg(10), SImm7::maybe_from_i64(63).unwrap()),
             },
             "48A5DFA8",
             "ldp x8, x9, [x10], #504",
@@ -2898,7 +2982,7 @@ mod test {
 
         insns.push((
             Inst::Mov {
-                rd: xreg(8),
+                rd: writable_xreg(8),
                 rm: xreg(9),
             },
             "E80309AA",
@@ -2907,7 +2991,7 @@ mod test {
 
         insns.push((
             Inst::MovZ {
-                rd: xreg(8),
+                rd: writable_xreg(8),
                 imm: MoveWideConst::maybe_from_u64(0x0000_0000_0000_ffff).unwrap(),
             },
             "E8FF9FD2",
@@ -2915,7 +2999,7 @@ mod test {
         ));
         insns.push((
             Inst::MovZ {
-                rd: xreg(8),
+                rd: writable_xreg(8),
                 imm: MoveWideConst::maybe_from_u64(0x0000_0000_ffff_0000).unwrap(),
             },
             "E8FFBFD2",
@@ -2923,7 +3007,7 @@ mod test {
         ));
         insns.push((
             Inst::MovZ {
-                rd: xreg(8),
+                rd: writable_xreg(8),
                 imm: MoveWideConst::maybe_from_u64(0x0000_ffff_0000_0000).unwrap(),
             },
             "E8FFDFD2",
@@ -2931,7 +3015,7 @@ mod test {
         ));
         insns.push((
             Inst::MovZ {
-                rd: xreg(8),
+                rd: writable_xreg(8),
                 imm: MoveWideConst::maybe_from_u64(0xffff_0000_0000_0000).unwrap(),
             },
             "E8FFFFD2",
@@ -2940,7 +3024,7 @@ mod test {
 
         insns.push((
             Inst::MovN {
-                rd: xreg(8),
+                rd: writable_xreg(8),
                 imm: MoveWideConst::maybe_from_u64(0x0000_0000_0000_ffff).unwrap(),
             },
             "E8FF9F92",
@@ -2948,7 +3032,7 @@ mod test {
         ));
         insns.push((
             Inst::MovN {
-                rd: xreg(8),
+                rd: writable_xreg(8),
                 imm: MoveWideConst::maybe_from_u64(0x0000_0000_ffff_0000).unwrap(),
             },
             "E8FFBF92",
@@ -2956,7 +3040,7 @@ mod test {
         ));
         insns.push((
             Inst::MovN {
-                rd: xreg(8),
+                rd: writable_xreg(8),
                 imm: MoveWideConst::maybe_from_u64(0x0000_ffff_0000_0000).unwrap(),
             },
             "E8FFDF92",
@@ -2964,7 +3048,7 @@ mod test {
         ));
         insns.push((
             Inst::MovN {
-                rd: xreg(8),
+                rd: writable_xreg(8),
                 imm: MoveWideConst::maybe_from_u64(0xffff_0000_0000_0000).unwrap(),
             },
             "E8FFFF92",

@@ -235,7 +235,7 @@ fn block_ranges(indices: &[InstIx], len: usize) -> Vec<(usize, usize)> {
 
 fn is_redundant_move<I: VCodeInst>(insn: &I) -> bool {
     if let Some((to, from)) = insn.is_move() {
-        to == from
+        to.to_reg() == from
     } else {
         false
     }
@@ -332,7 +332,11 @@ impl<I: VCodeInst> VCode<I> {
         // Record the spillslot count and clobbered registers for the ABI/stack
         // setup code.
         self.abi.set_num_spillslots(result.num_spill_slots as usize);
-        self.abi.set_clobbered(result.clobbered_registers);
+        self.abi.set_clobbered(
+            result
+                .clobbered_registers
+                .map(|r| WritableReg::from_reg(*r)),
+        );
 
         // We want to move instructions over in final block order, using the new
         // block-start map given by the regalloc.
@@ -557,7 +561,7 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
         insn.map_regs(pre_map, post_map);
     }
 
-    fn is_move(&self, insn: &I) -> Option<(Reg, Reg)> {
+    fn is_move(&self, insn: &I) -> Option<(WritableReg<Reg>, Reg)> {
         insn.is_move()
     }
 
@@ -571,13 +575,18 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
         self.abi.gen_spill(to_slot, from_reg, ty)
     }
 
-    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, vreg: VirtualReg) -> I {
+    fn gen_reload(
+        &self,
+        to_reg: WritableReg<RealReg>,
+        from_slot: SpillSlot,
+        vreg: VirtualReg,
+    ) -> I {
         let ty = self.vreg_type(vreg);
         self.abi.gen_reload(to_reg, from_slot, ty)
     }
 
-    fn gen_move(&self, to_reg: RealReg, from_reg: RealReg, _vreg: VirtualReg) -> I {
-        I::gen_move(to_reg.to_reg(), from_reg.to_reg())
+    fn gen_move(&self, to_reg: WritableReg<RealReg>, from_reg: RealReg, _vreg: VirtualReg) -> I {
+        I::gen_move(to_reg.map(|r| r.to_reg()), from_reg.to_reg())
     }
 
     fn maybe_direct_reload(&self, insn: &I, reg: VirtualReg, slot: SpillSlot) -> Option<I> {

@@ -115,7 +115,7 @@ use core::fmt::Debug;
 use core::iter::Sum;
 use regalloc::InstRegUses;
 use regalloc::Map as RegallocMap;
-use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg};
+use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, WritableReg};
 use smallvec::SmallVec;
 use std::hash::Hash;
 
@@ -147,14 +147,14 @@ pub trait MachInst: Clone + Debug {
     );
 
     /// If this is a simple move, return the (source, destination) tuple of registers.
-    fn is_move(&self) -> Option<(Reg, Reg)>;
+    fn is_move(&self) -> Option<(WritableReg<Reg>, Reg)>;
 
     /// Is this a terminator (branch or ret)? If so, return its type
     /// (ret/uncond/cond) and target if applicable.
     fn is_term(&self) -> MachTerminator;
 
     /// Generate a move.
-    fn gen_move(to_reg: Reg, from_reg: Reg) -> Self;
+    fn gen_move(to_reg: WritableReg<Reg>, from_reg: Reg) -> Self;
 
     /// Possibly operate on a value directly in a spill-slot rather than a
     /// register. Useful if the machine has register-memory instruction forms

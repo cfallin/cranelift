@@ -13,7 +13,7 @@ use crate::machinst::*;
 
 use alloc::vec::Vec;
 
-use regalloc::{RealReg, Reg, RegClass, Set, SpillSlot};
+use regalloc::{RealReg, Reg, RegClass, Set, SpillSlot, WritableReg};
 
 #[derive(Clone, Debug)]
 enum ABIArg {
@@ -31,10 +31,10 @@ enum ABIRet {
 pub struct ARM64ABIBody {
     args: Vec<ABIArg>,
     rets: Vec<ABIRet>,
-    stackslots: Vec<usize>,    // offsets to each stackslot
-    stackslots_size: usize,    // total stack size of all stackslots
-    clobbered: Set<RealReg>,   // clobbered registers, from regalloc.
-    spillslots: Option<usize>, // total number of spillslots, from regalloc.
+    stackslots: Vec<usize>,               // offsets to each stackslot
+    stackslots_size: usize,               // total stack size of all stackslots
+    clobbered: Set<WritableReg<RealReg>>, // clobbered registers, from regalloc.
+    spillslots: Option<usize>,            // total number of spillslots, from regalloc.
 }
 
 fn in_int_reg(ty: types::Type) -> bool {
@@ -111,7 +111,7 @@ fn get_stack_addr(fp_offset: i64) -> MemArg {
     MemArg::StackOffset(fp_offset)
 }
 
-fn load_stack(fp_offset: i64, into_reg: Reg, ty: Type) -> Inst {
+fn load_stack(fp_offset: i64, into_reg: WritableReg<Reg>, ty: Type) -> Inst {
     let mem = get_stack_addr(fp_offset);
 
     match ty {
@@ -163,8 +163,10 @@ fn is_caller_save(r: RealReg) -> bool {
     }
 }
 
-fn get_callee_saves(regs: Vec<RealReg>) -> Vec<RealReg> {
-    regs.into_iter().filter(|r| is_callee_save(*r)).collect()
+fn get_callee_saves(regs: Vec<WritableReg<RealReg>>) -> Vec<WritableReg<RealReg>> {
+    regs.into_iter()
+        .filter(|r| is_callee_save(r.to_reg()))
+        .collect()
 }
 
 fn get_caller_saves_set() -> Set<RealReg> {
@@ -219,7 +221,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         self.stackslots.len()
     }
 
-    fn load_arg(&self, idx: usize, into_reg: Reg) -> Inst {
+    fn load_arg(&self, idx: usize, into_reg: WritableReg<Reg>) -> Inst {
         match &self.args[idx] {
             &ABIArg::Reg(r) => {
                 return Inst::gen_move(into_reg, r.to_reg());
@@ -231,7 +233,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
     fn store_retval(&self, idx: usize, from_reg: Reg) -> Inst {
         match &self.rets[idx] {
             &ABIRet::Reg(r) => {
-                return Inst::gen_move(r.to_reg(), from_reg);
+                return Inst::gen_move(WritableReg::from_reg(r.to_reg()), from_reg);
             }
             _ => unimplemented!(),
         }
@@ -241,11 +243,17 @@ impl ABIBody<Inst> for ARM64ABIBody {
         self.spillslots = Some(slots);
     }
 
-    fn set_clobbered(&mut self, clobbered: Set<RealReg>) {
+    fn set_clobbered(&mut self, clobbered: Set<WritableReg<RealReg>>) {
         self.clobbered = clobbered;
     }
 
-    fn load_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, into_reg: Reg) -> Inst {
+    fn load_stackslot(
+        &self,
+        slot: StackSlot,
+        offset: usize,
+        ty: Type,
+        into_reg: WritableReg<Reg>,
+    ) -> Inst {
         // Offset from beginning of stackslot area, which is at FP - stackslots_size.
         let stack_off = self.stackslots[slot.as_u32() as usize] as i64;
         let fp_off: i64 = -(self.stackslots_size as i64) + stack_off + (offset as i64);
@@ -260,13 +268,13 @@ impl ABIBody<Inst> for ARM64ABIBody {
     }
 
     // Load from a spillslot.
-    fn load_spillslot(&self, slot: SpillSlot, ty: Type, into_reg: Reg) -> Inst {
+    fn load_spillslot(&self, slot: SpillSlot, ty: Type, into_reg: WritableReg<Reg>) -> Inst {
         // Note that when spills/fills are generated, we don't yet know how many
         // spillslots there will be, so we allocate *downward* from the beginning
         // of the stackslot area. Hence: FP - stackslot_size - 8*spillslot -
         // sizeof(ty).
         let slot = slot.get() as i64;
-        let ty_size = self.get_spillslot_size(into_reg.get_class(), ty) * 8;
+        let ty_size = self.get_spillslot_size(into_reg.to_reg().get_class(), ty) * 8;
         let fp_off: i64 = -(self.stackslots_size as i64) - (8 * slot) - ty_size as i64;
         load_stack(fp_off, into_reg, ty)
     }
@@ -288,13 +296,16 @@ impl ABIBody<Inst> for ARM64ABIBody {
         insts.push(Inst::StoreP64 {
             rt: fp_reg(),
             rt2: link_reg(),
-            mem: PairMemArg::PreIndexed(stack_reg(), SImm7::maybe_from_i64(-16 / 8).unwrap()),
+            mem: PairMemArg::PreIndexed(
+                writable_stack_reg(),
+                SImm7::maybe_from_i64(-16 / 8).unwrap(),
+            ),
         });
         // mov fp (x29), sp. This uses the ADDI rd, rs, 0 form of `MOV` because
         // the usual encoding (`ORR`) does not work with SP.
         insts.push(Inst::AluRRImm12 {
             alu_op: ALUOp::Add64,
-            rd: fp_reg(),
+            rd: writable_fp_reg(),
             rn: stack_reg(),
             imm12: Imm12 {
                 bits: 0,
@@ -307,23 +318,23 @@ impl ABIBody<Inst> for ARM64ABIBody {
             if let Some(imm12) = Imm12::maybe_from_u64(total_stacksize as u64) {
                 let sub_inst = Inst::AluRRImm12 {
                     alu_op: ALUOp::Sub64,
-                    rd: stack_reg(),
+                    rd: writable_stack_reg(),
                     rn: stack_reg(),
                     imm12,
                 };
                 insts.push(sub_inst);
             } else {
                 let const_data = u64_constant(total_stacksize as u64);
-                let tmp = spilltmp_reg();
+                let tmp = writable_spilltmp_reg();
                 let const_inst = Inst::ULoad64 {
                     rd: tmp,
                     mem: MemArg::label(MemLabel::ConstantData(const_data)),
                 };
                 let sub_inst = Inst::AluRRR {
                     alu_op: ALUOp::Sub64,
-                    rd: stack_reg(),
+                    rd: writable_stack_reg(),
                     rn: stack_reg(),
-                    rm: tmp,
+                    rm: tmp.to_reg(),
                 };
                 insts.push(const_inst);
                 insts.push(sub_inst);
@@ -334,15 +345,19 @@ impl ABIBody<Inst> for ARM64ABIBody {
         let clobbered = get_callee_saves(self.clobbered.to_vec());
         for reg_pair in clobbered.chunks(2) {
             let (r1, r2) = if reg_pair.len() == 2 {
-                (reg_pair[0].to_reg(), reg_pair[1].to_reg())
+                // .to_reg().to_reg(): WritableReg<RealReg> --> RealReg --> Reg
+                (reg_pair[0].to_reg().to_reg(), reg_pair[1].to_reg().to_reg())
             } else {
-                (reg_pair[0].to_reg(), zero_reg())
+                (reg_pair[0].to_reg().to_reg(), zero_reg())
             };
             // stp r1, r2, [sp, #-16]!
             insts.push(Inst::StoreP64 {
                 rt: r1,
                 rt2: r2,
-                mem: PairMemArg::PreIndexed(stack_reg(), SImm7::maybe_from_i64(-16 / 8).unwrap()),
+                mem: PairMemArg::PreIndexed(
+                    writable_stack_reg(),
+                    SImm7::maybe_from_i64(-16 / 8).unwrap(),
+                ),
             });
         }
 
@@ -356,15 +371,18 @@ impl ABIBody<Inst> for ARM64ABIBody {
         let clobbered = get_callee_saves(self.clobbered.to_vec());
         for reg_pair in clobbered.chunks(2).rev() {
             let (r1, r2) = if reg_pair.len() == 2 {
-                (reg_pair[0].to_reg(), reg_pair[1].to_reg())
+                (reg_pair[0].map(|r| r.to_reg()), reg_pair[1].map(|r| r.to_reg()))
             } else {
-                (reg_pair[0].to_reg(), zero_reg())
+                (reg_pair[0].map(|r| r.to_reg()), writable_zero_reg())
             };
             // ldp r1, r2, [sp], #16
             insts.push(Inst::LoadP64 {
                 rt: r1,
                 rt2: r2,
-                mem: PairMemArg::PostIndexed(stack_reg(), SImm7::maybe_from_i64(16 / 8).unwrap()),
+                mem: PairMemArg::PostIndexed(
+                    writable_stack_reg(),
+                    SImm7::maybe_from_i64(16 / 8).unwrap(),
+                ),
             });
         }
 
@@ -372,7 +390,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         // MOV to SP is an alias of ADD.
         insts.push(Inst::AluRRImm12 {
             alu_op: ALUOp::Add64,
-            rd: stack_reg(),
+            rd: writable_stack_reg(),
             rn: fp_reg(),
             imm12: Imm12 {
                 bits: 0,
@@ -380,9 +398,12 @@ impl ABIBody<Inst> for ARM64ABIBody {
             },
         });
         insts.push(Inst::LoadP64 {
-            rt: fp_reg(),
-            rt2: link_reg(),
-            mem: PairMemArg::PostIndexed(stack_reg(), SImm7::maybe_from_i64(16 / 8).unwrap()),
+            rt: writable_fp_reg(),
+            rt2: writable_link_reg(),
+            mem: PairMemArg::PostIndexed(
+                writable_stack_reg(),
+                SImm7::maybe_from_i64(16 / 8).unwrap(),
+            ),
         });
         insts.push(Inst::Ret {});
         insts
@@ -402,7 +423,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         self.store_spillslot(to_slot, ty, from_reg.to_reg())
     }
 
-    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, ty: Type) -> Inst {
-        self.load_spillslot(from_slot, ty, to_reg.to_reg())
+    fn gen_reload(&self, to_reg: WritableReg<RealReg>, from_slot: SpillSlot, ty: Type) -> Inst {
+        self.load_spillslot(from_slot, ty, to_reg.map(|r| r.to_reg()))
     }
 }

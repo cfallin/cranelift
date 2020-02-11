@@ -3,7 +3,7 @@
 use crate::ir;
 use crate::ir::StackSlot;
 use crate::machinst::*;
-use regalloc::{Reg, Set, SpillSlot, VirtualReg};
+use regalloc::{Reg, Set, SpillSlot, VirtualReg, WritableReg};
 
 /// Trait implemented by an object that tracks ABI-related state (e.g., stack
 /// layout) and can generate code while emitting the *body* of a function.
@@ -24,7 +24,7 @@ pub trait ABIBody<I: VCodeInst> {
     fn num_stackslots(&self) -> usize;
 
     /// Generate an argument load sequence, given a destination register.
-    fn load_arg(&self, idx: usize, into_reg: Reg) -> I;
+    fn load_arg(&self, idx: usize, into_reg: WritableReg<Reg>) -> I;
 
     /// Generate a return-value store sequence, given a source register.
     fn store_retval(&self, idx: usize, from_reg: Reg) -> I;
@@ -40,16 +40,22 @@ pub trait ABIBody<I: VCodeInst> {
     fn set_num_spillslots(&mut self, slots: usize);
 
     /// Update with the clobbered registers, post-regalloc.
-    fn set_clobbered(&mut self, clobbered: Set<RealReg>);
+    fn set_clobbered(&mut self, clobbered: Set<WritableReg<RealReg>>);
 
     /// Load from a stackslot.
-    fn load_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, into_reg: Reg) -> I;
+    fn load_stackslot(
+        &self,
+        slot: StackSlot,
+        offset: usize,
+        ty: Type,
+        into_reg: WritableReg<Reg>,
+    ) -> I;
 
     /// Store to a stackslot.
     fn store_stackslot(&self, slot: StackSlot, offset: usize, ty: Type, from_reg: Reg) -> I;
 
     /// Load from a spillslot.
-    fn load_spillslot(&self, slot: SpillSlot, ty: Type, into_reg: Reg) -> I;
+    fn load_spillslot(&self, slot: SpillSlot, ty: Type, into_reg: WritableReg<Reg>) -> I;
 
     /// Store to a spillslot.
     fn store_spillslot(&self, slot: SpillSlot, ty: Type, from_reg: Reg) -> I;
@@ -72,20 +78,11 @@ pub trait ABIBody<I: VCodeInst> {
     fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, ty: Type) -> I;
 
     /// Generate a reload (fill).
-    fn gen_reload(&self, to_reg: RealReg, from_slot: SpillSlot, ty: Type) -> I;
+    fn gen_reload(&self, to_reg: WritableReg<RealReg>, from_slot: SpillSlot, ty: Type) -> I;
 }
 
 /// Trait implemented by an object that tracks ABI-related state and can
 /// generate code while emitting a *call* to a function.
 pub trait ABICall<I: VCodeInst> {
-    /// Store a value as an argument to the callee.
-    fn store_arg(&mut self, idx: usize, from_reg: Reg, vcode: &mut VCodeBuilder<I>);
-
-    /// Load a value as a retval from the callee.
-    fn load_retval(&mut self, idx: usize, to_reg: Reg, vcode: &mut VCodeBuilder<I>);
-
-    /// Generate the actual call.
-
-    /// Get the clobbers of the function call (not including the args/retvals).
-    fn clobbers(&self) -> Set<RealReg>;
+    // TODO.
 }
