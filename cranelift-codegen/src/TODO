@@ -22,6 +22,17 @@ TODO:
   - Spill-slot and argument offsets from FP
     - reserve a temp register for address computation?
 
+- Lowering tests
+  - Get filetest working with new top-level API
+  - Make sure all (non-vector) filetests can compile
+  - Develop suite of golden-machine-code (or golden-assembly?) tests
+
+- Performance tests vs. SpiderMonkey WASM
+  - make sure that cranelift-wasm can run (or wasmtime?)
+  - compile benchmarks (Spec CPU? bzip2? rustfmt? tinycc?)
+  - SM JS shell: ./js --wasm-compiler=ion
+  - SM with Cranelift: ./js --wasm-compiler=cranelift
+
 - Post-MVP:
 
   - better block reordering: heuristically place after `from` or before `to` if
