@@ -1558,11 +1558,22 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
             } => unimplemented!(),
 
             &Inst::AluRRRExtend {
-                rd: _,
-                rn: _,
-                rm: _,
-                ..
-            } => unimplemented!(),
+                alu_op,
+                rd,
+                rn,
+                rm,
+                extendop,
+            } => {
+                let top11 = match alu_op {
+                    ALUOp::Add32 => 0b00001011001,
+                    ALUOp::Add64 => 0b10001011001,
+                    ALUOp::Sub32 => 0b01001011001,
+                    ALUOp::Sub64 => 0b11001011001,
+                    _ => unimplemented!(),
+                };
+                let bits_15_10 = extendop.bits() << 3;
+                sink.put4(enc_arith_rrr(top11, bits_15_10, rd, rn, rm));
+            }
 
             &Inst::ULoad8 { rd, ref mem }
             | &Inst::SLoad8 { rd, ref mem }
@@ -2675,9 +2686,57 @@ mod test {
             "subs x7, x8, #291",
         ));
 
+        insns.push((
+            Inst::AluRRRExtend {
+                alu_op: ALUOp::Add32,
+                rd: writable_xreg(7),
+                rn: xreg(8),
+                rm: xreg(9),
+                extendop: ExtendOp::SXTB,
+            },
+            "0781290B",
+            "add w7, w8, w9, SXTB",
+        ));
+
+        insns.push((
+            Inst::AluRRRExtend {
+                alu_op: ALUOp::Add64,
+                rd: writable_xreg(15),
+                rn: xreg(16),
+                rm: xreg(17),
+                extendop: ExtendOp::UXTB,
+            },
+            "0F02318B",
+            "add x15, x16, x17, UXTB",
+        ));
+
+        insns.push((
+            Inst::AluRRRExtend {
+                alu_op: ALUOp::Sub32,
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+                extendop: ExtendOp::SXTH,
+            },
+            "41A0234B",
+            "sub w1, w2, w3, SXTH",
+        ));
+
+        insns.push((
+            Inst::AluRRRExtend {
+                alu_op: ALUOp::Sub64,
+                rd: writable_xreg(20),
+                rn: xreg(21),
+                rm: xreg(22),
+                extendop: ExtendOp::UXTW,
+            },
+            "B44236CB",
+            "sub x20, x21, x22, UXTW",
+        ));
+
         // TODO: ImmLogic forms (once logic-immediate encoding/decoding exists).
 
-        // TODO: AluRRRShift and ALURRRExtend forms.
+        // TODO: AluRRRShift forms.
 
         insns.push((
             Inst::ULoad8 {

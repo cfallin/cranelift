@@ -217,6 +217,8 @@ fn output_to_rse<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSE {
     if (op == Opcode::Uextend || op == Opcode::Sextend) && out_ty == I64 {
         let sign_extend = op == Opcode::Sextend;
         let extendee = get_input(ctx, out, 0);
+        // TODO: This won't extend a value that comes from a block parameter,
+        // since it has no associated instruction.
         if let Some(out) = input_source(ctx, extendee).as_output() {
             let inner_ty = ctx.output_ty(out.insn, out.output);
             if inner_ty == I32 || inner_ty == I16 || inner_ty == I8 {
