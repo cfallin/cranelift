@@ -543,15 +543,15 @@ impl fmt::Debug for ExtMode {
 #[derive(Clone)]
 pub enum ShiftKind {
     Left,
-    RightS,
     RightZ,
+    RightS,
 }
 impl ShiftKind {
     fn to_string(&self) -> String {
         match self {
             ShiftKind::Left => "shl".to_string(),
-            ShiftKind::RightS => "sar".to_string(),
             ShiftKind::RightZ => "shr".to_string(),
+            ShiftKind::RightS => "sar".to_string(),
         }
     }
 }
@@ -694,14 +694,17 @@ pub enum Inst {
 
 // Handy constructors for Insts.
 
-// Will the lower 32 bits of the given value sign-extend back to the same value?
-fn fitsIn32bits(x: u64) -> bool {
-    let xs = x as i64;
-    xs == ((xs << 32) >> 32)
+// For various sizes, will some number of lowest bits sign extend to be the
+// same as the whole value?
+fn low8willSXto64(x: u32) -> bool {
+    let xs = (x as i32) as i64;
+    xs == ((xs << 56) >> 56)
 }
-
-// Same question for 8 bits.
-fn fitsIn8bits(x: u32) -> bool {
+//fn low16willSXto64(x: u32) -> bool {
+//    let xs = (x as i32) as i64;
+//    xs == ((xs << 48) >> 48)
+//}
+fn low8willSXto32(x: u32) -> bool {
     let xs = x as i32;
     xs == ((xs << 24) >> 24)
 }
@@ -805,163 +808,165 @@ pub fn i_Ret() -> Inst {
 //=============================================================================
 // Instructions: printing
 
-impl ShowWithRRU for Inst {
-    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
-        fn ljustify(s: String) -> String {
-            let w = 7;
-            if s.len() >= w {
-                s
-            } else {
-                // BEGIN hack
-                let mut need = w - s.len();
-                if need > w {
-                    need = w;
-                }
-                let extra = [" ", "  ", "   ", "    ", "     ", "      ", "       "][need - 1];
-                // END hack
-                s + &extra.to_string()
+fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
+    fn ljustify(s: String) -> String {
+        let w = 7;
+        if s.len() >= w {
+            s
+        } else {
+            // BEGIN hack
+            let mut need = w - s.len();
+            if need > w {
+                need = w;
             }
+            let extra = [" ", "  ", "   ", "    ", "     ", "      ", "       "][need - 1];
+            // END hack
+            s + &extra.to_string()
         }
-        fn ljustify2(s1: String, s2: String) -> String {
-            ljustify(s1 + &s2)
+    }
+    fn ljustify2(s1: String, s2: String) -> String {
+        ljustify(s1 + &s2)
+    }
+    fn suffixLQ(is64: bool) -> String {
+        (if is64 { "q" } else { "l" }).to_string()
+    }
+    fn sizeLQ(is64: bool) -> u8 {
+        if is64 {
+            8
+        } else {
+            4
         }
-        fn suffixLQ(is64: bool) -> String {
-            (if is64 { "q" } else { "l" }).to_string()
+    }
+    fn suffixBWLQ(size: u8) -> String {
+        match size {
+            1 => "b".to_string(),
+            2 => "w".to_string(),
+            4 => "l".to_string(),
+            8 => "q".to_string(),
+            _ => panic!("Inst(x64).show.suffixBWLQ"),
         }
-        fn sizeLQ(is64: bool) -> u8 {
-            if is64 {
-                8
-            } else {
-                4
-            }
-        }
-        fn suffixBWLQ(size: u8) -> String {
-            match size {
-                1 => "b".to_string(),
-                2 => "w".to_string(),
-                4 => "l".to_string(),
-                8 => "q".to_string(),
-                _ => panic!("Inst(x64).show.suffixBWLQ"),
-            }
-        }
+    }
 
-        match self {
-            Inst::Alu_RMI_R { is64, op, src, dst } => format!(
-                "{} {}, {}",
-                ljustify2(op.to_string(), suffixLQ(*is64)),
-                src.show_rru_sized(mb_rru, sizeLQ(*is64)),
-                show_ireg_sized(*dst, mb_rru, sizeLQ(*is64)),
-            ),
-            Inst::Imm_R {
-                dstIs64,
+    match inst {
+        Inst::Alu_RMI_R { is64, op, src, dst } => format!(
+            "{} {}, {}",
+            ljustify2(op.to_string(), suffixLQ(*is64)),
+            src.show_rru_sized(mb_rru, sizeLQ(*is64)),
+            show_ireg_sized(*dst, mb_rru, sizeLQ(*is64)),
+        ),
+        Inst::Imm_R {
+            dstIs64,
+            simm64,
+            dst,
+        } => {
+            let name = if *dstIs64 { "movabsq" } else { "movl" };
+            format!(
+                "{} ${}, {}",
+                ljustify(name.to_string()),
                 simm64,
-                dst,
-            } => {
-                let name = if *dstIs64 { "movabsq" } else { "movl" };
+                show_ireg_sized(*dst, mb_rru, sizeLQ(*dstIs64))
+            )
+        }
+        Inst::Mov_R_R { is64, src, dst } => format!(
+            "{} {}, {}",
+            ljustify2("mov".to_string(), suffixLQ(*is64)),
+            show_ireg_sized(*src, mb_rru, sizeLQ(*is64)),
+            show_ireg_sized(*dst, mb_rru, sizeLQ(*is64))
+        ),
+        Inst::MovZX_M_R { extMode, addr, dst } => {
+            if *extMode == ExtMode::LQ {
                 format!(
-                    "{} ${}, {}",
-                    ljustify(name.to_string()),
-                    simm64,
-                    show_ireg_sized(*dst, mb_rru, sizeLQ(*dstIs64))
+                    "{} {}, {}",
+                    ljustify("movl".to_string()),
+                    addr.show_rru(mb_rru),
+                    show_ireg_sized(*dst, mb_rru, 4)
+                )
+            } else {
+                format!(
+                    "{} {}, {}",
+                    ljustify2("movz".to_string(), extMode.to_string()),
+                    addr.show_rru(mb_rru),
+                    show_ireg_sized(*dst, mb_rru, extMode.dst_size())
                 )
             }
-            Inst::Mov_R_R { is64, src, dst } => format!(
-                "{} {}, {}",
-                ljustify2("mov".to_string(), suffixLQ(*is64)),
-                show_ireg_sized(*src, mb_rru, sizeLQ(*is64)),
-                show_ireg_sized(*dst, mb_rru, sizeLQ(*is64))
-            ),
-            Inst::MovZX_M_R { extMode, addr, dst } => {
-                if *extMode == ExtMode::LQ {
-                    format!(
-                        "{} {}, {}",
-                        ljustify("movl".to_string()),
-                        addr.show_rru(mb_rru),
-                        show_ireg_sized(*dst, mb_rru, 4)
-                    )
-                } else {
-                    format!(
-                        "{} {}, {}",
-                        ljustify2("movz".to_string(), extMode.to_string()),
-                        addr.show_rru(mb_rru),
-                        show_ireg_sized(*dst, mb_rru, extMode.dst_size())
-                    )
-                }
-            }
-            Inst::Mov64_M_R { addr, dst } => format!(
-                "{} {}, {}",
-                ljustify("movq".to_string()),
-                addr.show_rru(mb_rru),
-                dst.show_rru(mb_rru)
-            ),
-            Inst::MovSX_M_R { extMode, addr, dst } => format!(
-                "{} {}, {}",
-                ljustify2("movs".to_string(), extMode.to_string()),
-                addr.show_rru(mb_rru),
-                show_ireg_sized(*dst, mb_rru, extMode.dst_size())
-            ),
-            Inst::Mov_R_M { size, src, addr } => format!(
-                "{} {}, {}",
-                ljustify2("mov".to_string(), suffixBWLQ(*size)),
-                show_ireg_sized(*src, mb_rru, *size),
-                addr.show_rru(mb_rru)
-            ),
-            Inst::Shift_R {
-                is64,
-                kind,
-                nBits,
-                dst,
-            } => {
-                if *nBits == 0 {
-                    format!(
-                        "{} %cl, {}",
-                        ljustify2(kind.to_string(), suffixLQ(*is64)),
-                        show_ireg_sized(*dst, mb_rru, sizeLQ(*is64))
-                    )
-                } else {
-                    format!(
-                        "{} ${}, {}",
-                        ljustify2(kind.to_string(), suffixLQ(*is64)),
-                        nBits,
-                        show_ireg_sized(*dst, mb_rru, sizeLQ(*is64))
-                    )
-                }
-            }
-            Inst::Cmp_RMI_R { size, src, dst } => format!(
-                "{} {}, {}",
-                ljustify2("cmp".to_string(), suffixBWLQ(*size)),
-                src.show_rru_sized(mb_rru, *size),
-                show_ireg_sized(*dst, mb_rru, *size)
-            ),
-            Inst::Push64 { src } => {
-                format!("{} {}", ljustify("pushq".to_string()), src.show_rru(mb_rru))
-            }
-            Inst::JmpKnown { simm32 } => {
-                format!("{} simm32={}", ljustify("jmp".to_string()), *simm32)
-            }
-            Inst::JmpUnknown { target } => format!(
-                "{} *{}",
-                ljustify("jmp".to_string()),
-                target.show_rru(mb_rru)
-            ),
-            Inst::JmpCond {
-                cc,
-                tsimm32,
-                fsimm32,
-            } => format!(
-                "{} tsimm32={} fsimm32={}",
-                ljustify2("j".to_string(), cc.to_string()),
-                *tsimm32,
-                *fsimm32
-            ),
-            Inst::CallKnown { target } => format!("{} {:?}", ljustify("call".to_string()), target),
-            Inst::CallUnknown { target } => format!(
-                "{} *{}",
-                ljustify("call".to_string()),
-                target.show_rru(mb_rru)
-            ),
-            Inst::Ret {} => "ret".to_string(),
         }
+        Inst::Mov64_M_R { addr, dst } => format!(
+            "{} {}, {}",
+            ljustify("movq".to_string()),
+            addr.show_rru(mb_rru),
+            dst.show_rru(mb_rru)
+        ),
+        Inst::MovSX_M_R { extMode, addr, dst } => format!(
+            "{} {}, {}",
+            ljustify2("movs".to_string(), extMode.to_string()),
+            addr.show_rru(mb_rru),
+            show_ireg_sized(*dst, mb_rru, extMode.dst_size())
+        ),
+        Inst::Mov_R_M { size, src, addr } => format!(
+            "{} {}, {}",
+            ljustify2("mov".to_string(), suffixBWLQ(*size)),
+            show_ireg_sized(*src, mb_rru, *size),
+            addr.show_rru(mb_rru)
+        ),
+        Inst::Shift_R {
+            is64,
+            kind,
+            nBits,
+            dst,
+        } => {
+            if *nBits == 0 {
+                format!(
+                    "{} %cl, {}",
+                    ljustify2(kind.to_string(), suffixLQ(*is64)),
+                    show_ireg_sized(*dst, mb_rru, sizeLQ(*is64))
+                )
+            } else {
+                format!(
+                    "{} ${}, {}",
+                    ljustify2(kind.to_string(), suffixLQ(*is64)),
+                    nBits,
+                    show_ireg_sized(*dst, mb_rru, sizeLQ(*is64))
+                )
+            }
+        }
+        Inst::Cmp_RMI_R { size, src, dst } => format!(
+            "{} {}, {}",
+            ljustify2("cmp".to_string(), suffixBWLQ(*size)),
+            src.show_rru_sized(mb_rru, *size),
+            show_ireg_sized(*dst, mb_rru, *size)
+        ),
+        Inst::Push64 { src } => {
+            format!("{} {}", ljustify("pushq".to_string()), src.show_rru(mb_rru))
+        }
+        Inst::JmpKnown { simm32 } => format!("{} simm32={}", ljustify("jmp".to_string()), *simm32),
+        Inst::JmpUnknown { target } => format!(
+            "{} *{}",
+            ljustify("jmp".to_string()),
+            target.show_rru(mb_rru)
+        ),
+        Inst::JmpCond {
+            cc,
+            tsimm32,
+            fsimm32,
+        } => format!(
+            "{} tsimm32={} fsimm32={}",
+            ljustify2("j".to_string(), cc.to_string()),
+            *tsimm32,
+            *fsimm32
+        ),
+        Inst::CallKnown { target } => format!("{} {:?}", ljustify("call".to_string()), target),
+        Inst::CallUnknown { target } => format!(
+            "{} *{}",
+            ljustify("call".to_string()),
+            target.show_rru(mb_rru)
+        ),
+        Inst::Ret {} => "ret".to_string(),
+    }
+}
+
+impl ShowWithRRU for Inst {
+    fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+        x64_show_rru(self, mb_rru)
     }
 }
 
@@ -1279,8 +1284,10 @@ fn x64_map_regs(
 // Instructions and subcomponents: emission
 
 // For all of the routines that take both a memory-or-reg operand (sometimes
-// called "E" in the Intel parlance) and a reg-only operand ("G" in Intelese),
-// the order is always G first, then E.
+// called "E" in the Intel documentation) and a reg-only operand ("G" in
+// Intelese), the order is always G first, then E.
+//
+// "enc" in the following means "hardware register encoding number".
 
 #[inline(always)]
 fn mkModRegRM(m0d: u8, encRegG: u8, rmE: u8) -> u8 {
@@ -1307,7 +1314,8 @@ fn iregEnc(reg: Reg) -> u8 {
     reg.get_hw_encoding()
 }
 
-// Flags that describe special handling of the REX prefix.
+// F_*: these flags describe special handling of the insn to be generated.  Be
+// careful with these.  It is easy to create nonsensical combinations.
 const F_NONE: u32 = 0;
 
 // Emit the REX prefix byte even if it appears to be redundant (== 0x40).
@@ -1315,7 +1323,11 @@ const F_RETAIN_REDUNDANT_REX: u32 = 1;
 
 // Set the W bit in the REX prefix to zero.  By default it will be set to 1,
 // indicating a 64-bit operation.
-const F_CLEAR_W_BIT: u32 = 2;
+const F_CLEAR_REX_W: u32 = 2;
+
+// Add an 0x66 (operand-size override) prefix.  This is necessary to indicate
+// a 16-bit operation.  Normally this will be used together with F_CLEAR_REX_W.
+const F_PREFIX_66: u32 = 4;
 
 // This is the core 'emit' function for instructions that reference memory.
 //
@@ -1336,7 +1348,7 @@ const F_CLEAR_W_BIT: u32 = 2;
 // deleted if it is redundant (0x40).  Note that for a 64-bit operation, the
 // REX prefix will normally never be redundant, since REX.W must be 1 to
 // indicate a 64-bit operation.
-fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
+fn emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE<CS: CodeSink>(
     sink: &mut CS,
     opcodes: u32,
     mut numOpcodes: usize,
@@ -1347,13 +1359,19 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
     // General comment for this function: the registers in |memE| must be
     // 64-bit integer registers, because they are part of an address
     // expression.  But |encG| can be derived from a register of any class.
-    let clearWBit = (flags & F_CLEAR_W_BIT) != 0;
+    let prefix66 = (flags & F_PREFIX_66) != 0;
+    let clearRexW = (flags & F_CLEAR_REX_W) != 0;
     let retainRedundant = (flags & F_RETAIN_REDUNDANT_REX) != 0;
+    // The operand-size override, if requested.  This indicates a 16-bit
+    // operation.
+    if prefix66 {
+        sink.put1(0x66);
+    }
     match memE {
         Addr::IR { simm32, base: regE } => {
             // First, cook up the REX byte.  This is easy.
             let encE = iregEnc(*regE);
-            let w = if clearWBit { 0 } else { 1 };
+            let w = if clearRexW { 0 } else { 1 };
             let r = (encG >> 3) & 1;
             let x = 0;
             let b = (encE >> 3) & 1;
@@ -1375,17 +1393,20 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
                 && encE != ENC_R12
                 && encE != ENC_R13
             {
+                // FIXME JRS 2020Feb11: those four tests can surely be
+                // replaced by a single mask-and-compare check.  We should do
+                // that because this routine is likely to be hot.
                 sink.put1(mkModRegRM(0, encG & 7, encE & 7));
             } else if *simm32 == 0 && (encE == ENC_RSP || encE == ENC_R12) {
                 sink.put1(mkModRegRM(0, encG & 7, 4));
                 sink.put1(0x24);
-            } else if fitsIn8bits(*simm32) && encE != ENC_RSP && encE != ENC_R12 {
+            } else if low8willSXto32(*simm32) && encE != ENC_RSP && encE != ENC_R12 {
                 sink.put1(mkModRegRM(1, encG & 7, encE & 7));
                 sink.put1((simm32 & 0xFF) as u8);
             } else if encE != ENC_RSP && encE != ENC_R12 {
                 sink.put1(mkModRegRM(2, encG & 7, encE & 7));
                 sink.put4(*simm32);
-            } else if (encE == ENC_RSP || encE == ENC_R12) && fitsIn8bits(*simm32) {
+            } else if (encE == ENC_RSP || encE == ENC_R12) && low8willSXto32(*simm32) {
                 // REX.B distinguishes RSP from R12
                 sink.put1(mkModRegRM(1, encG & 7, 4));
                 sink.put1(0x24);
@@ -1397,7 +1418,7 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
                 sink.put1(0x24);
                 sink.put4(*simm32);
             } else {
-                panic!("emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE: IR");
+                panic!("emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE: IR");
             }
         }
         // Bizarrely, the IRRS case is much simpler.
@@ -1410,7 +1431,7 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
             let encBase = iregEnc(*regBase);
             let encIndex = iregEnc(*regIndex);
             // The rex byte
-            let w = if clearWBit { 0 } else { 1 };
+            let w = if clearRexW { 0 } else { 1 };
             let r = (encG >> 3) & 1;
             let x = (encIndex >> 3) & 1;
             let b = (encBase >> 3) & 1;
@@ -1424,7 +1445,7 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
                 sink.put1(((opcodes >> (numOpcodes << 3)) & 0xFF) as u8);
             }
             // modrm, SIB, immediates
-            if fitsIn8bits(*simm32) && encIndex != ENC_RSP {
+            if low8willSXto32(*simm32) && encIndex != ENC_RSP {
                 sink.put1(mkModRegRM(1, encG & 7, 4));
                 sink.put1(mkSIB(*shift, encIndex & 7, encBase & 7));
                 sink.put1(*simm32 as u8);
@@ -1433,19 +1454,20 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE<CS: CodeSink>(
                 sink.put1(mkSIB(*shift, encIndex & 7, encBase & 7));
                 sink.put4(*simm32);
             } else {
-                panic!("emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE: IRRS");
+                panic!("emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE: IRRS");
             }
         }
     }
 }
 
-// This is the core 'emit' function for instructions that reference memory.
+// This is the core 'emit' function for instructions that do not reference
+// memory.
 //
 // This is conceptually the same as
-// emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE, except it is for the case
+// emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE, except it is for the case
 // where the E operand is a register rather than memory.  Hence it is much
 // simpler.
-fn emit_REX_OPCODES_MODRM_for_EncG_EncE<CS: CodeSink>(
+fn emit_REX_OPCODES_MODRM_encG_encE<CS: CodeSink>(
     sink: &mut CS,
     opcodes: u32,
     mut numOpcodes: usize,
@@ -1457,10 +1479,15 @@ fn emit_REX_OPCODES_MODRM_for_EncG_EncE<CS: CodeSink>(
     // don't even have to be from the same class.  For example, for an
     // integer-to-FP conversion insn, one might be RegClass::I64 and the other
     // RegClass::V128.
-    let clearWBit = (flags & F_CLEAR_W_BIT) != 0;
+    let prefix66 = (flags & F_PREFIX_66) != 0;
+    let clearRexW = (flags & F_CLEAR_REX_W) != 0;
     let retainRedundant = (flags & F_RETAIN_REDUNDANT_REX) != 0;
+    // The operand-size override
+    if prefix66 {
+        sink.put1(0x66);
+    }
     // The rex byte
-    let w = if clearWBit { 0 } else { 1 };
+    let w = if clearRexW { 0 } else { 1 };
     let r = (encG >> 3) & 1;
     let x = 0;
     let b = (encE >> 3) & 1;
@@ -1475,12 +1502,12 @@ fn emit_REX_OPCODES_MODRM_for_EncG_EncE<CS: CodeSink>(
     }
     // Now the mod/rm byte.  The instruction we're generating doesn't access
     // memory, so there is no SIB byte or immediate -- we're done.
-    sink.put1(mkModRegRM(3, encG & 7, encE));
+    sink.put1(mkModRegRM(3, encG & 7, encE & 7));
 }
 
 // These are merely wrappers for the above two functions that facilitate passing
 // actual |Reg|s rather than their encodings.
-fn emit_REX_OPCODES_MODRM_SIB_IMM_for_RegG_MemE<CS: CodeSink>(
+fn emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE<CS: CodeSink>(
     sink: &mut CS,
     opcodes: u32,
     numOpcodes: usize,
@@ -1490,10 +1517,10 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_for_RegG_MemE<CS: CodeSink>(
 ) {
     // JRS FIXME 2020Feb07: this should really just be |regEnc| not |iregEnc|
     let encG = iregEnc(regG);
-    emit_REX_OPCODES_MODRM_SIB_IMM_for_EncG_MemE(sink, opcodes, numOpcodes, encG, memE, flags);
+    emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE(sink, opcodes, numOpcodes, encG, memE, flags);
 }
 
-fn emit_REX_OPCODES_MODRM_for_RegG_RegE<CS: CodeSink>(
+fn emit_REX_OPCODES_MODRM_regG_regE<CS: CodeSink>(
     sink: &mut CS,
     opcodes: u32,
     numOpcodes: usize,
@@ -1504,10 +1531,57 @@ fn emit_REX_OPCODES_MODRM_for_RegG_RegE<CS: CodeSink>(
     // JRS FIXME 2020Feb07: these should really just be |regEnc| not |iregEnc|
     let encG = iregEnc(regG);
     let encE = iregEnc(regE);
-    emit_REX_OPCODES_MODRM_for_EncG_EncE(sink, opcodes, numOpcodes, encG, encE, flags);
+    emit_REX_OPCODES_MODRM_encG_encE(sink, opcodes, numOpcodes, encG, encE, flags);
+}
+
+// Write a suitable number of bits from an imm64 to the sink.
+fn emit_simm<CS: CodeSink>(sink: &mut CS, size: u8, simm32: u32) {
+    match size {
+        8 | 4 => sink.put4(simm32),
+        2 => sink.put2(simm32 as u16),
+        1 => sink.put1(simm32 as u8),
+        _ => panic!("x64::Inst::emit_simm: unreachable"),
+    }
 }
 
 // The top-level emit function.
+//
+// Important!  Do not add improved (shortened) encoding cases to existing
+// instructions without also adding tests for those improved encodings.  That
+// is a dangerous game that leads to hard-to-track-down errors in the emitted
+// code.
+//
+// For all instructions, make sure to have test coverage for all of the
+// following situations.  Do this by creating the cross product resulting from
+// applying the following rules to each operand:
+//
+// * for any insn that mentions a register: one test using a register encoding
+//   < 8 and a second one using a register with encoding >= 8.  This checks REX
+//   prefix construction.
+//
+// * for any insn that mentions a byte register: one test for each encoding
+//   group [al .. dl], [bpl, spl, sil, dil], [r8b .. r11b, r12b .. r15b].
+//   This checks that apparently-redundant REX prefixes are retained.
+//
+// * for any insn that contains an immediate field, check the following cases:
+//   field is zero, field is in simm8 range (-128 .. 127), field is in simm32
+//   range (-0x8000_0000 .. 0x7FFF_FFFF).  This is because some instructions
+//   that require a 32-bit immediate have a short-form encoding when the imm
+//   is in simm8 range.
+//
+// Following these rules creates large numbers of test cases, but it's the
+// only way to make the emitter reliable.
+//
+// The above rules don't apply for registers within address expressions
+// (|Addr|s).  Those are already pretty well tested, and the registers in them
+// don't have any effect on the containing instruction (apart from possibly
+// require REX prefix bits).
+//
+// Known possible improvements:
+//
+// * there's a shorter encoding for shl/shr/sar by a 1-bit immediate.  (Do we
+//   care?)
+
 fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
     match inst {
         Inst::Alu_RMI_R {
@@ -1516,18 +1590,32 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
             src: srcE,
             dst: regG,
         } => {
+            let flags = if *is64 { F_NONE } else { F_CLEAR_REX_W };
             if *op == RMI_R_Op::Mul {
                 // We kinda freeloaded Mul into RMI_R_Op, but it doesn't fit
                 // the usual pattern, so we have to special-case it.
-                panic!("unimplemented")
+                match srcE {
+                    RMI::R { reg: regE } => {
+                        emit_REX_OPCODES_MODRM_regG_regE(sink, 0x0FAF, 2, *regG, *regE, flags);
+                    }
+                    RMI::M { addr } => {
+                        emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(
+                            sink, 0x0FAF, 2, *regG, addr, flags,
+                        );
+                    }
+                    RMI::I { simm32 } => {
+                        // Yes, really, regG twice.
+                        emit_REX_OPCODES_MODRM_regG_regE(sink, 0x69, 1, *regG, *regG, flags);
+                        sink.put4(*simm32);
+                    }
+                }
             } else {
-                let flags = if *is64 { F_NONE } else { F_CLEAR_W_BIT };
-                let (opcode_rm, opcode_rr) = match op {
-                    RMI_R_Op::Add => (0x03, 0x01),
-                    RMI_R_Op::Sub => (0x2B, 0x29),
-                    RMI_R_Op::And => (0x23, 0x21),
-                    RMI_R_Op::Or => (0x0B, 0x09),
-                    RMI_R_Op::Xor => (0x33, 0x31),
+                let (opcode_R, opcode_M, subopcode_I) = match op {
+                    RMI_R_Op::Add => (0x01, 0x03, 0),
+                    RMI_R_Op::Sub => (0x29, 0x2B, 5),
+                    RMI_R_Op::And => (0x21, 0x23, 4),
+                    RMI_R_Op::Or => (0x09, 0x0B, 1),
+                    RMI_R_Op::Xor => (0x31, 0x33, 6),
                     RMI_R_Op::Mul => panic!("unreachable"),
                 };
                 match srcE {
@@ -1543,11 +1631,23 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
                         // the GNU as reference output.  In other words, the
                         // inversion exists as a result of using GNU as as a
                         // gold standard.
-                        emit_REX_OPCODES_MODRM_for_RegG_RegE(
-                            sink, opcode_rr, 1, *regE, *regG, flags,
+                        emit_REX_OPCODES_MODRM_regG_regE(sink, opcode_R, 1, *regE, *regG, flags);
+                        // NB: if this is ever extended to handle byte size
+                        // ops, be sure to retain redundant REX prefixes.
+                    }
+                    RMI::M { addr } => {
+                        // Whereas here we revert to the "normal" G-E ordering.
+                        emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(
+                            sink, opcode_M, 1, *regG, addr, flags,
                         );
                     }
-                    _ => panic!("unimplemented"),
+                    RMI::I { simm32 } => {
+                        let opcode = 0x81;
+                        // And also here we use the "normal" G-E ordering.
+                        let encG = iregEnc(*regG);
+                        emit_REX_OPCODES_MODRM_encG_encE(sink, opcode, 1, subopcode_I, encG, flags);
+                        sink.put4(*simm32);
+                    }
                 }
             }
         }
@@ -1558,7 +1658,8 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
         } => {
             let encDst = iregEnc(*dst);
             if *dstIs64 {
-                // FIXME JRS 2020Feb10: also use the 32-bit case here when possible
+                // FIXME JRS 2020Feb10: also use the 32-bit case here when
+                // possible
                 sink.put1(0x48 | ((encDst >> 3) & 1));
                 sink.put1(0xB8 | (encDst & 7));
                 sink.put8(*simm64);
@@ -1570,8 +1671,328 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
                 sink.put4(*simm64 as u32);
             }
         }
+        Inst::Mov_R_R { is64, src, dst } => {
+            let flags = if *is64 { F_NONE } else { F_CLEAR_REX_W };
+            emit_REX_OPCODES_MODRM_regG_regE(sink, 0x89, 1, *src, *dst, flags);
+        }
+        Inst::MovZX_M_R { extMode, addr, dst } => {
+            match extMode {
+                ExtMode::BL => {
+                    // MOVZBL is (REX.W==0) 0F B6 /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(
+                        sink,
+                        0x0FB6,
+                        2,
+                        *dst,
+                        addr,
+                        F_CLEAR_REX_W,
+                    )
+                }
+                ExtMode::BQ => {
+                    // MOVZBQ is (REX.W==1) 0F B6 /r
+                    // I'm not sure why the Intel manual offers different
+                    // encodings for MOVZBQ than for MOVZBL.  AIUI they should
+                    // achieve the same, since MOVZBL is just going to zero out
+                    // the upper half of the destination anyway.
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(sink, 0x0FB6, 2, *dst, addr, F_NONE)
+                }
+                ExtMode::WL => {
+                    // MOVZWL is (REX.W==0) 0F B7 /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(
+                        sink,
+                        0x0FB7,
+                        2,
+                        *dst,
+                        addr,
+                        F_CLEAR_REX_W,
+                    )
+                }
+                ExtMode::WQ => {
+                    // MOVZWQ is (REX.W==1) 0F B7 /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(sink, 0x0FB7, 2, *dst, addr, F_NONE)
+                }
+                ExtMode::LQ => {
+                    // This is just a standard 32 bit load, and we rely on the
+                    // default zero-extension rule to perform the extension.
+                    // MOV r/m32, r32 is (REX.W==0) 8B /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(
+                        sink,
+                        0x8B,
+                        1,
+                        *dst,
+                        addr,
+                        F_CLEAR_REX_W,
+                    )
+                }
+            }
+        }
         Inst::Mov64_M_R { addr, dst } => {
-            emit_REX_OPCODES_MODRM_SIB_IMM_for_RegG_MemE(sink, 0x8B, 1, *dst, addr, F_NONE)
+            emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(sink, 0x8B, 1, *dst, addr, F_NONE)
+        }
+        Inst::MovSX_M_R { extMode, addr, dst } => {
+            match extMode {
+                ExtMode::BL => {
+                    // MOVSBL is (REX.W==0) 0F BE /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(
+                        sink,
+                        0x0FBE,
+                        2,
+                        *dst,
+                        addr,
+                        F_CLEAR_REX_W,
+                    )
+                }
+                ExtMode::BQ => {
+                    // MOVSBQ is (REX.W==1) 0F BE /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(sink, 0x0FBE, 2, *dst, addr, F_NONE)
+                }
+                ExtMode::WL => {
+                    // MOVSWL is (REX.W==0) 0F BF /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(
+                        sink,
+                        0x0FBF,
+                        2,
+                        *dst,
+                        addr,
+                        F_CLEAR_REX_W,
+                    )
+                }
+                ExtMode::WQ => {
+                    // MOVSWQ is (REX.W==1) 0F BF /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(sink, 0x0FBF, 2, *dst, addr, F_NONE)
+                }
+                ExtMode::LQ => {
+                    // MOVSLQ is (REX.W==1) 63 /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(sink, 0x63, 1, *dst, addr, F_NONE)
+                }
+            }
+        }
+        Inst::Mov_R_M { size, src, addr } => {
+            match size {
+                1 => {
+                    // This is one of the few places where the presence of a
+                    // redundant REX prefix changes the meaning of the
+                    // instruction.
+                    let encSrc = iregEnc(*src);
+                    let retainRedundantRex = if encSrc >= 4 && encSrc <= 7 {
+                        F_RETAIN_REDUNDANT_REX
+                    } else {
+                        0
+                    };
+                    // MOV r8, r/m8 is (REX.W==0) 88 /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(
+                        sink,
+                        0x88,
+                        1,
+                        *src,
+                        addr,
+                        F_CLEAR_REX_W | retainRedundantRex,
+                    )
+                }
+                2 => {
+                    // MOV r16, r/m16 is 66 (REX.W==0) 89 /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(
+                        sink,
+                        0x89,
+                        1,
+                        *src,
+                        addr,
+                        F_CLEAR_REX_W | F_PREFIX_66,
+                    )
+                }
+                4 => {
+                    // MOV r32, r/m32 is (REX.W==0) 89 /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(
+                        sink,
+                        0x89,
+                        1,
+                        *src,
+                        addr,
+                        F_CLEAR_REX_W,
+                    )
+                }
+                8 => {
+                    // MOV r64, r/m64 is (REX.W==1) 89 /r
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(sink, 0x89, 1, *src, addr, F_NONE)
+                }
+                _ => panic!("x64::Inst::Mov_R_M::emit: unreachable"),
+            }
+        }
+        Inst::Shift_R {
+            is64,
+            kind,
+            nBits,
+            dst,
+        } => {
+            let encDst = iregEnc(*dst);
+            let subopcode = match kind {
+                ShiftKind::Left => 4,
+                ShiftKind::RightZ => 5,
+                ShiftKind::RightS => 7,
+            };
+            if *nBits == 0 {
+                // SHL/SHR/SAR %cl, reg32 is (REX.W==0) D3 /subopcode
+                // SHL/SHR/SAR %cl, reg64 is (REX.W==1) D3 /subopcode
+                emit_REX_OPCODES_MODRM_encG_encE(
+                    sink,
+                    0xD3,
+                    1,
+                    subopcode,
+                    encDst,
+                    if *is64 { F_NONE } else { F_CLEAR_REX_W },
+                );
+            } else {
+                // SHL/SHR/SAR $ib, reg32 is (REX.W==0) C1 /subopcode ib
+                // SHL/SHR/SAR $ib, reg64 is (REX.W==1) C1 /subopcode ib
+                // When the shift amount is 1, there's an even shorter
+                // encoding, but we don't bother with that nicety here.
+                emit_REX_OPCODES_MODRM_encG_encE(
+                    sink,
+                    0xC1,
+                    1,
+                    subopcode,
+                    encDst,
+                    if *is64 { F_NONE } else { F_CLEAR_REX_W },
+                );
+                sink.put1(*nBits);
+            }
+        }
+        Inst::Cmp_RMI_R {
+            size,
+            src: srcE,
+            dst: regG,
+        } => {
+            let mut retainRedundantRex = 0;
+            if *size == 1 {
+                // Here, a redundant REX prefix changes the meaning of the
+                // instruction.
+                let encE = iregEnc(*regG);
+                if encE >= 4 && encE <= 7 {
+                    retainRedundantRex = F_RETAIN_REDUNDANT_REX;
+                }
+            }
+            let flags = match size {
+                8 => F_NONE,
+                4 => F_CLEAR_REX_W,
+                2 => F_CLEAR_REX_W | F_PREFIX_66,
+                1 => F_CLEAR_REX_W | retainRedundantRex,
+                _ => panic!("x64::Inst::Cmp_RMI_R::emit: unreachable"),
+            };
+            match srcE {
+                RMI::R { reg: regE } => {
+                    let opcode = if *size == 1 { 0x38 } else { 0x39 };
+                    // Same comment re swapped args as for Alu_RMI_R.
+                    emit_REX_OPCODES_MODRM_regG_regE(sink, opcode, 1, *regE, *regG, flags);
+                }
+                RMI::M { addr } => {
+                    let opcode = if *size == 1 { 0x3A } else { 0x3B };
+                    // Whereas here we revert to the "normal" G-E ordering.
+                    emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE(sink, opcode, 1, *regG, addr, flags);
+                }
+                RMI::I { simm32 } => {
+                    // FIXME JRS 2020Feb11: there are shorter encodings for
+                    // cmp $imm, rax/eax/ax/al.
+                    let useImm8 = low8willSXto32(*simm32);
+                    let opcode = if *size == 1 {
+                        0x80
+                    } else if useImm8 {
+                        0x83
+                    } else {
+                        0x81
+                    };
+                    // And also here we use the "normal" G-E ordering.
+                    let encG = iregEnc(*regG);
+                    emit_REX_OPCODES_MODRM_encG_encE(
+                        sink, opcode, 1, 7, /*subopcode*/
+                        encG, flags,
+                    );
+                    emit_simm(sink, if useImm8 { 1 } else { *size }, *simm32);
+                }
+            }
+        }
+        Inst::Push64 { src } => {
+            match src {
+                RMI::R { reg } => {
+                    let encReg = iregEnc(*reg);
+                    let rex = 0x40 | ((encReg >> 3) & 1);
+                    if rex != 0x40 {
+                        sink.put1(rex);
+                    }
+                    sink.put1(0x50 | (encReg & 7));
+                }
+                RMI::M { addr } => {
+                    emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE(
+                        sink,
+                        0xFF,
+                        1,
+                        6, /*subopcode*/
+                        addr,
+                        F_CLEAR_REX_W,
+                    );
+                }
+                RMI::I { simm32 } => {
+                    if low8willSXto64(*simm32) {
+                        sink.put1(0x6A);
+                        sink.put1(*simm32 as u8);
+                    } else {
+                        sink.put1(0x68);
+                        sink.put4(*simm32);
+                    }
+                }
+            }
+        }
+        // Inst::JmpKnown
+        Inst::JmpUnknown { target } => {
+            match target {
+                RM::R { reg } => {
+                    let regEnc = iregEnc(*reg);
+                    emit_REX_OPCODES_MODRM_encG_encE(
+                        sink,
+                        0xFF,
+                        1,
+                        4, /*subopcode*/
+                        regEnc,
+                        F_CLEAR_REX_W,
+                    );
+                }
+                RM::M { addr } => {
+                    emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE(
+                        sink,
+                        0xFF,
+                        1,
+                        4, /*subopcode*/
+                        addr,
+                        F_CLEAR_REX_W,
+                    );
+                }
+            }
+        }
+        // Inst::JmpCond
+        // Inst::CallKnown
+        Inst::CallUnknown { target } => {
+            match target {
+                RM::R { reg } => {
+                    let regEnc = iregEnc(*reg);
+                    emit_REX_OPCODES_MODRM_encG_encE(
+                        sink,
+                        0xFF,
+                        1,
+                        2, /*subopcode*/
+                        regEnc,
+                        F_CLEAR_REX_W,
+                    );
+                }
+                RM::M { addr } => {
+                    emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE(
+                        sink,
+                        0xFF,
+                        1,
+                        2, /*subopcode*/
+                        addr,
+                        F_CLEAR_REX_W,
+                    );
+                }
+            }
         }
         Inst::Ret {} => sink.put1(0xC3),
         _ => panic!("x64_emit"),
@@ -3346,9 +3767,9 @@ fn test_x64_insn_encoding_and_printing() {
         "shll    %cl, %edi",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::Left, 1, r8),
-        "41D1E0",
-        "shll    $1, %r8d",
+        i_Shift_R(false, ShiftKind::Left, 2, r8),
+        "41C1E002",
+        "shll    $2, %r8d",
     ));
     insns.push((
         i_Shift_R(false, ShiftKind::Left, 31, r13),
@@ -3361,9 +3782,9 @@ fn test_x64_insn_encoding_and_printing() {
         "shlq    %cl, %rdi",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::Left, 1, r8),
-        "49D1E0",
-        "shlq    $1, %r8",
+        i_Shift_R(true, ShiftKind::Left, 2, r8),
+        "49C1E002",
+        "shlq    $2, %r8",
     ));
     insns.push((
         i_Shift_R(true, ShiftKind::Left, 63, r13),
@@ -3376,9 +3797,9 @@ fn test_x64_insn_encoding_and_printing() {
         "shrl    %cl, %edi",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::RightZ, 1, r8),
-        "41D1E8",
-        "shrl    $1, %r8d",
+        i_Shift_R(false, ShiftKind::RightZ, 2, r8),
+        "41C1E802",
+        "shrl    $2, %r8d",
     ));
     insns.push((
         i_Shift_R(false, ShiftKind::RightZ, 31, r13),
@@ -3391,9 +3812,9 @@ fn test_x64_insn_encoding_and_printing() {
         "shrq    %cl, %rdi",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::RightZ, 1, r8),
-        "49D1E8",
-        "shrq    $1, %r8",
+        i_Shift_R(true, ShiftKind::RightZ, 2, r8),
+        "49C1E802",
+        "shrq    $2, %r8",
     ));
     insns.push((
         i_Shift_R(true, ShiftKind::RightZ, 63, r13),
@@ -3406,9 +3827,9 @@ fn test_x64_insn_encoding_and_printing() {
         "sarl    %cl, %edi",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::RightS, 1, r8),
-        "41D1F8",
-        "sarl    $1, %r8d",
+        i_Shift_R(false, ShiftKind::RightS, 2, r8),
+        "41C1F802",
+        "sarl    $2, %r8d",
     ));
     insns.push((
         i_Shift_R(false, ShiftKind::RightS, 31, r13),
@@ -3421,9 +3842,9 @@ fn test_x64_insn_encoding_and_printing() {
         "sarq    %cl, %rdi",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::RightS, 1, r8),
-        "49D1F8",
-        "sarq    $1, %r8",
+        i_Shift_R(true, ShiftKind::RightS, 2, r8),
+        "49C1F802",
+        "sarq    $2, %r8",
     ));
     insns.push((
         i_Shift_R(true, ShiftKind::RightS, 63, r13),
