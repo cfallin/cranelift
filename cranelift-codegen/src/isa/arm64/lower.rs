@@ -16,6 +16,9 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 
 use smallvec::SmallVec;
 
+//============================================================================
+// Helpers: opcode conversions
+
 fn op_to_aluop(op: Opcode, ty: Type) -> Option<ALUOp> {
     match (op, ty) {
         (Opcode::Iadd, I32) => Some(ALUOp::Add32),
@@ -29,6 +32,13 @@ fn op_to_aluop(op: Opcode, ty: Type) -> Option<ALUOp> {
 fn is_alu_op(op: Opcode, ctrl_typevar: Type) -> bool {
     op_to_aluop(op, ctrl_typevar).is_some()
 }
+
+
+//============================================================================
+// Result enum types.
+//
+// Lowering of a given value results in one of these enums, depending on the
+// modes in which we can accept the value.
 
 /// A lowering result: register, register-shift, register-extend.  An SSA value can always be
 /// lowered into one of these options; the register form is the fallback.
@@ -80,6 +90,12 @@ impl ResultRSEImmLogic {
         }
     }
 }
+
+//============================================================================
+// Instruction input and output "slots".
+//
+// We use these types to refer to operand numbers, and result numbers, together
+// with the associated instruction, in a type-safe way.
 
 /// Identifier for a particular output of an instruction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,6 +153,9 @@ fn input_source<'a>(ctx: Ctx<'a>, input: InsnInput) -> InsnInputSource {
         InsnInputSource::Reg(reg)
     }
 }
+
+//============================================================================
+// Lowering: convert instruction outputs to result types.
 
 /// Lower an instruction output to a 64-bit constant, if possible.
 fn output_to_const<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Option<u64> {
@@ -298,6 +317,10 @@ fn alu_inst_imm12(op: ALUOp, rd: Reg, rn: Reg, rm: ResultRSEImm12) -> Inst {
     }
 }
 
+//============================================================================
+// Lowering: addressing mode support. Takes instruction directly, rather
+// than an `InsnInput`, to do more introspection.
+
 /// Lower the address of a load or store.
 fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset: i32) -> MemArg {
     // TODO: support base_reg + scale * index_reg. For this, we would need to pattern-match shl or
@@ -379,6 +402,9 @@ fn lower_condcode(cc: IntCC) -> Cond {
         IntCC::NotOverflow => Cond::Vc,
     }
 }
+
+//=============================================================================
+// Top-level instruction lowering entry point, for one instruction.
 
 /// Actually codegen an instruction's results into registers.
 fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
@@ -520,6 +546,9 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
     }
 }
 
+//=============================================================================
+// Helpers for instruction lowering.
+
 fn choose_32_64(ty: Type, op32: ALUOp, op64: ALUOp) -> ALUOp {
     if ty == I32 {
         op32
@@ -569,6 +598,9 @@ fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
         _ => None,
     }
 }
+
+//=============================================================================
+// Lowering-backend trait implementation.
 
 impl LowerBackend for Arm64Backend {
     type MInst = Inst;
