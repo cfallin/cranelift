@@ -1,14 +1,5 @@
 TODO:
 
-- Testing:
-  - Unit-test framework for encoding and binemit: (i) vcode, (ii) insts in
-    pseudo-textual form, (iii) machine code bytes.
-
-- Function ABI:
-  - caller side
-    - Move args into place; set clobbers (defs of real regs) on Call inst; do
-      call; move retvals out
-
 - Binary emission
   - Constant pool? Need MemArg resolution just prior to emission (when we know
     the constant-pool offset) -- do this using the SizeCodeSink
@@ -20,6 +11,11 @@ TODO:
     encoded as a logical immediate.
   - Add opcodes to lowering. Full integer/ALU instruction set.
   - 8/16-bit ops? Widening for legalization?
+
+- Function ABI:
+  - caller side
+    - Move args into place; set clobbers (defs of real regs) on Call inst; do
+      call; move retvals out
 
 - Limits (handle gracefully / return error from lowering)
   - Jump offsets (19, 26-bit forms)

@@ -2254,6 +2254,18 @@ mod test {
         // seen below. (E.g., a `ret` is normally written as the u32 `D65F03C0`,
         // but we write it here as C0035FD6.)
 
+        // Useful helper script to produce the encodings from the text:
+        //
+        //      #!/bin/sh
+        //      tmp=`mktemp /tmp/XXXXXXXX.o`
+        //      aarch64-linux-gnu-as /dev/stdin -o $tmp
+        //      aarch64-linux-gnu-objdump -d $tmp
+        //      rm -f $tmp
+        //
+        // Then:
+        //
+        //      $ echo "mov x1, x2" | arm64inst.sh
+
         insns.push((Inst::Ret {}, "C0035FD6", "ret"));
         insns.push((Inst::Nop {}, "", ""));
         insns.push((Inst::Nop4 {}, "1F2003D5", "nop"));
