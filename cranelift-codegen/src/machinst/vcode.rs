@@ -27,6 +27,7 @@ use regalloc::{BlockIx, InstIx, InstRegUses, MyRange, RegAllocResult, RegClass};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use log::debug;
 use smallvec::SmallVec;
 use std::fmt;
 use std::iter;
@@ -259,22 +260,22 @@ fn inst_size<I: VCodeInst>(insn: &I, constant_offset: &mut CodeOffset) -> CodeOf
 fn is_trivial_jump_block<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> Option<BlockIndex> {
     let range = vcode.block_insns(BlockIx::new(block));
 
-    //println!(
-    //    "is_trivial_jump_block: block {} has len {}",
-    //    block,
-    //    range.len()
-    //);
+    debug!(
+        "is_trivial_jump_block: block {} has len {}",
+        block,
+        range.len()
+    );
 
     if range.len() != 1 {
         return None;
     }
     let insn = range.first();
 
-    //println!(
-    //    " -> only insn is: {:?} with terminator {:?}",
-    //    vcode.get_insn(insn),
-    //    vcode.get_insn(insn).is_term()
-    //);
+    debug!(
+        " -> only insn is: {:?} with terminator {:?}",
+        vcode.get_insn(insn),
+        vcode.get_insn(insn).is_term()
+    );
 
     match vcode.get_insn(insn).is_term() {
         MachTerminator::Uncond(target) => Some(target),
@@ -409,10 +410,10 @@ impl<I: VCodeInst> VCode<I> {
             .map(|(i, target)| i != *target as usize)
             .collect();
 
-        //println!(
-        //    "remove_redundant_branches: block_rewrites = {:?}",
-        //    block_rewrites
-        //);
+        debug!(
+            "remove_redundant_branches: block_rewrites = {:?}",
+            block_rewrites
+        );
 
         for block in 0..self.num_blocks() as u32 {
             for insn in self.block_insns(BlockIx::new(block)) {

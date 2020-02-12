@@ -16,6 +16,7 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg, WritableReg};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use log::debug;
 use smallvec::SmallVec;
 use std::ops::Range;
 
@@ -211,8 +212,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             SecondaryMap::with_default(None);
         let mut edge_blocks: Vec<(Inst, BlockIndex, Block)> = vec![];
 
-        //println!("about to lower function: {:?}", self.f);
-        //println!("bb map: {:?}", self.vcode.blocks_by_bb());
+        debug!("about to lower function: {:?}", self.f);
+        debug!("bb map: {:?}", self.vcode.blocks_by_bb());
 
         for bb in bbs.iter() {
             for inst in self.f.layout.block_insts(*bb) {
@@ -239,7 +240,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         }
 
         for bb in bbs.iter() {
-            //println!("lowering bb: {}", bb);
+            debug!("lowering bb: {}", bb);
 
             // If this is a return block, produce the return value setup.
             let last_insn = self.f.layout.block_insts(*bb).last().unwrap();
@@ -305,8 +306,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             }
 
             let vcode_bb = self.vcode.end_bb();
-            //println!("finished building bb: BlockIndex {}", vcode_bb);
-            //println!("bb_to_bindex map says: {}", self.vcode.bb_to_bindex(*bb));
+            debug!("finished building bb: BlockIndex {}", vcode_bb);
+            debug!("bb_to_bindex map says: {}", self.vcode.bb_to_bindex(*bb));
             assert!(vcode_bb == self.vcode.bb_to_bindex(*bb));
             if Some(*bb) == self.f.layout.entry_block() {
                 self.vcode.set_entry(vcode_bb);
@@ -315,10 +316,10 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
         // Now create the edge blocks, with phi lowering (block parameter copies).
         for (inst, edge_block, orig_block) in edge_blocks.into_iter() {
-            //println!(
-            //    "creating edge block: inst {}, edge_block {}, orig_block {}",
-            //    inst, edge_block, orig_block
-            //);
+            debug!(
+                "creating edge block: inst {}, edge_block {}, orig_block {}",
+                inst, edge_block, orig_block
+            );
 
             // Create a temporary for each block parameter.
             let phi_classes: Vec<(Type, RegClass)> = self
@@ -334,11 +335,11 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 .map(|(ty, rc)| self.tmp(rc, ty)) // borrows `self` mutably.
                 .collect();
 
-            //println!("phi_temps = {:?}", phi_temps);
+            debug!("phi_temps = {:?}", phi_temps);
 
             // Create all of the phi uses (reads) from jump args to temps.
             for (i, arg) in self.f.dfg.inst_variable_args(inst).iter().enumerate() {
-                //println!("jump arg {} is {}", i, arg);
+                debug!("jump arg {} is {}", i, arg);
                 let src_reg = self.value_regs[*arg];
                 let dst_reg = phi_temps[i];
                 self.vcode.push(I::gen_move(dst_reg, src_reg));
@@ -346,7 +347,7 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
             // Create all of the phi defs (writes) from temps to block params.
             for (i, param) in self.f.dfg.block_params(orig_block).iter().enumerate() {
-                //println!("bb arg {} is {}", i, param);
+                debug!("bb arg {} is {}", i, param);
                 let src_reg = phi_temps[i].to_reg();
                 let dst_reg = WritableReg::from_reg(self.value_regs[*param]);
                 self.vcode.push(I::gen_move(dst_reg, src_reg));

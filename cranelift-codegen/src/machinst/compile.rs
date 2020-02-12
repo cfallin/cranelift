@@ -3,6 +3,7 @@
 use crate::ir::Function;
 use crate::machinst::*;
 
+use log::debug;
 use regalloc::{allocate_registers, RegAllocAlgorithm};
 
 /// Compile the given function down to VCode with allocated registers, ready
@@ -18,7 +19,7 @@ where
     // This lowers the CL IR.
     let mut vcode = Lower::new(f, abi).lower(b);
 
-    //println!("vcode from lowering:\n{:?}", vcode);
+    debug!("vcode from lowering:\n{:?}", vcode);
 
     // Perform register allocation.
     let result = allocate_registers(
@@ -32,16 +33,16 @@ where
     // all at once.
     vcode.replace_insns_from_regalloc(result);
 
-    //println!("vcode after regalloc:\n{:?}", vcode);
+    debug!("vcode after regalloc:\n{:?}", vcode);
 
     vcode.remove_redundant_branches();
 
-    //println!("vcode after removing redundant branches:\n{:?}", vcode);
+    debug!("vcode after removing redundant branches:\n{:?}", vcode);
 
     // Do final passes over code to finalize branches.
     vcode.finalize_branches();
 
-    //println!("final VCode:\n{:?}", vcode);
+    debug!("final VCode:\n{:?}", vcode);
 
     println!("{}\n", vcode.show_rru(Some(&B::MInst::reg_universe())));
 
