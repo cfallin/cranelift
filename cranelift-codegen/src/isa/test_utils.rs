@@ -33,7 +33,7 @@ impl TestCodeSink {
 
 impl CodeSink for TestCodeSink {
     fn offset(&self) -> CodeOffset {
-        unimplemented!()
+        self.bytes.len() as CodeOffset
     }
 
     fn put1(&mut self, x: u8) {

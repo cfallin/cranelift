@@ -61,7 +61,13 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn load_stackslot(&self, _slot: StackSlot, _offset: usize, _ty: Type, _into_reg: WritableReg<Reg>) -> Inst {
+    fn load_stackslot(
+        &self,
+        _slot: StackSlot,
+        _offset: usize,
+        _ty: Type,
+        _into_reg: WritableReg<Reg>,
+    ) -> Inst {
         unimplemented!()
     }
 

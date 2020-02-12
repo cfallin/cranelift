@@ -580,9 +580,11 @@ impl ExtendOp {
 /// A reference to some memory address.
 #[derive(Clone, Debug)]
 pub enum MemLabel {
-    /// A value in a constant pool, already emitted.
-    ConstantPool(ConstantOffset),
-    /// A value in a constant pool, to be emitted during binemit.
+    /// A value in a constant pool, already emitted, with relative offset from
+    /// this instruction. This form must be used just before emission.
+    ConstantPoolRel(ConstantOffset),
+    /// A value in a constant pool, to be emitted during binemit. This form is
+    /// created during isel and is lowered during emission.
     ConstantData(ConstantData),
 }
 
@@ -1343,7 +1345,11 @@ fn arm64_map_regs(
 // emitting some helper instructions that come immediately before the use
 // of this amod.
 
-fn mem_finalize<CPS: ConstantPoolSink>(mem: &MemArg, consts: &mut CPS) -> (Vec<Inst>, MemArg) {
+fn mem_finalize<CPS: ConstantPoolSink>(
+    insn_off: CodeOffset,
+    mem: &MemArg,
+    consts: &mut CPS,
+) -> (Vec<Inst>, MemArg) {
     match mem {
         &MemArg::StackOffset(fp_offset) => {
             if let Some(simm9) = SImm9::maybe_from_i64(fp_offset) {
@@ -1352,8 +1358,11 @@ fn mem_finalize<CPS: ConstantPoolSink>(mem: &MemArg, consts: &mut CPS) -> (Vec<I
             } else {
                 let tmp = writable_spilltmp_reg();
                 let const_data = u64_constant(fp_offset as u64);
-                let (_, const_mem) =
-                    mem_finalize(&MemArg::label(MemLabel::ConstantData(const_data)), consts);
+                let (_, const_mem) = mem_finalize(
+                    insn_off,
+                    &MemArg::label(MemLabel::ConstantData(const_data)),
+                    consts,
+                );
                 let const_inst = Inst::ULoad64 {
                     rd: tmp,
                     mem: const_mem,
@@ -1379,7 +1388,8 @@ fn mem_finalize<CPS: ConstantPoolSink>(mem: &MemArg, consts: &mut CPS) -> (Vec<I
             consts.align_to(alignment);
             let off = consts.get_offset_from_code_start();
             consts.add_data(data.iter().as_slice());
-            (vec![], MemArg::Label(MemLabel::ConstantPool(off)))
+            let rel_off = off - insn_off;
+            (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))
         }
         _ => (vec![], mem.clone()),
     }
@@ -1571,7 +1581,7 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem } => {
-                let (mem_insts, mem) = mem_finalize(mem, consts);
+                let (mem_insts, mem) = mem_finalize(sink.offset(), mem, consts);
 
                 for inst in mem_insts.into_iter() {
                     inst.emit(sink, consts);
@@ -1611,7 +1621,7 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     }
                     &MemArg::Label(ref label) => {
                         let offset = match label {
-                            &MemLabel::ConstantPool(off) => off,
+                            &MemLabel::ConstantPoolRel(off) => off,
                             // Should be converted by `mem_finalize()` into `ConstantPool`.
                             &MemLabel::ConstantData(..) => {
                                 panic!("Should not see ConstantData here!")
@@ -1646,7 +1656,7 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem } => {
-                let (mem_insts, mem) = mem_finalize(mem, consts);
+                let (mem_insts, mem) = mem_finalize(sink.offset(), mem, consts);
 
                 for inst in mem_insts.into_iter() {
                     inst.emit(sink, consts);
@@ -1971,11 +1981,6 @@ impl MachInst for Inst {
     fn reg_universe() -> RealRegUniverse {
         create_reg_universe()
     }
-
-    fn align_constant_pool(offset: CodeOffset) -> CodeOffset {
-        // 16-align constants.
-        (offset + 15) & !16
-    }
 }
 
 //=============================================================================
@@ -2045,7 +2050,7 @@ impl ShowWithRRU for ExtendOp {
 impl ShowWithRRU for MemLabel {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            &MemLabel::ConstantPool(off) => format!("{}", off),
+            &MemLabel::ConstantPoolRel(off) => format!("{}", off),
             // Should be resolved into an offset before we pretty-print.
             &MemLabel::ConstantData(..) => "!!constant!!".to_string(),
         }
@@ -2166,7 +2171,7 @@ fn mem_finalize_for_show<CPS: ConstantPoolSink>(
     mb_rru: Option<&RealRegUniverse>,
     consts: &mut CPS,
 ) -> (String, MemArg) {
-    let (mem_insts, mem) = mem_finalize(mem, consts);
+    let (mem_insts, mem) = mem_finalize(0, mem, consts);
     let mut mem_str = mem_insts
         .into_iter()
         .map(|inst| inst.show_rru(mb_rru))
@@ -2781,7 +2786,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::Label(MemLabel::ConstantPool(64)),
+                mem: MemArg::Label(MemLabel::ConstantPoolRel(64)),
             },
             "01020058",
             "ldr x1, 64",

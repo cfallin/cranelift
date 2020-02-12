@@ -197,9 +197,13 @@ pub trait MachInst: Clone + Debug {
         offset
     }
 
-    /// Align the constant pool. By default, no alignment occurs.
+    /// Align the constant pool. By default, align to 16 bytes. Note that this
+    /// alignment must be >= the alignment of any individual constant, so that
+    /// the size of the constant pool can be computed without knowing the size
+    /// of the instruction area (otherwise, alignment requirements might vary
+    /// depending on where the constant pool starts).
     fn align_constant_pool(offset: CodeOffset) -> CodeOffset {
-        offset
+        (offset + 15) & !15
     }
 }
 

@@ -48,8 +48,7 @@ impl MachBackend for X64Backend {
         let abi = Box::new(abi::X64ABIBody::new(&func));
         let vcode = compile::compile::<X64Backend>(&mut func, self, abi);
 
-        let mut buf: Vec<u8> = vec![];
-        buf.resize(vcode.code_size(), 0);
+        let mut buf: Vec<u8> = vec![0; vcode.emitted_size()];
 
         let mut sink = unsafe { MemoryCodeSink::new(buf.as_mut_ptr(), relocs, traps, stackmaps) };
         vcode.emit(&mut sink);

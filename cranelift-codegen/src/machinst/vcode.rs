@@ -17,7 +17,7 @@
 //! See the main module comment in `mod.rs` for more details on the VCode-based
 //! backend pipeline.
 
-use crate::binemit::{NullConstantPoolSink, SizeCodeSink};
+use crate::binemit::{SizeCodeSink, SizeConstantPoolSink};
 use crate::ir;
 use crate::machinst::*;
 
@@ -40,8 +40,8 @@ pub type BlockIndex = u32;
 
 /// VCodeInst wraps all requirements for a MachInst to be in VCode: it must be
 /// a `MachInst` and it must be able to emit itself at least to a `SizeCodeSink`.
-pub trait VCodeInst: MachInst + MachInstEmit<SizeCodeSink, NullConstantPoolSink> {}
-impl<I: MachInst + MachInstEmit<SizeCodeSink, NullConstantPoolSink>> VCodeInst for I {}
+pub trait VCodeInst: MachInst + MachInstEmit<SizeCodeSink, SizeConstantPoolSink> {}
+impl<I: MachInst + MachInstEmit<SizeCodeSink, SizeConstantPoolSink>> VCodeInst for I {}
 
 /// A function in "VCode" (virtualized-register code) form, after lowering.
 /// This is essentially a standard CFG of basic blocks, where each basic block
@@ -83,11 +83,14 @@ pub struct VCode<I: VCodeInst> {
     /// during emission.
     final_block_offsets: Vec<CodeOffset>,
 
-    /// Size of code, according for block layout / alignment.
+    /// Size of code, accounting for block layout / alignment.
     code_size: CodeOffset,
 
     /// Start of constant pool.
     constants_start: CodeOffset,
+
+    /// Size of constant pool.
+    constants_size: CodeOffset,
 
     /// ABI object.
     abi: Box<dyn ABIBody<I>>,
@@ -244,11 +247,13 @@ fn is_redundant_move<I: VCodeInst>(insn: &I) -> bool {
     }
 }
 
-fn inst_size<I: VCodeInst>(insn: &I) -> usize {
+/// Returns the size of the instruction, and update the size of its constant-pool usage, if any.
+fn inst_size<I: VCodeInst>(insn: &I, constant_offset: &mut CodeOffset) -> CodeOffset {
     let mut sizesink = SizeCodeSink::new();
-    let mut nullcps = NullConstantPoolSink {};
-    insn.emit(&mut sizesink, &mut nullcps);
-    sizesink.size()
+    let mut csizesink = SizeConstantPoolSink::new(*constant_offset);
+    insn.emit(&mut sizesink, &mut csizesink);
+    *constant_offset = csizesink.get_offset_from_code_start();
+    sizesink.size() as CodeOffset
 }
 
 fn is_trivial_jump_block<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> Option<BlockIndex> {
@@ -302,6 +307,7 @@ impl<I: VCodeInst> VCode<I> {
             final_block_offsets: vec![],
             code_size: 0,
             constants_start: 0,
+            constants_size: 0,
             abi,
         }
     }
@@ -448,13 +454,14 @@ impl<I: VCodeInst> VCode<I> {
 
         // Compute block offsets.
         let mut offset = 0;
+        let mut constant_offset = 0;
         let mut block_offsets = vec![0; self.num_blocks()];
         for block in &self.final_block_order {
             offset = I::align_basic_block(offset);
             block_offsets[*block as usize] = offset;
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                offset += inst_size(&self.insts[iix as usize]) as CodeOffset;
+                offset += inst_size(&self.insts[iix as usize], &mut constant_offset);
             }
         }
 
@@ -463,24 +470,25 @@ impl<I: VCodeInst> VCode<I> {
         // it (so forward references are now possible), and (ii) mutates the
         // instructions.
         let mut offset = 0;
+        let mut constant_offset = 0;
         for block in &self.final_block_order {
             offset = I::align_basic_block(offset);
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
                 self.insts[iix as usize].with_block_offsets(offset, &block_offsets[..]);
-                offset += inst_size(&self.insts[iix as usize]) as CodeOffset;
+                offset += inst_size(&self.insts[iix as usize], &mut constant_offset);
             }
         }
 
         self.final_block_offsets = block_offsets;
         self.code_size = offset;
         self.constants_start = I::align_constant_pool(offset);
+        self.constants_size = constant_offset;
     }
 
     /// Get the total size of the code when emitted.
-    pub fn code_size(&self) -> usize {
-        // TODO: size of any ConstantData?
-        self.code_size as usize
+    pub fn emitted_size(&self) -> usize {
+        (self.constants_start + self.constants_size) as usize
     }
 
     /// Emit the instructions to the given sink.

@@ -371,7 +371,10 @@ impl ABIBody<Inst> for ARM64ABIBody {
         let clobbered = get_callee_saves(self.clobbered.to_vec());
         for reg_pair in clobbered.chunks(2).rev() {
             let (r1, r2) = if reg_pair.len() == 2 {
-                (reg_pair[0].map(|r| r.to_reg()), reg_pair[1].map(|r| r.to_reg()))
+                (
+                    reg_pair[0].map(|r| r.to_reg()),
+                    reg_pair[1].map(|r| r.to_reg()),
+                )
             } else {
                 (reg_pair[0].map(|r| r.to_reg()), writable_zero_reg())
             };

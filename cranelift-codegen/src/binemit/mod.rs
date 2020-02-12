@@ -203,9 +203,41 @@ pub trait ConstantPoolSink {
 pub struct NullConstantPoolSink {}
 
 impl ConstantPoolSink for NullConstantPoolSink {
-  fn align_to(&mut self, _alignment: usize) {}
-  fn get_offset_from_code_start(&self) -> CodeOffset { 0 }
-  fn add_data(&mut self, _data: &[u8]) {}
+    fn align_to(&mut self, _alignment: usize) {}
+    fn get_offset_from_code_start(&self) -> CodeOffset {
+        0
+    }
+    fn add_data(&mut self, _data: &[u8]) {}
+}
+
+/// An implementation of a constant-pool sink that counts the size of all
+/// constants (but does not record their data).
+pub struct SizeConstantPoolSink {
+    size: CodeOffset,
+}
+
+impl SizeConstantPoolSink {
+    /// Create a new size-counting constant pool sink.
+    pub fn new(start_offset: CodeOffset) -> SizeConstantPoolSink {
+        SizeConstantPoolSink { size: start_offset }
+    }
+}
+
+impl ConstantPoolSink for SizeConstantPoolSink {
+    fn align_to(&mut self, alignment: usize) {
+        // Must be a power of two.
+        assert!((alignment & (alignment - 1)) == 0);
+        let alignment = alignment as CodeOffset;
+        self.size = (self.size + alignment - 1) & !(alignment - 1);
+    }
+
+    fn get_offset_from_code_start(&self) -> CodeOffset {
+        self.size
+    }
+
+    fn add_data(&mut self, data: &[u8]) {
+        self.size += data.len() as CodeOffset;
+    }
 }
 
 /// Report a bad encoding error.

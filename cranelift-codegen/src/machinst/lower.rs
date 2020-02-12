@@ -12,7 +12,7 @@ use crate::machinst::{
 use crate::num_uses::NumUses;
 
 use regalloc::Function as RegallocFunction;
-use regalloc::{RealReg, Reg, WritableReg, RegClass, VirtualReg};
+use regalloc::{RealReg, Reg, RegClass, VirtualReg, WritableReg};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
