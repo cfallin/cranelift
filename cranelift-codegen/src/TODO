@@ -39,6 +39,10 @@ TODO:
 
 - Post-MVP:
 
+  - Partition code by side-effects and permit some reordering: e.g., loads
+    incorporated into their uses if not crossing other memory ops
+    (see: libVEX's side-effect partitioning)
+
   - better block reordering: heuristically place after `from` or before `to` if
     only one out-edge or in-edge respectively (?). Or split the compound
     condbr/br and put one crit edge between the branches.
