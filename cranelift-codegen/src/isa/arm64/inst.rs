@@ -5,7 +5,7 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-use crate::binemit::{CodeOffset, CodeSink};
+use crate::binemit::{CodeOffset, CodeSink, ConstantPoolSink, NullConstantPoolSink};
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
 use crate::ir::{FuncRef, GlobalValue, Type};
@@ -1343,7 +1343,7 @@ fn arm64_map_regs(
 // emitting some helper instructions that come immediately before the use
 // of this amod.
 
-fn mem_finalize(mem: &MemArg) -> (Vec<Inst>, MemArg) {
+fn mem_finalize<CPS: ConstantPoolSink>(mem: &MemArg, consts: &mut CPS) -> (Vec<Inst>, MemArg) {
     match mem {
         &MemArg::StackOffset(fp_offset) => {
             if let Some(simm9) = SImm9::maybe_from_i64(fp_offset) {
@@ -1352,9 +1352,11 @@ fn mem_finalize(mem: &MemArg) -> (Vec<Inst>, MemArg) {
             } else {
                 let tmp = writable_spilltmp_reg();
                 let const_data = u64_constant(fp_offset as u64);
+                let (_, const_mem) =
+                    mem_finalize(&MemArg::label(MemLabel::ConstantData(const_data)), consts);
                 let const_inst = Inst::ULoad64 {
                     rd: tmp,
-                    mem: MemArg::label(MemLabel::ConstantData(const_data)),
+                    mem: const_mem,
                 };
                 let add_inst = Inst::AluRRR {
                     alu_op: ALUOp::Add64,
@@ -1364,6 +1366,20 @@ fn mem_finalize(mem: &MemArg) -> (Vec<Inst>, MemArg) {
                 };
                 (vec![const_inst, add_inst], MemArg::Base(tmp.to_reg()))
             }
+        }
+        &MemArg::Label(MemLabel::ConstantData(ref data)) => {
+            let len = data.len();
+            let alignment = if len <= 4 {
+                4
+            } else if len <= 8 {
+                8
+            } else {
+                16
+            };
+            consts.align_to(alignment);
+            let off = consts.get_offset_from_code_start();
+            consts.add_data(data.iter().as_slice());
+            (vec![], MemArg::Label(MemLabel::ConstantPool(off)))
         }
         _ => (vec![], mem.clone()),
     }
@@ -1475,8 +1491,8 @@ fn enc_ldst_imm19(op_31_24: u32, imm19: u32, rd: Reg) -> u32 {
     (op_31_24 << 24) | (imm19 << 5) | machreg_to_gpr(rd)
 }
 
-impl<CS: CodeSink> MachInstEmit<CS> for Inst {
-    fn emit(&self, sink: &mut CS) {
+impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
+    fn emit(&self, sink: &mut CS, consts: &mut CPS) {
         match self {
             &Inst::AluRRR { alu_op, rd, rn, rm } => {
                 let top11 = match alu_op {
@@ -1555,10 +1571,10 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem } => {
-                let (mem_insts, mem) = mem_finalize(mem);
+                let (mem_insts, mem) = mem_finalize(mem, consts);
 
                 for inst in mem_insts.into_iter() {
-                    inst.emit(sink);
+                    inst.emit(sink, consts);
                 }
 
                 // ldst encoding helpers take Reg, not WritableReg.
@@ -1596,13 +1612,9 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
                     &MemArg::Label(ref label) => {
                         let offset = match label {
                             &MemLabel::ConstantPool(off) => off,
+                            // Should be converted by `mem_finalize()` into `ConstantPool`.
                             &MemLabel::ConstantData(..) => {
-                                // Should only happen when computing size --
-                                // ConstantData refs are converted to
-                                // ConstantPool refs once the data itself is
-                                // collected and allocated into the constant
-                                // pool.
-                                0
+                                panic!("Should not see ConstantData here!")
                             }
                         } / 4;
                         assert!(offset < (1 << 19));
@@ -1634,10 +1646,10 @@ impl<CS: CodeSink> MachInstEmit<CS> for Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem } => {
-                let (mem_insts, mem) = mem_finalize(mem);
+                let (mem_insts, mem) = mem_finalize(mem, consts);
 
                 for inst in mem_insts.into_iter() {
-                    inst.emit(sink);
+                    inst.emit(sink, consts);
                 }
 
                 let op = match self {
@@ -1959,6 +1971,11 @@ impl MachInst for Inst {
     fn reg_universe() -> RealRegUniverse {
         create_reg_universe()
     }
+
+    fn align_constant_pool(offset: CodeOffset) -> CodeOffset {
+        // 16-align constants.
+        (offset + 15) & !16
+    }
 }
 
 //=============================================================================
@@ -2144,8 +2161,12 @@ impl ShowWithRRU for BranchTarget {
         }
     }
 }
-fn mem_finalize_for_show(mem: &MemArg, mb_rru: Option<&RealRegUniverse>) -> (String, MemArg) {
-    let (mem_insts, mem) = mem_finalize(mem);
+fn mem_finalize_for_show<CPS: ConstantPoolSink>(
+    mem: &MemArg,
+    mb_rru: Option<&RealRegUniverse>,
+    consts: &mut CPS,
+) -> (String, MemArg) {
+    let (mem_insts, mem) = mem_finalize(mem, consts);
     let mut mem_str = mem_insts
         .into_iter()
         .map(|inst| inst.show_rru(mb_rru))
@@ -2160,6 +2181,17 @@ fn mem_finalize_for_show(mem: &MemArg, mb_rru: Option<&RealRegUniverse>) -> (Str
 
 impl ShowWithRRU for Inst {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
+        let mut nullcps = NullConstantPoolSink {};
+        self.show_rru_with_constsink(mb_rru, &mut nullcps)
+    }
+}
+
+impl Inst {
+    fn show_rru_with_constsink<CPS: ConstantPoolSink>(
+        &self,
+        mb_rru: Option<&RealRegUniverse>,
+        consts: &mut CPS,
+    ) -> String {
         fn op_is32(alu_op: ALUOp) -> (&'static str, bool) {
             match alu_op {
                 ALUOp::Add32 => ("add", true),
@@ -2262,7 +2294,7 @@ impl ShowWithRRU for Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem } => {
-                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru);
+                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts);
 
                 let is_unscaled_base = match &mem {
                     &MemArg::Base(..) | &MemArg::BaseSImm9(..) => true,
@@ -2293,7 +2325,7 @@ impl ShowWithRRU for Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem } => {
-                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru);
+                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts);
 
                 let is_unscaled_base = match &mem {
                     &MemArg::Base(..) | &MemArg::BaseSImm9(..) => true,
@@ -2757,6 +2789,14 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
+                mem: MemArg::Label(MemLabel::ConstantData(u64_constant(0x0123456789abcdef))),
+            },
+            "01200058EFCDAB8967452301",
+            "ldr x1, 1024",
+        ));
+        insns.push((
+            Inst::ULoad64 {
+                rd: writable_xreg(1),
                 mem: MemArg::PreIndexed(writable_xreg(2), SImm9::maybe_from_i64(16).unwrap()),
             },
             "410C41F8",
@@ -2775,8 +2815,8 @@ mod test {
                 rd: writable_xreg(1),
                 mem: MemArg::StackOffset(32768),
             },
-            "0F000058EF011D8BE10140F8",
-            "ldr x15, !!constant!! ; add x15, x15, fp ; ldur x1, [x15]",
+            "0F200058EF011D8BE10140F80080000000000000",
+            "ldr x15, 1024 ; add x15, x15, fp ; ldur x1, [x15]",
         ));
 
         insns.push((
@@ -3272,12 +3312,15 @@ mod test {
             );
 
             // Check the printed text is as expected.
-            let actual_printing = insn.show_rru(Some(&rru));
+            let mut consts = VCodeConstantPool::new(1024);
+            let actual_printing = insn.show_rru_with_constsink(Some(&rru), &mut consts);
             assert_eq!(expected_printing, actual_printing);
 
             // Check the encoding is as expected.
             let mut sink = test_utils::TestCodeSink::new();
-            insn.emit(&mut sink);
+            let mut consts = VCodeConstantPool::new(1024);
+            insn.emit(&mut sink, &mut consts);
+            consts.emit(&mut sink);
             let actual_encoding = &sink.stringify();
             assert_eq!(expected_encoding, actual_encoding);
         }

@@ -17,7 +17,7 @@
 //! See the main module comment in `mod.rs` for more details on the VCode-based
 //! backend pipeline.
 
-use crate::binemit::SizeCodeSink;
+use crate::binemit::{NullConstantPoolSink, SizeCodeSink};
 use crate::ir;
 use crate::machinst::*;
 
@@ -40,8 +40,8 @@ pub type BlockIndex = u32;
 
 /// VCodeInst wraps all requirements for a MachInst to be in VCode: it must be
 /// a `MachInst` and it must be able to emit itself at least to a `SizeCodeSink`.
-pub trait VCodeInst: MachInst + MachInstEmit<SizeCodeSink> {}
-impl<I: MachInst + MachInstEmit<SizeCodeSink>> VCodeInst for I {}
+pub trait VCodeInst: MachInst + MachInstEmit<SizeCodeSink, NullConstantPoolSink> {}
+impl<I: MachInst + MachInstEmit<SizeCodeSink, NullConstantPoolSink>> VCodeInst for I {}
 
 /// A function in "VCode" (virtualized-register code) form, after lowering.
 /// This is essentially a standard CFG of basic blocks, where each basic block
@@ -85,6 +85,9 @@ pub struct VCode<I: VCodeInst> {
 
     /// Size of code, according for block layout / alignment.
     code_size: CodeOffset,
+
+    /// Start of constant pool.
+    constants_start: CodeOffset,
 
     /// ABI object.
     abi: Box<dyn ABIBody<I>>,
@@ -243,7 +246,8 @@ fn is_redundant_move<I: VCodeInst>(insn: &I) -> bool {
 
 fn inst_size<I: VCodeInst>(insn: &I) -> usize {
     let mut sizesink = SizeCodeSink::new();
-    insn.emit(&mut sizesink);
+    let mut nullcps = NullConstantPoolSink {};
+    insn.emit(&mut sizesink, &mut nullcps);
     sizesink.size()
 }
 
@@ -297,6 +301,7 @@ impl<I: VCodeInst> VCode<I> {
             final_block_order: vec![],
             final_block_offsets: vec![],
             code_size: 0,
+            constants_start: 0,
             abi,
         }
     }
@@ -469,6 +474,7 @@ impl<I: VCodeInst> VCode<I> {
 
         self.final_block_offsets = block_offsets;
         self.code_size = offset;
+        self.constants_start = I::align_constant_pool(offset);
     }
 
     /// Get the total size of the code when emitted.
@@ -480,24 +486,32 @@ impl<I: VCodeInst> VCode<I> {
     /// Emit the instructions to the given sink.
     pub fn emit<CS: CodeSink>(&self, cs: &mut CS)
     where
-        I: MachInstEmit<CS>,
+        I: MachInstEmit<CS, VCodeConstantPool>,
     {
+        let mut cps = VCodeConstantPool::new(self.constants_start);
+
         for block in &self.final_block_order {
             let new_offset = I::align_basic_block(cs.offset());
             while new_offset > cs.offset() {
                 // Pad with NOPs up to the aligned block offset.
                 let nop = I::gen_nop((new_offset - cs.offset()) as usize);
-                nop.emit(cs);
+                nop.emit(cs, &mut cps);
             }
             assert_eq!(cs.offset(), new_offset);
 
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                self.insts[iix as usize].emit(cs);
+                self.insts[iix as usize].emit(cs, &mut cps);
             }
         }
 
-        // TODO: constant pool at end of code? Or in rodata?
+        for _ in self.code_size..self.constants_start {
+            cs.put1(0);
+        }
+
+        cs.begin_rodata();
+        cps.emit(cs);
+        cs.end_codegen();
     }
 }
 
@@ -641,5 +655,52 @@ impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
             }
         }
         s
+    }
+}
+
+/// The constant-pool sink used by VCode emission.
+pub struct VCodeConstantPool {
+    start_offset: CodeOffset,
+    data: Vec<u8>,
+}
+
+impl VCodeConstantPool {
+    /// Create a new VCodeConstantPool that assumes it will emit bytes from the
+    /// given offset.
+    pub fn new(start_offset: CodeOffset) -> VCodeConstantPool {
+        VCodeConstantPool {
+            start_offset,
+            data: vec![],
+        }
+    }
+
+    /// Emit the collected constant-data bytes into the given CodeSink,
+    /// assuming the CodeSink has already been padded up to the offset given as
+    /// `start_offset` to `new()`.
+    pub fn emit<CS: CodeSink>(&self, cs: &mut CS) {
+        for byte in &self.data {
+            cs.put1(*byte);
+        }
+    }
+}
+
+impl ConstantPoolSink for VCodeConstantPool {
+    fn align_to(&mut self, alignment: usize) {
+        // Check that given alignment is a power of two.
+        assert!((alignment & (alignment - 1)) == 0);
+        let alignment = alignment as CodeOffset;
+        let cur_offset = self.start_offset + self.data.len() as CodeOffset;
+        let new_offset = (cur_offset + alignment - 1) & !(alignment - 1);
+        for _ in cur_offset..new_offset {
+            self.data.push(0);
+        }
+    }
+
+    fn get_offset_from_code_start(&self) -> CodeOffset {
+        self.start_offset + self.data.len() as CodeOffset
+    }
+
+    fn add_data(&mut self, data: &[u8]) {
+        self.data.extend(data);
     }
 }

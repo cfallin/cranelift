@@ -1,11 +1,5 @@
 TODO:
 
-- Binary emission
-  - Constant pool? Need MemArg resolution just prior to emission (when we know
-    the constant-pool offset) -- do this using the SizeCodeSink
-  - Resolve relocations: GlobalValue, Function (multiple-insn seq for address?)
-  - Frontend option to jump to generated code (for execution tests)
-
 - ISA completeness:
   - ImmLogic: implement the algorithm to determine whether an immediate can be
     encoded as a logical immediate.
@@ -16,6 +10,9 @@ TODO:
   - caller side
     - Move args into place; set clobbers (defs of real regs) on Call inst; do
       call; move retvals out
+
+- Binary emission
+  - Resolve relocations: GlobalValue, Function (multiple-insn seq for address?)
 
 - Limits (handle gracefully / return error from lowering)
   - Jump offsets (19, 26-bit forms)

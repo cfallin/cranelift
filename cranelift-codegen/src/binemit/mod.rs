@@ -187,6 +187,27 @@ pub trait FrameUnwindSink {
     fn set_entry_offset(&mut self, _: FrameUnwindOffset);
 }
 
+/// Describes a receiver of constant pool data during machine-instruction emission.
+pub trait ConstantPoolSink {
+    /// Align the offset to the given alignment, which must be a power of two.
+    fn align_to(&mut self, alignment: usize);
+
+    /// Return the offset from the start of the function code.
+    fn get_offset_from_code_start(&self) -> CodeOffset;
+
+    /// Add data to the constant pool.
+    fn add_data(&mut self, data: &[u8]);
+}
+
+/// A null implementation of a constant-pool sink that discards all data.
+pub struct NullConstantPoolSink {}
+
+impl ConstantPoolSink for NullConstantPoolSink {
+  fn align_to(&mut self, _alignment: usize) {}
+  fn get_offset_from_code_start(&self) -> CodeOffset { 0 }
+  fn add_data(&mut self, _data: &[u8]) {}
+}
+
 /// Report a bad encoding error.
 #[cold]
 pub fn bad_encoding(func: &Function, inst: Inst) -> ! {

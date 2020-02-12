@@ -100,7 +100,9 @@
 
 #![allow(unused_imports)]
 
-use crate::binemit::{CodeOffset, CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
+use crate::binemit::{
+    CodeOffset, CodeSink, ConstantPoolSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink,
+};
 use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;
 use crate::ir::ValueLocations;
@@ -194,6 +196,11 @@ pub trait MachInst: Clone + Debug {
     fn align_basic_block(offset: CodeOffset) -> CodeOffset {
         offset
     }
+
+    /// Align the constant pool. By default, no alignment occurs.
+    fn align_constant_pool(offset: CodeOffset) -> CodeOffset {
+        offset
+    }
 }
 
 /// Describes a block terminator (not call) in the vcode, when its branches
@@ -211,9 +218,9 @@ pub enum MachTerminator {
 }
 
 /// A trait describing the ability to encode a MachInst into binary machine code.
-pub trait MachInstEmit<CS: CodeSink> {
+pub trait MachInstEmit<CS: CodeSink, CPS: ConstantPoolSink> {
     /// Emit the instruction.
-    fn emit(&self, cs: &mut CS);
+    fn emit(&self, cs: &mut CS, consts: &mut CPS);
 }
 
 /// Top-level machine backend trait, which wraps all monomorphized code and
