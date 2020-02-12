@@ -144,15 +144,6 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 vcode.set_vreg_type(vreg, f.dfg.value_type(*param));
             }
             for inst in f.layout.block_insts(bb) {
-                for arg in f.dfg.inst_args(inst) {
-                    let vreg = alloc_vreg(
-                        &mut value_regs,
-                        I::rc_for_type(f.dfg.value_type(*arg)),
-                        *arg,
-                        &mut next_vreg,
-                    );
-                    vcode.set_vreg_type(vreg, f.dfg.value_type(*arg));
-                }
                 for result in f.dfg.inst_results(inst) {
                     let vreg = alloc_vreg(
                         &mut value_regs,
