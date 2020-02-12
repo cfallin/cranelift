@@ -648,8 +648,7 @@ impl MemArg {
 /// A memory argument to a load/store-pair.
 #[derive(Clone, Debug)]
 pub enum PairMemArg {
-    Base(Reg),
-    BaseSImm7Scaled(Reg, SImm7Scaled),
+    SignedOffset(Reg, SImm7Scaled),
     PreIndexed(Writable<Reg>, SImm7Scaled),
     PostIndexed(Writable<Reg>, SImm7Scaled),
 }
@@ -1020,7 +1019,7 @@ fn pairmemarg_regs(
     modified: &mut Set<Writable<Reg>>,
 ) {
     match pairmemarg {
-        &PairMemArg::Base(reg) | &PairMemArg::BaseSImm7Scaled(reg, ..) => {
+        &PairMemArg::SignedOffset(reg, ..) => {
             used.insert(reg);
         }
         &PairMemArg::PreIndexed(reg, ..) | &PairMemArg::PostIndexed(reg, ..) => {
@@ -1164,10 +1163,7 @@ fn arm64_map_regs(
 
     fn map_pairmem(u: &RegallocMap<VirtualReg, RealReg>, mem: &PairMemArg) -> PairMemArg {
         match mem {
-            &PairMemArg::Base(reg) => PairMemArg::Base(map(u, reg)),
-            &PairMemArg::BaseSImm7Scaled(reg, simm7) => {
-                PairMemArg::BaseSImm7Scaled(map(u, reg), simm7)
-            }
+            &PairMemArg::SignedOffset(reg, simm7) => PairMemArg::SignedOffset(map(u, reg), simm7),
             &PairMemArg::PreIndexed(reg, simm7) => PairMemArg::PreIndexed(map_wr(u, reg), simm7),
             &PairMemArg::PostIndexed(reg, simm7) => PairMemArg::PostIndexed(map_wr(u, reg), simm7),
         }
@@ -1718,16 +1714,7 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                 }
             }
             &Inst::StoreP64 { rt, rt2, ref mem } => match mem {
-                &PairMemArg::Base(reg) => {
-                    sink.put4(enc_ldst_pair(
-                        0b1010100100,
-                        SImm7Scaled::zero(I64),
-                        reg,
-                        rt,
-                        rt2,
-                    ));
-                }
-                &PairMemArg::BaseSImm7Scaled(reg, simm7) => {
+                &PairMemArg::SignedOffset(reg, simm7) => {
                     assert_eq!(simm7.scale_ty, I64);
                     sink.put4(enc_ldst_pair(0b1010100100, simm7, reg, rt, rt2));
                 }
@@ -1744,16 +1731,7 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                 let rt = rt.to_reg();
                 let rt2 = rt2.to_reg();
                 match mem {
-                    &PairMemArg::Base(reg) => {
-                        sink.put4(enc_ldst_pair(
-                            0b1010100101,
-                            SImm7Scaled::zero(I64),
-                            reg,
-                            rt,
-                            rt2,
-                        ));
-                    }
-                    &PairMemArg::BaseSImm7Scaled(reg, simm7) => {
+                    &PairMemArg::SignedOffset(reg, simm7) => {
                         assert_eq!(simm7.scale_ty, I64);
                         sink.put4(enc_ldst_pair(0b1010100101, simm7, reg, rt, rt2));
                     }
@@ -2142,9 +2120,12 @@ impl ShowWithRRU for MemArg {
 impl ShowWithRRU for PairMemArg {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            &PairMemArg::Base(reg) => format!("[{}]", reg.show_rru(mb_rru)),
-            &PairMemArg::BaseSImm7Scaled(reg, simm7) => {
-                format!("[{}, {}]", reg.show_rru(mb_rru), simm7.show_rru(mb_rru))
+            &PairMemArg::SignedOffset(reg, simm7) => {
+                if simm7.value != 0 {
+                    format!("[{}, {}]", reg.show_rru(mb_rru), simm7.show_rru(mb_rru))
+                } else {
+                    format!("[{}]", reg.show_rru(mb_rru))
+                }
             }
             &PairMemArg::PreIndexed(reg, simm7) => format!(
                 "[{}, {}]!",
@@ -2995,7 +2976,7 @@ mod test {
             Inst::StoreP64 {
                 rt: xreg(8),
                 rt2: xreg(9),
-                mem: PairMemArg::Base(xreg(10)),
+                mem: PairMemArg::SignedOffset(xreg(10), SImm7Scaled::zero(I64)),
             },
             "482500A9",
             "stp x8, x9, [x10]",
@@ -3004,7 +2985,7 @@ mod test {
             Inst::StoreP64 {
                 rt: xreg(8),
                 rt2: xreg(9),
-                mem: PairMemArg::BaseSImm7Scaled(
+                mem: PairMemArg::SignedOffset(
                     xreg(10),
                     SImm7Scaled::maybe_from_i64(504, I64).unwrap(),
                 ),
@@ -3016,7 +2997,7 @@ mod test {
             Inst::StoreP64 {
                 rt: xreg(8),
                 rt2: xreg(9),
-                mem: PairMemArg::BaseSImm7Scaled(
+                mem: PairMemArg::SignedOffset(
                     xreg(10),
                     SImm7Scaled::maybe_from_i64(-64, I64).unwrap(),
                 ),
@@ -3028,7 +3009,7 @@ mod test {
             Inst::StoreP64 {
                 rt: xreg(21),
                 rt2: xreg(28),
-                mem: PairMemArg::BaseSImm7Scaled(
+                mem: PairMemArg::SignedOffset(
                     xreg(1),
                     SImm7Scaled::maybe_from_i64(-512, I64).unwrap(),
                 ),
@@ -3065,7 +3046,7 @@ mod test {
             Inst::LoadP64 {
                 rt: writable_xreg(8),
                 rt2: writable_xreg(9),
-                mem: PairMemArg::Base(xreg(10)),
+                mem: PairMemArg::SignedOffset(xreg(10), SImm7Scaled::zero(I64)),
             },
             "482540A9",
             "ldp x8, x9, [x10]",
@@ -3074,7 +3055,7 @@ mod test {
             Inst::LoadP64 {
                 rt: writable_xreg(8),
                 rt2: writable_xreg(9),
-                mem: PairMemArg::BaseSImm7Scaled(
+                mem: PairMemArg::SignedOffset(
                     xreg(10),
                     SImm7Scaled::maybe_from_i64(504, I64).unwrap(),
                 ),
@@ -3086,7 +3067,7 @@ mod test {
             Inst::LoadP64 {
                 rt: writable_xreg(8),
                 rt2: writable_xreg(9),
-                mem: PairMemArg::BaseSImm7Scaled(
+                mem: PairMemArg::SignedOffset(
                     xreg(10),
                     SImm7Scaled::maybe_from_i64(-64, I64).unwrap(),
                 ),
@@ -3098,7 +3079,7 @@ mod test {
             Inst::LoadP64 {
                 rt: writable_xreg(8),
                 rt2: writable_xreg(9),
-                mem: PairMemArg::BaseSImm7Scaled(
+                mem: PairMemArg::SignedOffset(
                     xreg(10),
                     SImm7Scaled::maybe_from_i64(-512, I64).unwrap(),
                 ),
