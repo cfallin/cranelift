@@ -16,11 +16,6 @@ impl TestCodeSink {
         TestCodeSink { bytes: vec![] }
     }
 
-    /// Return the size of emitted code so far.
-    pub fn size(&self) -> usize {
-        self.bytes.len()
-    }
-
     /// This is pretty lame, but whatever ..
     pub fn stringify(&self) -> String {
         let mut s = "".to_string();
