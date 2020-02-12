@@ -694,8 +694,7 @@ impl VCodeConstantPool {
 
 impl ConstantPoolSink for VCodeConstantPool {
     fn align_to(&mut self, alignment: usize) {
-        // Check that given alignment is a power of two.
-        assert!((alignment & (alignment - 1)) == 0);
+        assert!(alignment.is_power_of_two());
         let alignment = alignment as CodeOffset;
         let cur_offset = self.start_offset + self.data.len() as CodeOffset;
         let new_offset = (cur_offset + alignment - 1) & !(alignment - 1);
