@@ -17,7 +17,7 @@ use regalloc::InstRegUses;
 use regalloc::Map as RegallocMap;
 use regalloc::Set;
 use regalloc::{
-    RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, WritableReg, NUM_REG_CLASSES,
+    RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, Writable, NUM_REG_CLASSES,
 };
 
 use std::fmt;
@@ -1067,18 +1067,18 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             dst,
         } => {
             src.get_regs(&mut iru.used);
-            iru.modified.insert(WritableReg::from_reg(*dst));
+            iru.modified.insert(Writable::from_reg(*dst));
         }
         Inst::Imm_R {
             dstIs64: _,
             simm64: _,
             dst,
         } => {
-            iru.defined.insert(WritableReg::from_reg(*dst));
+            iru.defined.insert(Writable::from_reg(*dst));
         }
         Inst::Mov_R_R { is64: _, src, dst } => {
             iru.used.insert(*src);
-            iru.defined.insert(WritableReg::from_reg(*dst));
+            iru.defined.insert(Writable::from_reg(*dst));
         }
         Inst::MovZX_M_R {
             extMode: _,
@@ -1086,11 +1086,11 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             dst,
         } => {
             addr.get_regs(&mut iru.used);
-            iru.defined.insert(WritableReg::from_reg(*dst));
+            iru.defined.insert(Writable::from_reg(*dst));
         }
         Inst::Mov64_M_R { addr, dst } => {
             addr.get_regs(&mut iru.used);
-            iru.defined.insert(WritableReg::from_reg(*dst));
+            iru.defined.insert(Writable::from_reg(*dst));
         }
         Inst::MovSX_M_R {
             extMode: _,
@@ -1098,7 +1098,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             dst,
         } => {
             addr.get_regs(&mut iru.used);
-            iru.defined.insert(WritableReg::from_reg(*dst));
+            iru.defined.insert(Writable::from_reg(*dst));
         }
         Inst::Mov_R_M { size: _, src, addr } => {
             iru.used.insert(*src);
@@ -1113,7 +1113,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             if *nBits == 0 {
                 iru.used.insert(reg_RCX());
             }
-            iru.modified.insert(WritableReg::from_reg(*dst));
+            iru.modified.insert(Writable::from_reg(*dst));
         }
         Inst::Cmp_RMI_R { size: _, src, dst } => {
             src.get_regs(&mut iru.used);
@@ -1121,7 +1121,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
         }
         Inst::Push64 { src } => {
             src.get_regs(&mut iru.used);
-            iru.modified.insert(WritableReg::from_reg(reg_RSP()));
+            iru.modified.insert(Writable::from_reg(reg_RSP()));
         }
         Inst::JmpKnown { simm32: _ } => {}
         Inst::JmpUnknown { target } => {
@@ -1610,10 +1610,10 @@ fn emit_simm<CS: CodeSink>(sink: &mut CS, size: u8, simm32: u32) {
 // When choosing registers for a test, avoid using registers with the same
 // offset within a given group.  For example, don't use rax and r8, since they
 // both have the lowest 3 bits as 000, and so the test won't detect errors
-// where those 3-bit register sub-fields are confused by emitter.  Instead use
-// (eg) rax (lo3 = 000) and r9 (lo3 = 001).  Similarly, don't use (eg) cl and
-// bpl since they have the same offset in their group; use instead (eg) cl and
-// sil.
+// where those 3-bit register sub-fields are confused by the emitter.  Instead
+// use (eg) rax (lo3 = 000) and r9 (lo3 = 001).  Similarly, don't use (eg) cl
+// and bpl since they have the same offset in their group; use instead (eg) cl
+// and sil.
 //
 // For all instructions, also add a test that uses only low-half registers
 // (rax .. rdi, xmm0 .. xmm7) etc, so as to check that any redundant REX
@@ -2072,13 +2072,13 @@ impl MachInst for Inst {
         x64_map_regs(self, pre_map, post_map);
     }
 
-    fn is_move(&self) -> Option<(WritableReg<Reg>, Reg)> {
+    fn is_move(&self) -> Option<(Writable<Reg>, Reg)> {
         // Note (carefully!) that a 32-bit mov *isn't* a no-op since it zeroes
         // out the upper 32 bits of the destination.  For example, we could
         // conceivably use |movl %reg, %reg| to zero out the top 32 bits of
         // %reg.
         match self {
-            Inst::Mov_R_R { is64, src, dst } if *is64 => Some((WritableReg::from_reg(*dst), *src)),
+            Inst::Mov_R_R { is64, src, dst } if *is64 => Some((Writable::from_reg(*dst), *src)),
             _ => None,
         }
     }
@@ -2087,7 +2087,7 @@ impl MachInst for Inst {
         unimplemented!()
     }
 
-    fn gen_move(_to_reg: WritableReg<Reg>, _from_reg: Reg) -> Inst {
+    fn gen_move(_to_reg: Writable<Reg>, _from_reg: Reg) -> Inst {
         unimplemented!()
     }
 
@@ -2431,7 +2431,7 @@ fn test_x64_insn_encoding_and_printing() {
     ));
 
     // ========================================================
-    // Addr_IR, offset minimal positive simm32
+    // Addr_IR, offset smallest positive simm32
     insns.push((
         i_Mov64_M_R(Addr_IR(128, rax), rdi),
         "488BB880000000",
@@ -2514,7 +2514,7 @@ fn test_x64_insn_encoding_and_printing() {
     ));
 
     // ========================================================
-    // Addr_IR, offset maximal negative simm32
+    // Addr_IR, offset smallest negative simm32
     insns.push((
         i_Mov64_M_R(Addr_IR(-129i32 as u32, rax), rdi),
         "488BB87FFFFFFF",

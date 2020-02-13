@@ -14,7 +14,7 @@ use crate::machinst::*;
 use regalloc::Map as RegallocMap;
 use regalloc::{InstRegUses, Set};
 use regalloc::{
-    RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, WritableReg, NUM_REG_CLASSES,
+    RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, Writable, NUM_REG_CLASSES,
 };
 
 use alloc::vec::Vec;
@@ -60,8 +60,8 @@ pub fn xreg(num: u8) -> Reg {
 }
 
 /// Get a writable reference to an X-register.
-pub fn writable_xreg(num: u8) -> WritableReg<Reg> {
-    WritableReg::from_reg(xreg(num))
+pub fn writable_xreg(num: u8) -> Writable<Reg> {
+    Writable::from_reg(xreg(num))
 }
 
 /// Get a reference to a V-register (vector/FP register).
@@ -71,8 +71,8 @@ pub fn vreg(num: u8) -> Reg {
 }
 
 /// Get a writable reference to a V-register.
-pub fn writable_vreg(num: u8) -> WritableReg<Reg> {
-    WritableReg::from_reg(vreg(num))
+pub fn writable_vreg(num: u8) -> Writable<Reg> {
+    Writable::from_reg(vreg(num))
 }
 
 /// Get a reference to the zero-register.
@@ -87,8 +87,8 @@ pub fn zero_reg() -> Reg {
 }
 
 /// Get a writable reference to the zero-register (this discards a result).
-pub fn writable_zero_reg() -> WritableReg<Reg> {
-    WritableReg::from_reg(zero_reg())
+pub fn writable_zero_reg() -> Writable<Reg> {
+    Writable::from_reg(zero_reg())
 }
 
 /// Get a reference to the stack-pointer register.
@@ -106,8 +106,8 @@ pub fn stack_reg() -> Reg {
 }
 
 /// Get a writable reference to the stack-pointer register.
-pub fn writable_stack_reg() -> WritableReg<Reg> {
-    WritableReg::from_reg(stack_reg())
+pub fn writable_stack_reg() -> Writable<Reg> {
+    Writable::from_reg(stack_reg())
 }
 
 /// Get a reference to the link register (x30).
@@ -116,8 +116,8 @@ pub fn link_reg() -> Reg {
 }
 
 /// Get a writable reference to the link register.
-pub fn writable_link_reg() -> WritableReg<Reg> {
-    WritableReg::from_reg(link_reg())
+pub fn writable_link_reg() -> Writable<Reg> {
+    Writable::from_reg(link_reg())
 }
 
 /// Get a reference to the frame pointer (x29).
@@ -126,8 +126,8 @@ pub fn fp_reg() -> Reg {
 }
 
 /// Get a writable reference to the frame pointer.
-pub fn writable_fp_reg() -> WritableReg<Reg> {
-    WritableReg::from_reg(fp_reg())
+pub fn writable_fp_reg() -> Writable<Reg> {
+    Writable::from_reg(fp_reg())
 }
 
 /// Get a reference to the "spill temp" register. This register is used to
@@ -141,8 +141,8 @@ pub fn spilltmp_reg() -> Reg {
 }
 
 /// Get a writable reference to the spilltmp reg.
-pub fn writable_spilltmp_reg() -> WritableReg<Reg> {
-    WritableReg::from_reg(spilltmp_reg())
+pub fn writable_spilltmp_reg() -> Writable<Reg> {
+    Writable::from_reg(spilltmp_reg())
 }
 
 /// Create the register universe for ARM64.
@@ -609,8 +609,8 @@ pub enum MemArg {
     BasePlusReg(Reg, Reg),
     BasePlusRegScaled(Reg, Reg, Type),
     Label(MemLabel),
-    PreIndexed(WritableReg<Reg>, SImm9),
-    PostIndexed(WritableReg<Reg>, SImm9),
+    PreIndexed(Writable<Reg>, SImm9),
+    PostIndexed(Writable<Reg>, SImm9),
     /// Offset from the frame pointer.
     StackOffset(i64),
 }
@@ -650,8 +650,8 @@ impl MemArg {
 pub enum PairMemArg {
     Base(Reg),
     BaseSImm7Scaled(Reg, SImm7Scaled),
-    PreIndexed(WritableReg<Reg>, SImm7Scaled),
-    PostIndexed(WritableReg<Reg>, SImm7Scaled),
+    PreIndexed(Writable<Reg>, SImm7Scaled),
+    PostIndexed(Writable<Reg>, SImm7Scaled),
 }
 
 //=============================================================================
@@ -850,7 +850,7 @@ pub enum Inst {
     /// An ALU operation with two register sources and a register destination.
     AluRRR {
         alu_op: ALUOp,
-        rd: WritableReg<Reg>,
+        rd: Writable<Reg>,
         rn: Reg,
         rm: Reg,
     },
@@ -858,21 +858,21 @@ pub enum Inst {
     /// destination.
     AluRRImm12 {
         alu_op: ALUOp,
-        rd: WritableReg<Reg>,
+        rd: Writable<Reg>,
         rn: Reg,
         imm12: Imm12,
     },
     /// An ALU operation with a register source and an immediate-logic source, and a register destination.
     AluRRImmLogic {
         alu_op: ALUOp,
-        rd: WritableReg<Reg>,
+        rd: Writable<Reg>,
         rn: Reg,
         imml: ImmLogic,
     },
     /// An ALU operation with a register source and an immediate-shiftamt source, and a register destination.
     AluRRImmShift {
         alu_op: ALUOp,
-        rd: WritableReg<Reg>,
+        rd: Writable<Reg>,
         rn: Reg,
         immshift: ImmShift,
     },
@@ -880,7 +880,7 @@ pub enum Inst {
     /// destination.
     AluRRRShift {
         alu_op: ALUOp,
-        rd: WritableReg<Reg>,
+        rd: Writable<Reg>,
         rn: Reg,
         rm: Reg,
         shiftop: ShiftOpAndAmt,
@@ -889,25 +889,25 @@ pub enum Inst {
     /// shifted, and a register destination.
     AluRRRExtend {
         alu_op: ALUOp,
-        rd: WritableReg<Reg>,
+        rd: Writable<Reg>,
         rn: Reg,
         rm: Reg,
         extendop: ExtendOp,
     },
     /// An unsigned (zero-extending) 8-bit load.
-    ULoad8 { rd: WritableReg<Reg>, mem: MemArg },
+    ULoad8 { rd: Writable<Reg>, mem: MemArg },
     /// A signed (sign-extending) 8-bit load.
-    SLoad8 { rd: WritableReg<Reg>, mem: MemArg },
+    SLoad8 { rd: Writable<Reg>, mem: MemArg },
     /// An unsigned (zero-extending) 16-bit load.
-    ULoad16 { rd: WritableReg<Reg>, mem: MemArg },
+    ULoad16 { rd: Writable<Reg>, mem: MemArg },
     /// A signed (sign-extending) 16-bit load.
-    SLoad16 { rd: WritableReg<Reg>, mem: MemArg },
+    SLoad16 { rd: Writable<Reg>, mem: MemArg },
     /// An unsigned (zero-extending) 32-bit load.
-    ULoad32 { rd: WritableReg<Reg>, mem: MemArg },
+    ULoad32 { rd: Writable<Reg>, mem: MemArg },
     /// A signed (sign-extending) 32-bit load.
-    SLoad32 { rd: WritableReg<Reg>, mem: MemArg },
+    SLoad32 { rd: Writable<Reg>, mem: MemArg },
     /// A 64-bit load.
-    ULoad64 { rd: WritableReg<Reg>, mem: MemArg },
+    ULoad64 { rd: Writable<Reg>, mem: MemArg },
 
     /// An 8-bit store.
     Store8 { rd: Reg, mem: MemArg },
@@ -922,25 +922,25 @@ pub enum Inst {
     StoreP64 { rt: Reg, rt2: Reg, mem: PairMemArg },
     /// A load of a pair of registers.
     LoadP64 {
-        rt: WritableReg<Reg>,
-        rt2: WritableReg<Reg>,
+        rt: Writable<Reg>,
+        rt2: Writable<Reg>,
         mem: PairMemArg,
     },
 
     /// A MOV instruction. These are encoded as ORR's (AluRRR form) but we
     /// keep them separate at the `Inst` level for better pretty-printing
     /// and faster `is_move()` logic.
-    Mov { rd: WritableReg<Reg>, rm: Reg },
+    Mov { rd: Writable<Reg>, rm: Reg },
 
     /// A MOVZ with a 16-bit immediate.
     MovZ {
-        rd: WritableReg<Reg>,
+        rd: Writable<Reg>,
         imm: MoveWideConst,
     },
 
     /// A MOVN with a 16-bit immediate.
     MovN {
-        rd: WritableReg<Reg>,
+        rd: Writable<Reg>,
         imm: MoveWideConst,
     },
 
@@ -984,7 +984,7 @@ pub enum Inst {
 
 impl Inst {
     /// Create a move instruction.
-    pub fn mov(to_reg: WritableReg<Reg>, from_reg: Reg) -> Inst {
+    pub fn mov(to_reg: Writable<Reg>, from_reg: Reg) -> Inst {
         Inst::Mov {
             rd: to_reg,
             rm: from_reg,
@@ -995,7 +995,7 @@ impl Inst {
 //=============================================================================
 // Instructions: get_regs
 
-fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<WritableReg<Reg>>) {
+fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Writable<Reg>>) {
     match memarg {
         &MemArg::Base(reg) | &MemArg::BaseSImm9(reg, ..) | &MemArg::BaseUImm12Scaled(reg, ..) => {
             used.insert(reg);
@@ -1017,7 +1017,7 @@ fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Writable
 fn pairmemarg_regs(
     pairmemarg: &PairMemArg,
     used: &mut Set<Reg>,
-    modified: &mut Set<WritableReg<Reg>>,
+    modified: &mut Set<Writable<Reg>>,
 ) {
     match pairmemarg {
         &PairMemArg::Base(reg) | &PairMemArg::BaseSImm7Scaled(reg, ..) => {
@@ -1138,8 +1138,8 @@ fn arm64_map_regs(
         }
     }
 
-    fn map_wr(m: &RegallocMap<VirtualReg, RealReg>, r: WritableReg<Reg>) -> WritableReg<Reg> {
-        WritableReg::from_reg(map(m, r.to_reg()))
+    fn map_wr(m: &RegallocMap<VirtualReg, RealReg>, r: Writable<Reg>) -> Writable<Reg> {
+        Writable::from_reg(map(m, r.to_reg()))
     }
 
     fn map_mem(u: &RegallocMap<VirtualReg, RealReg>, mem: &MemArg) -> MemArg {
@@ -1417,7 +1417,7 @@ fn machreg_to_gpr(m: Reg) -> u32 {
     m.to_real_reg().get_hw_encoding() as u32
 }
 
-fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: WritableReg<Reg>, rn: Reg, rm: Reg) -> u32 {
+fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: Writable<Reg>, rn: Reg, rm: Reg) -> u32 {
     ((bits_31_21 as u32) << 21)
         | ((bits_15_10 as u32) << 10)
         | machreg_to_gpr(rd.to_reg())
@@ -1425,13 +1425,7 @@ fn enc_arith_rrr(bits_31_21: u16, bits_15_10: u8, rd: WritableReg<Reg>, rn: Reg,
         | (machreg_to_gpr(rm) << 16)
 }
 
-fn enc_arith_rr_imm12(
-    bits_31_24: u8,
-    immshift: u8,
-    imm12: u16,
-    rn: Reg,
-    rd: WritableReg<Reg>,
-) -> u32 {
+fn enc_arith_rr_imm12(bits_31_24: u8, immshift: u8, imm12: u16, rn: Reg, rd: Writable<Reg>) -> u32 {
     ((bits_31_24 as u32) << 24)
         | ((immshift as u32) << 22)
         | ((imm12 as u32) << 10)
@@ -1439,7 +1433,7 @@ fn enc_arith_rr_imm12(
         | machreg_to_gpr(rd.to_reg())
 }
 
-fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: WritableReg<Reg>) -> u32 {
+fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: Writable<Reg>) -> u32 {
     ((bits_31_23 as u32) << 23)
         | ((imm_bits as u32) << 10)
         | (machreg_to_gpr(rn) << 5)
@@ -1470,7 +1464,7 @@ enum MoveWideOpcode {
     MOVZ = 0b10,
 }
 
-fn enc_move_wide(op: MoveWideOpcode, rd: WritableReg<Reg>, imm: MoveWideConst) -> u32 {
+fn enc_move_wide(op: MoveWideOpcode, rd: Writable<Reg>, imm: MoveWideConst) -> u32 {
     assert!(imm.shift <= 0b11);
     MOVE_WIDE_FIXED
         | (op as u32) << 29
@@ -1612,7 +1606,7 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     inst.emit(sink, consts);
                 }
 
-                // ldst encoding helpers take Reg, not WritableReg.
+                // ldst encoding helpers take Reg, not Writable<Reg>.
                 let rd = rd.to_reg();
 
                 // This is the base opcode (top 10 bits) for the "unscaled
@@ -1890,7 +1884,7 @@ impl MachInst for Inst {
         arm64_map_regs(self, pre_map, post_map);
     }
 
-    fn is_move(&self) -> Option<(WritableReg<Reg>, Reg)> {
+    fn is_move(&self) -> Option<(Writable<Reg>, Reg)> {
         match self {
             &Inst::Mov { rd, rm } => Some((rd, rm)),
             _ => None,
@@ -1914,7 +1908,7 @@ impl MachInst for Inst {
         }
     }
 
-    fn gen_move(to_reg: WritableReg<Reg>, from_reg: Reg) -> Inst {
+    fn gen_move(to_reg: Writable<Reg>, from_reg: Reg) -> Inst {
         Inst::mov(to_reg, from_reg)
     }
 

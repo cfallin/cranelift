@@ -12,7 +12,7 @@ use crate::machinst::*;
 use crate::isa::arm64::inst::*;
 use crate::isa::arm64::Arm64Backend;
 
-use regalloc::{RealReg, Reg, RegClass, VirtualReg, WritableReg};
+use regalloc::{RealReg, Reg, RegClass, VirtualReg, Writable};
 
 use smallvec::SmallVec;
 
@@ -186,7 +186,7 @@ fn input_to_reg<'a>(ctx: Ctx<'a>, input: InsnInput) -> Reg {
 }
 
 /// Lower an instruction output to a reg.
-fn output_to_reg<'a>(ctx: Ctx<'a>, out: InsnOutput) -> WritableReg<Reg> {
+fn output_to_reg<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Writable<Reg> {
     ctx.output(out.insn, out.output)
 }
 
@@ -287,7 +287,7 @@ fn input_to_rse_immlogic<'a>(ctx: Ctx<'a>, input: InsnInput) -> ResultRSEImmLogi
     }
 }
 
-fn alu_inst_imm12(op: ALUOp, rd: WritableReg<Reg>, rn: Reg, rm: ResultRSEImm12) -> Inst {
+fn alu_inst_imm12(op: ALUOp, rd: Writable<Reg>, rn: Reg, rm: ResultRSEImm12) -> Inst {
     match rm {
         ResultRSEImm12::Imm12(imm12) => Inst::AluRRImm12 {
             alu_op: op,
@@ -362,7 +362,7 @@ fn lower_address<'a>(ctx: Ctx<'a>, elem_ty: Type, addends: &[InsnInput], offset:
     MemArg::Base(addr.to_reg())
 }
 
-fn lower_constant<'a>(ctx: Ctx<'a>, rd: WritableReg<Reg>, value: u64) {
+fn lower_constant<'a>(ctx: Ctx<'a>, rd: Writable<Reg>, value: u64) {
     if let Some(imm) = MoveWideConst::maybe_from_u64(value) {
         // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVZ
         ctx.emit(Inst::MovZ { rd, imm });

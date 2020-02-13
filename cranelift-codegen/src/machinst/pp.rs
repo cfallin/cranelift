@@ -1,6 +1,6 @@
 //! Pretty-printing for machine code (virtual-registerized or final).
 
-use regalloc::{RealRegUniverse, Reg, WritableReg};
+use regalloc::{RealRegUniverse, Reg, Writable};
 
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -55,7 +55,7 @@ impl ShowWithRRU for Reg {
     }
 }
 
-impl<R: ShowWithRRU + Copy + Ord + Hash + Eq + Debug> ShowWithRRU for WritableReg<R> {
+impl<R: ShowWithRRU + Copy + Ord + Hash + Eq + Debug> ShowWithRRU for Writable<R> {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         self.to_reg().show_rru(mb_rru)
     }
