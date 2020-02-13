@@ -162,15 +162,19 @@ fn output_to_const<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Option<u64> {
         None
     } else {
         let inst_data = ctx.data(out.insn);
-        match inst_data {
-            &InstructionData::UnaryImm { opcode: _, imm } => {
-                // Only has Into for i64; we use u64 elsewhere, so we cast.
-                let imm: i64 = imm.into();
-                Some(imm as u64)
+        if inst_data.opcode() == Opcode::Null {
+            Some(0)
+        } else {
+            match inst_data {
+                &InstructionData::UnaryImm { opcode: _, imm } => {
+                    // Only has Into for i64; we use u64 elsewhere, so we cast.
+                    let imm: i64 = imm.into();
+                    Some(imm as u64)
+                }
+                &InstructionData::UnaryIeee32 { opcode: _, imm } => Some(imm.bits() as u64),
+                &InstructionData::UnaryIeee64 { opcode: _, imm } => Some(imm.bits()),
+                _ => None,
             }
-            &InstructionData::UnaryIeee32 { opcode: _, imm } => Some(imm.bits() as u64),
-            &InstructionData::UnaryIeee64 { opcode: _, imm } => Some(imm.bits()),
-            _ => None,
         }
     }
 }
@@ -423,7 +427,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
     };
 
     match op {
-        Opcode::Iconst | Opcode::Bconst | Opcode::F32const | Opcode::F64const => {
+        Opcode::Iconst | Opcode::Bconst | Opcode::F32const | Opcode::F64const | Opcode::Null => {
             let value = output_to_const(ctx, outputs[0]).unwrap();
             let rd = output_to_reg(ctx, outputs[0]);
             lower_constant(ctx, rd, value);
@@ -443,6 +447,56 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
             let ty = ty.unwrap();
             let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
             ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
+        }
+
+        Opcode::UaddSat | Opcode::SaddSat => {
+            // TODO
+        }
+
+        Opcode::UsubSat | Opcode::SsubSat => {
+            // TODO
+        }
+
+        Opcode::Ineg => {
+            // TODO
+        }
+
+        Opcode::Imul => {
+            // TODO
+        }
+
+        Opcode::Umulhi | Opcode::Smulhi => {
+            // TODO
+        }
+
+        Opcode::Udiv | Opcode::Sdiv | Opcode::Urem | Opcode::Srem => {
+            // TODO
+        }
+
+        Opcode::Band
+        | Opcode::Bor
+        | Opcode::Bxor
+        | Opcode::Bnot
+        | Opcode::BandNot
+        | Opcode::BorNot
+        | Opcode::BxorNot => {
+            // TODO
+        }
+
+        Opcode::Rotl | Opcode::Rotr => {
+            // TODO
+        }
+
+        Opcode::Ishl | Opcode::Ushr | Opcode::Sshr => {
+            // TODO
+        }
+
+        Opcode::Bitrev => {
+            // TODO
+        }
+
+        Opcode::Clz | Opcode::Cls | Opcode::Ctz | Opcode::Popcnt => {
+            // TODO
         }
 
         Opcode::Load
@@ -520,6 +574,62 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
             });
         }
 
+        Opcode::StackLoad => {
+            // TODO
+        }
+
+        Opcode::StackStore => {
+            // TODO
+        }
+
+        Opcode::StackAddr => {
+            // TODO
+        }
+
+        Opcode::GlobalValue => {
+            // TODO
+        }
+
+        Opcode::SymbolValue => {
+            // TODO
+        }
+
+        Opcode::HeapAddr => {
+            // TODO
+        }
+
+        Opcode::TableAddr => {
+            // TODO
+        }
+
+        Opcode::Nop => {
+            // Nothing.
+        }
+
+        Opcode::Select | Opcode::Selectif => {
+            // TODO.
+        }
+
+        Opcode::Bitselect => {
+            // TODO.
+        }
+
+        Opcode::IsNull | Opcode::IsInvalid | Opcode::Trueif | Opcode::Trueff => {
+            // TODO.
+        }
+
+        Opcode::Copy => {
+            // TODO
+        }
+
+        Opcode::Breduce | Opcode::Bextend | Opcode::Bint | Opcode::Bmask => {
+            // TODO
+        }
+
+        Opcode::Ireduce | Opcode::Uextend | Opcode::Sextend | Opcode::Isplit | Opcode::Iconcat => {
+            // TODO
+        }
+
         Opcode::FallthroughReturn => {
             // What is this? The definition says it's a "special
             // instruction" meant to allow falling through into an
@@ -538,11 +648,170 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
             ctx.emit(Inst::Ret {});
         }
 
+        Opcode::Icmp | Opcode::IcmpImm | Opcode::Ifcmp | Opcode::IfcmpImm => {
+            // TODO
+        }
+
+        Opcode::JumpTableEntry => {
+            // TODO
+        }
+
+        Opcode::JumpTableBase => {
+            // TODO
+        }
+
+        Opcode::Debugtrap => {}
+
+        Opcode::Trap => {}
+
+        Opcode::Trapz | Opcode::Trapnz | Opcode::Trapif | Opcode::Trapff => {}
+
+        Opcode::ResumableTrap => {}
+
+        Opcode::Safepoint => {}
+
+        Opcode::FuncAddr => {
+            // TODO
+        }
+
+        Opcode::Call | Opcode::CallIndirect => {
+            // TODO
+        }
+
+        Opcode::GetPinnedReg
+        | Opcode::SetPinnedReg
+        | Opcode::Spill
+        | Opcode::Fill
+        | Opcode::FillNop
+        | Opcode::Regmove
+        | Opcode::CopySpecial
+        | Opcode::CopyToSsa
+        | Opcode::CopyNop
+        | Opcode::AdjustSpDown
+        | Opcode::AdjustSpUpImm
+        | Opcode::AdjustSpDownImm
+        | Opcode::IfcmpSp
+        | Opcode::Regspill
+        | Opcode::Regfill => {
+            panic!("Unused opcode should not be encountered.");
+        }
+
         // TODO: cmp
         // TODO: more alu ops
-        _ => {
-            println!("Unimplemented opcode: {:?}", op);
-            unimplemented!()
+        Opcode::Jump
+        | Opcode::Fallthrough
+        | Opcode::Brz
+        | Opcode::Brnz
+        | Opcode::BrIcmp
+        | Opcode::Brif
+        | Opcode::Brff
+        | Opcode::IndirectJumpTableBr
+        | Opcode::BrTable => {
+            panic!("Branch opcode reached non-branch lowering logic!");
+        }
+
+        Opcode::Vconst
+        | Opcode::Shuffle
+        | Opcode::Vsplit
+        | Opcode::Vconcat
+        | Opcode::Vselect
+        | Opcode::VanyTrue
+        | Opcode::VallTrue
+        | Opcode::Splat
+        | Opcode::Insertlane
+        | Opcode::Extractlane
+        | Opcode::Bitcast
+        | Opcode::RawBitcast
+        | Opcode::ScalarToVector => {
+            // TODO
+            panic!("Vector ops not implemented.");
+        }
+
+        Opcode::Fcmp
+        | Opcode::Ffcmp
+        | Opcode::Fadd
+        | Opcode::Fsub
+        | Opcode::Fmul
+        | Opcode::Fdiv
+        | Opcode::Sqrt
+        | Opcode::Fma
+        | Opcode::Fneg
+        | Opcode::Fabs
+        | Opcode::Fcopysign
+        | Opcode::Fmin
+        | Opcode::Fmax
+        | Opcode::Ceil
+        | Opcode::Floor
+        | Opcode::Trunc
+        | Opcode::Nearest
+        | Opcode::Fpromote
+        | Opcode::Fdemote
+        | Opcode::FcvtToUint
+        | Opcode::FcvtToUintSat
+        | Opcode::FcvtToSint
+        | Opcode::FcvtToSintSat
+        | Opcode::FcvtFromUint
+        | Opcode::FcvtFromSint => {
+            panic!("Floating point ops not implemented.");
+        }
+
+        Opcode::IaddImm
+        | Opcode::ImulImm
+        | Opcode::UdivImm
+        | Opcode::SdivImm
+        | Opcode::UremImm
+        | Opcode::SremImm
+        | Opcode::IrsubImm
+        | Opcode::IaddCin
+        | Opcode::IaddIfcin
+        | Opcode::IaddCout
+        | Opcode::IaddIfcout
+        | Opcode::IaddCarry
+        | Opcode::IaddIfcarry
+        | Opcode::IsubBin
+        | Opcode::IsubIfbin
+        | Opcode::IsubBout
+        | Opcode::IsubIfbout
+        | Opcode::IsubBorrow
+        | Opcode::IsubIfborrow
+        | Opcode::BandImm
+        | Opcode::BorImm
+        | Opcode::BxorImm
+        | Opcode::RotlImm
+        | Opcode::RotrImm
+        | Opcode::IshlImm
+        | Opcode::UshrImm
+        | Opcode::SshrImm => {
+            panic!("ALU+imm and ALU+carry ops should not appear here!");
+        }
+
+        Opcode::X86Udivmodx
+        | Opcode::X86Sdivmodx
+        | Opcode::X86Umulx
+        | Opcode::X86Smulx
+        | Opcode::X86Cvtt2si
+        | Opcode::X86Fmin
+        | Opcode::X86Fmax
+        | Opcode::X86Push
+        | Opcode::X86Pop
+        | Opcode::X86Bsr
+        | Opcode::X86Bsf
+        | Opcode::X86Pshufd
+        | Opcode::X86Pshufb
+        | Opcode::X86Pextr
+        | Opcode::X86Pinsr
+        | Opcode::X86Insertps
+        | Opcode::X86Movsd
+        | Opcode::X86Movlhps
+        | Opcode::X86Psll
+        | Opcode::X86Psrl
+        | Opcode::X86Psra
+        | Opcode::X86Ptest
+        | Opcode::X86Pmaxs
+        | Opcode::X86Pmaxu
+        | Opcode::X86Pmins
+        | Opcode::X86Pminu => {
+            panic!("x86-specific opcode in ARM64 backend!");
         }
     }
 }
@@ -689,7 +958,7 @@ impl LowerBackend for Arm64Backend {
                     });
                 }
 
-                // TODO: Brif/icmp, Brff/icmp, jump tables, call, ret
+                // TODO: Brif/icmp, Brff/icmp, jump tables
                 _ => unimplemented!(),
             }
         } else {
