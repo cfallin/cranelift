@@ -14,7 +14,8 @@ use crate::machinst::*;
 use regalloc::Map as RegallocMap;
 use regalloc::{InstRegUses, Set};
 use regalloc::{
-    RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, Writable, NUM_REG_CLASSES,
+    RealReg, RealRegUniverse, Reg, RegClass, RegClassInfo, SpillSlot, VirtualReg, Writable,
+    NUM_REG_CLASSES,
 };
 
 use alloc::vec::Vec;
@@ -191,10 +192,16 @@ pub fn create_reg_universe() -> RealRegUniverse {
     }
     let x_reg_last = x_reg_base + x_reg_count - 1;
 
-    allocable_by_class[RegClass::I64.rc_to_usize()] =
-        Some((x_reg_base as usize, x_reg_last as usize));
-    allocable_by_class[RegClass::V128.rc_to_usize()] =
-        Some((v_reg_base as usize, v_reg_last as usize));
+    allocable_by_class[RegClass::I64.rc_to_usize()] = Some(RegClassInfo {
+        first: x_reg_base as usize,
+        last: x_reg_last as usize,
+        suggested_scratch: Some(XREG_INDICES[14] as usize),
+    });
+    allocable_by_class[RegClass::V128.rc_to_usize()] = Some(RegClassInfo {
+        first: v_reg_base as usize,
+        last: v_reg_last as usize,
+        suggested_scratch: Some(/* V31: */ 31),
+    });
 
     // Other regs, not available to the allocator.
     let allocable = regs.len();

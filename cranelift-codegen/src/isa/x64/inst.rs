@@ -17,7 +17,8 @@ use regalloc::InstRegUses;
 use regalloc::Map as RegallocMap;
 use regalloc::Set;
 use regalloc::{
-    RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, Writable, NUM_REG_CLASSES,
+    RealReg, RealRegUniverse, Reg, RegClass, RegClassInfo, SpillSlot, VirtualReg, Writable,
+    NUM_REG_CLASSES,
 };
 
 use std::fmt;
@@ -279,7 +280,11 @@ pub fn create_reg_universe() -> RealRegUniverse {
     regs.push(info_R9());
     regs.push(info_R10());
     regs.push(info_R11());
-    allocable_by_class[RegClass::I64.rc_to_usize()] = Some((base, regs.len() - 1));
+    allocable_by_class[RegClass::I64.rc_to_usize()] = Some(RegClassInfo {
+        first: base,
+        last: regs.len() - 1,
+        suggested_scratch: Some(info_R12().0.get_index()),
+    });
 
     // XMM registers
     base = regs.len();
@@ -299,7 +304,11 @@ pub fn create_reg_universe() -> RealRegUniverse {
     regs.push(info_XMM13());
     regs.push(info_XMM14());
     regs.push(info_XMM15());
-    allocable_by_class[RegClass::V128.rc_to_usize()] = Some((base, regs.len() - 1));
+    allocable_by_class[RegClass::V128.rc_to_usize()] = Some(RegClassInfo {
+        first: base,
+        last: regs.len() - 1,
+        suggested_scratch: Some(info_XMM15().0.get_index()),
+    });
 
     // Other regs, not available to the allocator.
     let allocable = regs.len();
