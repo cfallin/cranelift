@@ -30,7 +30,7 @@ where
     .expect("register allocation");
 
     // Reorder vcode into final order and copy out final instruction sequence
-    // all at once.
+    // all at once. This also inserts prologues/epilogues.
     vcode.replace_insns_from_regalloc(result);
 
     debug!("vcode after regalloc:\n{:?}", vcode);
@@ -44,7 +44,7 @@ where
 
     debug!("final VCode:\n{:?}", vcode);
 
-    println!("{}\n", vcode.show_rru(Some(&B::MInst::reg_universe())));
+    //println!("{}\n", vcode.show_rru(Some(&B::MInst::reg_universe())));
 
     vcode
 }

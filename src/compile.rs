@@ -87,11 +87,19 @@ fn handle_module(
                 )?;
             }
         } else if let Some(backend) = backend {
+            if flag_disasm {
+                let f = func.clone();
+                let disasm = backend
+                    .compile_function_to_vcode(f)
+                    .expect("Compilation error");
+                println!("{}", disasm);
+            }
+
             let code = backend
                 .compile_function_to_memory(func, &mut relocs, &mut traps, &mut stackmaps)
                 .expect("Compilation error");
 
-            if flag_disasm {
+            if flag_print {
                 println!("Machine code:");
                 for word in code.chunks(4) {
                     println!(

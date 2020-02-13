@@ -4,14 +4,14 @@
 
 use crate::binemit::{CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
 use crate::ir::Function;
-use crate::machinst::compile;
-use crate::machinst::MachBackend;
+use crate::machinst::{compile, MachBackend, ShowWithRRU, VCode};
 use crate::machinst::{ABIBody, ABICall};
 use crate::result::CodegenResult;
 use crate::settings;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use std::string::String;
 
 use regalloc::RealRegUniverse;
 
@@ -34,27 +34,35 @@ impl Arm64Backend {
             flags: settings::Flags::new(settings::builder()),
         }
     }
+
+    fn compile_vcode(&self, mut func: Function) -> VCode<inst::Inst> {
+        // This performs lowering to VCode, register-allocates the code, computes
+        // block layout and finalizes branches. The result is ready for binary emission.
+        let abi = Box::new(abi::ARM64ABIBody::new(&func));
+        compile::compile::<Arm64Backend>(&mut func, self, abi)
+    }
 }
 
 impl MachBackend for Arm64Backend {
     fn compile_function_to_memory(
         &self,
-        mut func: Function,
+        func: Function,
         relocs: &mut dyn RelocSink,
         traps: &mut dyn TrapSink,
         stackmaps: &mut dyn StackmapSink,
     ) -> CodegenResult<Vec<u8>> {
-        // This performs lowering to VCode, register-allocates the code, computes
-        // block layout and finalizes branches. The result is ready for binary emission.
-        let abi = Box::new(abi::ARM64ABIBody::new(&func));
-        let vcode = compile::compile::<Arm64Backend>(&mut func, self, abi);
-
+        let vcode = self.compile_vcode(func);
         let mut buf: Vec<u8> = vec![0; vcode.emitted_size()];
 
         let mut sink = unsafe { MemoryCodeSink::new(buf.as_mut_ptr(), relocs, traps, stackmaps) };
         vcode.emit(&mut sink);
 
         Ok(buf)
+    }
+
+    fn compile_function_to_vcode(&self, func: Function) -> CodegenResult<String> {
+        let vcode = self.compile_vcode(func);
+        Ok(vcode.show_rru(Some(&create_reg_universe())))
     }
 
     fn flags(&self) -> &settings::Flags {

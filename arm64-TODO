@@ -6,6 +6,17 @@ TODO:
   - Add opcodes to lowering. Full integer/ALU instruction set.
   - 8/16-bit ops? Widening for legalization?
 
+- Lowering tests
+  - Make sure all (non-vector) filetests can compile
+  - Develop suite of golden-machine-code (or golden-assembly?) tests
+  - verify a bunch of corner / interesting cases
+    - add128 / add-with-carry
+    - conditional select?
+    - bit ops
+    - built-in shifts, extends
+    - multiply-add / multiply-subtract
+    - address of global (with relos)
+
 - Function ABI:
   - caller side
     - Move args into place; set clobbers (defs of real regs) on Call inst; do
@@ -19,17 +30,6 @@ TODO:
   - Spill-slot and argument offsets from FP
     - reserve a temp register for address computation?
 
-- Lowering tests
-  - Get filetest working with new top-level API
-  - Make sure all (non-vector) filetests can compile
-  - Develop suite of golden-machine-code (or golden-assembly?) tests
-  - verify a bunch of corner / interesting cases
-    - add128 / add-with-carry
-    - conditional select?
-    - bit ops
-    - built-in shifts, extends
-    - multiply-add / multiply-subtract
-    - address of global (with relos)
 
 - Performance tests vs. SpiderMonkey WASM
   - make sure that cranelift-wasm can run (or wasmtime?)
@@ -63,6 +63,10 @@ TODO:
     - pre-indexed / post-indexed addressing
     - Load-pair / store-pair
 
+  - Debug info / source-maps
+
+  - Stack maps
+
 -------
 
 
@@ -74,9 +78,9 @@ Milestones:
 - (X) M1: function ABI. Support function arguments and return value. Save clobbered
   registers.
 
-- M1.5: Support calls to other functions, saving caller-saved regs.
-
 - M2: fill out the integer instruction set. Support all Cranelift ops that are
-  not FP or vector-related.
+  not FP or vector-related, in leaf functions.
+
+- M2.5: Support calls to other functions, saving caller-saved regs.
 
 - M3: full Cranelift instruction set support.

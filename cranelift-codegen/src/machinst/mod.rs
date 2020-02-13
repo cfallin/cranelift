@@ -120,6 +120,7 @@ use regalloc::Map as RegallocMap;
 use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, WritableReg};
 use smallvec::SmallVec;
 use std::hash::Hash;
+use std::string::String;
 
 pub mod lower;
 pub use lower::*;
@@ -230,6 +231,9 @@ pub trait MachInstEmit<CS: CodeSink, CPS: ConstantPoolSink> {
 /// Top-level machine backend trait, which wraps all monomorphized code and
 /// allows a virtual call from the machine-independent `Function::compile()`.
 pub trait MachBackend {
+    /// Compile the given function to a vcode string. Consumes the function.
+    fn compile_function_to_vcode(&self, func: Function) -> CodegenResult<String>;
+
     /// Compile the given function to memory. Consumes the function.
     fn compile_function_to_memory(
         &self,
