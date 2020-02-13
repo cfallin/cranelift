@@ -10,11 +10,15 @@ ARM64 and new-x86 porting effort:
   - cd cranelift-codegen && cargo test
     - this runs unit tests, including encoding checks against golden bytes.
 
-  - target/debug/clif-util compile -d -D -p filetests/vcode/arm64/file.clif
+  - target/debug/clif-util compile --target arm64 \
+                           -d -D -p filetests/vcode/arm64/file.clif
     - this compiles a test input (in CraneLift IR) and prints:
       - ARM64 assembly, which should be parseable by GNU as (-D flag)
       - Machine code, in 32-bit words (-p flag)
       - if RUST_LOG=debug is set, debug spew (-d flag)
+
+  - the same, but with --target x86_64
+    - does not do anything yet
 
   - target/debug/clif-util test filetests/vcode/arm64/file.clif
     - this runs the "filecheck" utility, which performs specified checks
