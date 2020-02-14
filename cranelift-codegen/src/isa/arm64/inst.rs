@@ -1036,11 +1036,6 @@ fn pairmemarg_regs(
 }
 
 fn arm64_get_regs(inst: &Inst) -> InstRegUses {
-    // One thing we need to enforce here is that if a register is in the
-    // modified set, then it may not be in either the use or def sets.  On
-    // this target we don't expect to have any registers used in a 'modify'
-    // role, so we do the obvious thing at the end and assert that the modify
-    // set is empty.
     let mut iru = InstRegUses::new();
 
     match inst {
@@ -1124,7 +1119,13 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
         &Inst::Nop | Inst::Nop4 => {}
     }
 
-    debug_assert!(iru.modified.is_empty());
+    // Enforce the invariant that if a register is in the 'modify' set, it
+    // should not be in 'defined' or 'used'.
+    iru.defined.remove(&iru.modified);
+    iru.used.remove(&Set::from_vec(
+        iru.modified.iter().map(|r| r.to_reg()).collect(),
+    ));
+
     iru
 }
 
