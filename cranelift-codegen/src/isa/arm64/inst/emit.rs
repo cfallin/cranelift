@@ -199,6 +199,8 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     ALUOp::Orr64 => 0b10101010_000,
                     ALUOp::And32 => 0b00001010_000,
                     ALUOp::And64 => 0b10001010_000,
+                    ALUOp::AddS32 => 0b00101011_000,
+                    ALUOp::AddS64 => 0b10101011_000,
                     ALUOp::SubS32 => 0b01101011_000,
                     ALUOp::SubS64 => 0b11101011_000,
                     ALUOp::MAdd32 | ALUOp::MAdd64 => {
@@ -223,6 +225,8 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     ALUOp::Add64 => 0b100_10001,
                     ALUOp::Sub32 => 0b010_10001,
                     ALUOp::Sub64 => 0b110_10001,
+                    ALUOp::AddS32 => 0b001_10001,
+                    ALUOp::AddS64 => 0b101_10001,
                     ALUOp::SubS32 => 0b011_10001,
                     ALUOp::SubS64 => 0b111_10001,
                     _ => unimplemented!(),
@@ -254,11 +258,27 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
             &Inst::AluRRImmShift { rd: _, rn: _, .. } => unimplemented!(),
 
             &Inst::AluRRRShift {
-                rd: _,
-                rn: _,
-                rm: _,
-                ..
-            } => unimplemented!(),
+                alu_op,
+                rd,
+                rn,
+                rm,
+                ref shiftop,
+            } => {
+                let top11: u16 = match alu_op {
+                    ALUOp::Add32 => 0b000_01011000,
+                    ALUOp::Add64 => 0b100_01011000,
+                    ALUOp::AddS32 => 0b001_01011000,
+                    ALUOp::AddS64 => 0b101_01011000,
+                    ALUOp::Sub32 => 0b010_01011000,
+                    ALUOp::Sub64 => 0b110_01011000,
+                    ALUOp::SubS32 => 0b011_01011000,
+                    ALUOp::SubS64 => 0b111_01011000,
+                    _ => unimplemented!(),
+                };
+                let top11 = top11 | ((shiftop.op().bits() as u16) << 1);
+                let bits_15_10 = shiftop.amt().value();
+                sink.put4(enc_arith_rrr(top11, bits_15_10, rd, rn, rm));
+            }
 
             &Inst::AluRRRExtend {
                 alu_op,
@@ -272,6 +292,10 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     ALUOp::Add64 => 0b10001011001,
                     ALUOp::Sub32 => 0b01001011001,
                     ALUOp::Sub64 => 0b11001011001,
+                    ALUOp::AddS32 => 0b00101011001,
+                    ALUOp::AddS64 => 0b10101011001,
+                    ALUOp::SubS32 => 0b01101011001,
+                    ALUOp::SubS64 => 0b11101011001,
                     _ => unimplemented!(),
                 };
                 let bits_15_10 = extendop.bits() << 3;
@@ -637,6 +661,26 @@ mod test {
             "A40006EB",
             "subs x4, x5, x6",
         ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::AddS32,
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+            },
+            "4100032B",
+            "adds w1, w2, w3",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::AddS64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A40006AB",
+            "adds x4, x5, x6",
+        ));
 
         insns.push((
             Inst::AluRRImm12 {
@@ -776,6 +820,35 @@ mod test {
             },
             "B44236CB",
             "sub x20, x21, x22, UXTW",
+        ));
+
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::Add64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::ASR,
+                    ShiftOpShiftImm::maybe_from_shift(42).unwrap(),
+                ),
+            },
+            "6AA98C8B",
+            "add x10, x11, x12, ASR 42",
+        ));
+        insns.push((
+            Inst::AluRRRShift {
+                alu_op: ALUOp::Sub32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                rm: xreg(12),
+                shiftop: ShiftOpAndAmt::new(
+                    ShiftOp::LSL,
+                    ShiftOpShiftImm::maybe_from_shift(23).unwrap(),
+                ),
+            },
+            "6A5D0C4B",
+            "sub w10, w11, w12, LSL 23",
         ));
 
         // TODO: ImmLogic forms (once logic-immediate encoding/decoding exists).

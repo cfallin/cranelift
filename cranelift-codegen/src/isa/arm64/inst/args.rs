@@ -50,7 +50,7 @@ pub struct ShiftOpShiftImm(u8);
 
 impl ShiftOpShiftImm {
     /// Maximum shift for shifted-register operands.
-    pub const MAX_SHIFT: u64 = 7;
+    pub const MAX_SHIFT: u64 = 63;
 
     /// Create a new shiftop shift amount, if possible.
     pub fn maybe_from_shift(shift: u64) -> Option<ShiftOpShiftImm> {

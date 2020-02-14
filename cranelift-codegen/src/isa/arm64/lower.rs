@@ -198,20 +198,21 @@ fn output_to_reg<'a>(ctx: Ctx<'a>, out: InsnOutput) -> Writable<Reg> {
 /// codegen the source instruction; it just uses the vreg into which the source instruction will
 /// generate its value.
 fn output_to_rse<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSE {
-    assert!(out.output <= ctx.num_outputs(out.insn));
     let insn = out.insn;
-    let op = ctx.data(out.insn).opcode();
-    let out_ty = ctx.output_ty(out.insn, out.output);
+    assert!(out.output <= ctx.num_outputs(insn));
+    let op = ctx.data(insn).opcode();
+    let out_ty = ctx.output_ty(insn, out.output);
 
     if op == Opcode::Ishl {
         let shiftee = get_input(ctx, out, 0);
-        let _shift_amt = get_input(ctx, out, 1);
+        let shift_amt = get_input(ctx, out, 1);
 
         // Can we get the shift amount as an immediate?
-        if let Some(out) = input_source(ctx, shiftee).as_output() {
-            if let Some(shiftimm) = output_to_shiftimm(ctx, out) {
-                ctx.dec_use(insn);
+        if let Some(shift_amt_out) = input_source(ctx, shift_amt).as_output() {
+            if let Some(shiftimm) = output_to_shiftimm(ctx, shift_amt_out) {
                 let reg = input_to_reg(ctx, shiftee);
+                ctx.merged(insn);
+                ctx.merged(shift_amt_out.insn);
                 return ResultRSE::RegShift(reg, ShiftOpAndAmt::new(ShiftOp::LSL, shiftimm));
             }
         }
@@ -221,24 +222,20 @@ fn output_to_rse<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSE {
     if (op == Opcode::Uextend || op == Opcode::Sextend) && out_ty == I64 {
         let sign_extend = op == Opcode::Sextend;
         let extendee = get_input(ctx, out, 0);
-        // TODO: This won't extend a value that comes from a block parameter,
-        // since it has no associated instruction.
-        if let Some(out) = input_source(ctx, extendee).as_output() {
-            let inner_ty = ctx.output_ty(out.insn, out.output);
-            if inner_ty == I32 || inner_ty == I16 || inner_ty == I8 {
-                let extendop = match (sign_extend, inner_ty) {
-                    (true, I8) => ExtendOp::SXTB,
-                    (false, I8) => ExtendOp::UXTB,
-                    (true, I16) => ExtendOp::SXTH,
-                    (false, I16) => ExtendOp::UXTH,
-                    (true, I32) => ExtendOp::SXTW,
-                    (false, I32) => ExtendOp::UXTW,
-                    _ => unreachable!(),
-                };
-                let reg = input_to_reg(ctx, extendee);
-                ctx.dec_use(insn);
-                return ResultRSE::RegExtend(reg, extendop);
-            }
+        let inner_ty = ctx.input_ty(extendee.insn, extendee.input);
+        if inner_ty == I32 || inner_ty == I16 || inner_ty == I8 {
+            let extendop = match (sign_extend, inner_ty) {
+                (true, I8) => ExtendOp::SXTB,
+                (false, I8) => ExtendOp::UXTB,
+                (true, I16) => ExtendOp::SXTH,
+                (false, I16) => ExtendOp::UXTH,
+                (true, I32) => ExtendOp::SXTW,
+                (false, I32) => ExtendOp::UXTW,
+                _ => unreachable!(),
+            };
+            let reg = input_to_reg(ctx, extendee);
+            ctx.merged(insn);
+            return ResultRSE::RegExtend(reg, extendop);
         }
     }
 
@@ -250,7 +247,7 @@ fn output_to_rse<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSE {
 fn output_to_rse_imm12<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSEImm12 {
     if let Some(imm_value) = output_to_const(ctx, out) {
         if let Some(i) = Imm12::maybe_from_u64(imm_value) {
-            ctx.dec_use(out.insn);
+            ctx.merged(out.insn);
             return ResultRSEImm12::Imm12(i);
         }
     }
@@ -262,7 +259,7 @@ fn output_to_rse_imm12<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSEImm12 {
 fn output_to_rse_immlogic<'a>(ctx: Ctx<'a>, out: InsnOutput) -> ResultRSEImmLogic {
     if let Some(imm_value) = output_to_const(ctx, out) {
         if let Some(i) = ImmLogic::maybe_from_u64(imm_value) {
-            ctx.dec_use(out.insn);
+            ctx.merged(out.insn);
             return ResultRSEImmLogic::ImmLogic(i);
         }
     }

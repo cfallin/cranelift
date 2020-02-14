@@ -11,11 +11,11 @@ use crate::ir::instructions::InstructionData;
 use crate::ir::Value;
 use crate::ir::{DataFlowGraph, Function, Inst, Opcode};
 
-/// Auxiliary data structure that counts the number of uses of any given instruction in a Function.
-///
-/// Uses of an instruction include other instructions that use its result, and an implicit use (by
-/// "the universe") if the instruction has a side-effect, such as a memory write or a possible
-/// trap.
+/// Auxiliary data structure that counts the number of uses of any given
+/// instruction in a Function. This is used during instruction selection
+/// to essentially do incremental DCE: when an instruction is no longer
+/// needed because its computation has been isel'd into another machine
+/// instruction at every use site, we can skip it.
 #[derive(Clone, Debug)]
 pub struct NumUses {
     uses: SecondaryMap<Inst, u32>,
@@ -33,10 +33,6 @@ impl NumUses {
         let mut uses = NumUses::new();
         for bb in func.layout.blocks() {
             for inst in func.layout.block_insts(bb) {
-                // A side-effecting instruction has an implicit use.
-                if has_side_effect(func, inst) {
-                    uses.add_inst(inst);
-                }
                 for arg in func.dfg.inst_args(inst) {
                     let v = func.dfg.resolve_aliases(*arg);
                     uses.add_value(&func.dfg, v);
@@ -44,10 +40,6 @@ impl NumUses {
             }
         }
         uses
-    }
-
-    fn add_inst(&mut self, inst: Inst) {
-        self.uses[inst] += 1;
     }
 
     fn add_value(&mut self, dfg: &DataFlowGraph, v: Value) {

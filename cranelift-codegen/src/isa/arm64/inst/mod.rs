@@ -47,6 +47,8 @@ pub enum ALUOp {
     Orr64,
     And32,
     And64,
+    AddS32,
+    AddS64,
     SubS32,
     SubS64,
     MAdd32, // multiply-add
@@ -789,6 +791,8 @@ impl Inst {
                 ALUOp::Orr64 => ("orr", false),
                 ALUOp::And32 => ("and", true),
                 ALUOp::And64 => ("and", false),
+                ALUOp::AddS32 => ("adds", true),
+                ALUOp::AddS64 => ("adds", false),
                 ALUOp::SubS32 => ("subs", true),
                 ALUOp::SubS64 => ("subs", false),
                 ALUOp::MAdd32 => ("madd", true),

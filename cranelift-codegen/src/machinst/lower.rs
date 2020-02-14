@@ -3,6 +3,7 @@
 //! *almost* the final machine code, except for register allocation.
 
 use crate::binemit::CodeSink;
+use crate::dce::has_side_effect;
 use crate::entity::SecondaryMap;
 use crate::ir::{Block, Function, Inst, InstructionData, Opcode, Type, Value, ValueDef};
 use crate::isa::registers::RegUnit;
@@ -30,9 +31,11 @@ pub trait LowerCtx<I> {
     fn ty(&self, ir_inst: Inst) -> Type;
     /// Emit a machine instruction.
     fn emit(&mut self, mach_inst: I);
-    /// Reduce the use-count of an IR instruction. Use this when, e.g., isel incorporates the
-    /// computation of an input instruction directly.
-    fn dec_use(&mut self, ir_inst: Inst);
+    /// Indicate that an IR instruction has been merged, and so one of its
+    /// uses is gone (replaced by uses of the instruction's inputs). This
+    /// helps the lowering algorithm to perform on-the-fly DCE, skipping over
+    /// unused instructions (such as immediates incorporated directly).
+    fn merged(&mut self, from_inst: Inst);
     /// Get the producing instruction, if any, and output number, for the `idx`th input to the
     /// given IR instruction
     fn input_inst(&self, ir_inst: Inst, idx: usize) -> Option<(Inst, usize)>;
@@ -276,13 +279,24 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                         targets.clear();
                     }
 
-                    // Of instructions that produce results, only lower instructions that have not
-                    // been marked as unused by all of their consumers.
-                    let num_results = self.f.dfg.inst_results(inst).len();
+                    // Only codegen an instruction if it either has a side
+                    // effect, or has at least one use of one of its results.
                     let num_uses = self.num_uses[inst];
-                    if num_results == 0 || num_uses > 0 {
+                    let side_effect = has_side_effect(self.f, inst);
+                    if side_effect || num_uses > 0 {
                         backend.lower(&mut self, inst);
                         self.vcode.end_ir_inst();
+                    } else {
+                        // If we're skipping the instruction, we need to dec-ref
+                        // its arguments.
+                        for arg in self.f.dfg.inst_args(inst) {
+                            match self.f.dfg.value_def(*arg) {
+                                ValueDef::Result(src_inst, _) => {
+                                    self.dec_use(src_inst);
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
             }
@@ -367,6 +381,29 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         // Now that we've emitted all instructions into the VCodeBuilder, let's build the VCode.
         self.vcode.build()
     }
+
+    /// Reduce the use-count of an IR instruction. Use this when, e.g., isel incorporates the
+    /// computation of an input instruction directly, so that input instruction has one
+    /// fewer use.
+    fn dec_use(&mut self, ir_inst: Inst) {
+        assert!(self.num_uses[ir_inst] > 0);
+        self.num_uses[ir_inst] -= 1;
+        debug!(
+            "incref: ir_inst {} now has {} uses",
+            ir_inst, self.num_uses[ir_inst]
+        );
+    }
+
+    /// Increase the use-count of an IR instruction. Use this when, e.g., isel incorporates
+    /// the computation of an input instruction directly, so that input instruction's
+    /// inputs are now used directly by the merged instruction.
+    fn inc_use(&mut self, ir_inst: Inst) {
+        self.num_uses[ir_inst] += 1;
+        debug!(
+            "decref: ir_inst {} now has {} uses",
+            ir_inst, self.num_uses[ir_inst]
+        );
+    }
 }
 
 impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
@@ -385,11 +422,25 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
         self.vcode.push(mach_inst);
     }
 
-    /// Reduce the use-count of an IR instruction. Use this when, e.g., isel incorporates the
-    /// computation of an input instruction directly.
-    fn dec_use(&mut self, ir_inst: Inst) {
-        assert!(self.num_uses[ir_inst] > 0);
-        self.num_uses[ir_inst] -= 1;
+    /// Indicate that a merge has occurred.
+    fn merged(&mut self, from_inst: Inst) {
+        debug!("merged: inst {}", from_inst);
+        // First, inc-ref all inputs of `from_inst`, because they are now used
+        // directly by `into_inst`.
+        for arg in self.f.dfg.inst_args(from_inst) {
+            match self.f.dfg.value_def(*arg) {
+                ValueDef::Result(src_inst, _) => {
+                    debug!(" -> inc-reffing src inst {}", src_inst);
+                    self.inc_use(src_inst);
+                }
+                _ => {}
+            }
+        }
+        // Then, dec-ref the merged instruction itself. It still retains references
+        // to its arguments (inc-ref'd above). If its refcount has reached zero,
+        // it will be skipped during emission and its args will be dec-ref'd at that
+        // time.
+        self.dec_use(from_inst);
     }
 
     /// Get the producing instruction, if any, and output number, for the `idx`th input to the
