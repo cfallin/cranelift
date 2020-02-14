@@ -55,27 +55,29 @@ impl SImm7Scaled {
 #[derive(Clone, Copy, Debug)]
 pub struct SImm9 {
     /// The value.
-    pub bits: i16,
+    pub value: i16,
 }
 
 impl SImm9 {
     /// Create a signed 9-bit offset from a full-range value, if possible.
     pub fn maybe_from_i64(value: i64) -> Option<SImm9> {
         if value >= -256 && value <= 255 {
-            Some(SImm9 { bits: value as i16 })
+            Some(SImm9 {
+                value: value as i16,
+            })
         } else {
             None
         }
     }
 
-    // Create a zero immediate of this format.
+    /// Create a zero immediate of this format.
     pub fn zero() -> SImm9 {
-        SImm9 { bits: 0 }
+        SImm9 { value: 0 }
     }
 
     /// Bits for encoding.
     pub fn bits(&self) -> u32 {
-        (self.bits as u32) & 0x1ff
+        (self.value as u32) & 0x1ff
     }
 }
 
@@ -104,6 +106,11 @@ impl UImm12Scaled {
         } else {
             None
         }
+    }
+
+    /// Create a zero immediate of this format.
+    pub fn zero(scale_ty: Type) -> UImm12Scaled {
+        UImm12Scaled { value: 0, scale_ty }
     }
 
     /// Encoded bits.
@@ -285,7 +292,7 @@ impl ShowWithRRU for SImm7Scaled {
 
 impl ShowWithRRU for SImm9 {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
-        format!("#{}", self.bits)
+        format!("#{}", self.value)
     }
 }
 
