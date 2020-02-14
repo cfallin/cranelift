@@ -23,10 +23,14 @@ use smallvec::SmallVec;
 use std::mem;
 use std::string::{String, ToString};
 
-pub use super::inst_args::*;
-pub use super::inst_emit::*;
-pub use super::inst_imms::*;
-pub use super::inst_regs::*;
+pub mod regs;
+pub use self::regs::*;
+pub mod imms;
+pub use self::imms::*;
+pub mod args;
+pub use self::args::*;
+pub mod emit;
+pub use self::emit::*;
 
 //=============================================================================
 // Instructions (top level): definition
