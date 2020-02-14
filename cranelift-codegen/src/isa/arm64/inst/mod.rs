@@ -8,7 +8,7 @@
 use crate::binemit::{CodeOffset, CodeSink, ConstantPoolSink, NullConstantPoolSink};
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
-use crate::ir::{ExternalName, GlobalValue, Type};
+use crate::ir::{ExternalName, GlobalValue, Opcode, Type};
 use crate::machinst::*;
 
 use regalloc::Map as RegallocMap;
@@ -86,6 +86,54 @@ pub enum VecALUOp {
     UQSubScalar, // unsigned saturating subtract
 }
 
+/// An operation on the bits of a register. This can be paired with several instruction formats
+/// below (see `Inst`) in any combination.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BitOp {
+    RBit32,
+    RBit64,
+    Clz32,
+    Clz64,
+    Cls32,
+    Cls64,
+}
+
+impl BitOp {
+    /// Is the opcode a 32-bit operation.
+    pub fn is_32_bit(&self) -> bool {
+        match self {
+            BitOp::RBit32 => true,
+            BitOp::Clz32 => true,
+            BitOp::Cls32 => true,
+            _ => false,
+        }
+    }
+
+    /// Get the assembly mnemonic for this opcode.
+    pub fn op_str(&self) -> &'static str {
+        match self {
+            BitOp::RBit32 | BitOp::RBit64 => "rbit",
+            BitOp::Clz32 | BitOp::Clz64 => "clz",
+            BitOp::Cls32 | BitOp::Cls64 => "cls",
+        }
+    }
+}
+
+impl From<(Opcode, Type)> for BitOp {
+    /// Get the BitOp from the IR opcode.
+    fn from(op_ty: (Opcode, Type)) -> BitOp {
+        match op_ty {
+            (Opcode::Bitrev, I32) => BitOp::RBit32,
+            (Opcode::Bitrev, I64) => BitOp::RBit64,
+            (Opcode::Clz, I32) => BitOp::Clz32,
+            (Opcode::Clz, I64) => BitOp::Clz64,
+            (Opcode::Cls, I32) => BitOp::Cls32,
+            (Opcode::Cls, I64) => BitOp::Cls64,
+            _ => unreachable!("Called with non-bit op!"),
+        }
+    }
+}
+
 /// Instruction formats.
 #[derive(Clone, Debug)]
 pub enum Inst {
@@ -150,6 +198,14 @@ pub enum Inst {
         rm: Reg,
         extendop: ExtendOp,
     },
+
+    /// A bit op instruction with a single register source.
+    BitRR {
+        op: BitOp,
+        rd: Writable<Reg>,
+        rn: Reg,
+    },
+
     /// An unsigned (zero-extending) 8-bit load.
     ULoad8 { rd: Writable<Reg>, mem: MemArg },
     /// A signed (sign-extending) 8-bit load.
@@ -364,6 +420,10 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.defined.insert(rd);
             iru.used.insert(rn);
             iru.used.insert(rm);
+        }
+        &Inst::BitRR { rd, rn, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
         }
         &Inst::ULoad8 { rd, ref mem, .. }
         | &Inst::SLoad8 { rd, ref mem, .. }
@@ -599,6 +659,11 @@ fn arm64_map_regs(
             rn: map(u, rn),
             rm: map(u, rm),
             extendop: extendop.clone(),
+        },
+        &mut Inst::BitRR { op, rd, rn } => Inst::BitRR {
+            op,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
         },
         &mut Inst::ULoad8 { rd, ref mem } => Inst::ULoad8 {
             rd: map_wr(d, rd),
@@ -1082,6 +1147,13 @@ impl Inst {
                 let rm = show_ireg_sized(rm, mb_rru, is32);
                 let extendop = extendop.show_rru(mb_rru);
                 format!("{} {}, {}, {}, {}", op, rd, rn, rm, extendop)
+            }
+            &Inst::BitRR { op, rd, rn } => {
+                let is32 = op.is_32_bit();
+                let op = op.op_str();
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32);
+                let rn = show_ireg_sized(rn, mb_rru, is32);
+                format!("{} {}, {}", op, rd, rn)
             }
             &Inst::ULoad8 { rd, ref mem }
             | &Inst::SLoad8 { rd, ref mem }
