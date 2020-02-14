@@ -214,6 +214,15 @@ fn enc_vec_rrr(top11: u32, rm: Reg, bit15_10: u32, rn: Reg, rd: Writable<Reg>) -
         | machreg_to_vec(rd.to_reg())
 }
 
+fn enc_bit_rr(size: u32, opcode2: u32, opcode1: u32, rn: Reg, rd: Writable<Reg>) -> u32 {
+    (0b01011010110 << 21)
+        | size << 31
+        | opcode2 << 16
+        | opcode1 << 10
+        | machreg_to_gpr(rn) << 5
+        | machreg_to_gpr(rd.to_reg())
+}
+
 impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
     fn emit(&self, sink: &mut CS, consts: &mut CPS) {
         match self {
@@ -403,6 +412,16 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                 };
                 let bits_15_10 = extendop.bits() << 3;
                 sink.put4(enc_arith_rrr(top11, bits_15_10, rd, rn, rm));
+            }
+
+            &Inst::BitRR { op, rd, rn, .. } => {
+                let size = if op.is_32_bit() { 0b0 } else { 0b1 };
+                let (op1, op2) = match op {
+                    BitOp::RBit32 | BitOp::RBit64 => (0b00000, 0b000000),
+                    BitOp::Clz32 | BitOp::Clz64 => (0b00000, 0b000100),
+                    BitOp::Cls32 | BitOp::Cls64 => (0b00000, 0b000101),
+                };
+                sink.put4(enc_bit_rr(size, op1, op2, rn, rd))
             }
 
             &Inst::ULoad8 { rd, ref mem }
@@ -1349,6 +1368,66 @@ mod test {
         ));
 
         // TODO: ImmLogic forms (once logic-immediate encoding/decoding exists).
+
+        insns.push((
+            Inst::BitRR {
+                op: BitOp::RBit32,
+                rd: writable_xreg(1),
+                rn: xreg(10),
+            },
+            "4101C05A",
+            "rbit w1, w10",
+        ));
+
+        insns.push((
+            Inst::BitRR {
+                op: BitOp::RBit64,
+                rd: writable_xreg(1),
+                rn: xreg(10),
+            },
+            "4101C0DA",
+            "rbit x1, x10",
+        ));
+
+        insns.push((
+            Inst::BitRR {
+                op: BitOp::Clz32,
+                rd: writable_xreg(15),
+                rn: xreg(3),
+            },
+            "6F10C05A",
+            "clz w15, w3",
+        ));
+
+        insns.push((
+            Inst::BitRR {
+                op: BitOp::Clz64,
+                rd: writable_xreg(15),
+                rn: xreg(3),
+            },
+            "6F10C0DA",
+            "clz x15, x3",
+        ));
+
+        insns.push((
+            Inst::BitRR {
+                op: BitOp::Cls32,
+                rd: writable_xreg(21),
+                rn: xreg(16),
+            },
+            "1516C05A",
+            "cls w21, w16",
+        ));
+
+        insns.push((
+            Inst::BitRR {
+                op: BitOp::Cls64,
+                rd: writable_xreg(21),
+                rn: xreg(16),
+            },
+            "1516C0DA",
+            "cls x21, x16",
+        ));
 
         insns.push((
             Inst::ULoad8 {

@@ -1124,12 +1124,14 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
             }
         }
 
-        Opcode::Bitrev => {
-            // TODO
-            unimplemented!()
+        Opcode::Bitrev | Opcode::Clz | Opcode::Cls => {
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let op = BitOp::from((op, ty.unwrap()));
+            ctx.emit(Inst::BitRR { rd, rn, op });
         }
 
-        Opcode::Clz | Opcode::Cls | Opcode::Ctz | Opcode::Popcnt => {
+        Opcode::Ctz | Opcode::Popcnt => {
             // TODO
             unimplemented!()
         }
@@ -1496,7 +1498,6 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
 
 //=============================================================================
 // Helpers for instruction lowering.
-
 fn ty_bits(ty: Type) -> usize {
     match ty {
         B1 => 1,
