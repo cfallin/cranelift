@@ -129,14 +129,13 @@ pub enum MemLabel {
 /// A memory argument to load/store, encapsulating the possible addressing modes.
 #[derive(Clone, Debug)]
 pub enum MemArg {
-    Base(Reg),
-    BaseSImm9(Reg, SImm9),
-    BaseUImm12Scaled(Reg, UImm12Scaled),
-    BasePlusReg(Reg, Reg),
-    BasePlusRegScaled(Reg, Reg, Type),
     Label(MemLabel),
-    PreIndexed(Writable<Reg>, SImm9),
     PostIndexed(Writable<Reg>, SImm9),
+    PreIndexed(Writable<Reg>, SImm9),
+    // TODO: Support more than LSL.
+    RegScaled(Reg, Reg, Type, bool),
+    Unscaled(Reg, SImm9),
+    UnsignedOffset(Reg, UImm12Scaled),
     /// Offset from the frame pointer.
     StackOffset(i64),
 }
@@ -144,17 +143,17 @@ pub enum MemArg {
 impl MemArg {
     /// Memory reference using an address in a register.
     pub fn reg(reg: Reg) -> MemArg {
-        MemArg::Base(reg)
+        MemArg::Unscaled(reg, SImm9::zero())
     }
 
     /// Memory reference using an address in a register and an offset, if possible.
     pub fn reg_maybe_offset(reg: Reg, offset: i64, value_type: Type) -> Option<MemArg> {
         if offset == 0 {
-            Some(MemArg::Base(reg))
+            Some(MemArg::Unscaled(reg, SImm9::zero()))
         } else if let Some(simm9) = SImm9::maybe_from_i64(offset) {
-            Some(MemArg::BaseSImm9(reg, simm9))
+            Some(MemArg::Unscaled(reg, simm9))
         } else if let Some(uimm12s) = UImm12Scaled::maybe_from_i64(offset, value_type) {
-            Some(MemArg::BaseUImm12Scaled(reg, uimm12s))
+            Some(MemArg::UnsignedOffset(reg, uimm12s))
         } else {
             None
         }
@@ -162,7 +161,7 @@ impl MemArg {
 
     /// Memory reference using the sum of two registers as an address.
     pub fn reg_reg(reg1: Reg, reg2: Reg) -> MemArg {
-        MemArg::BasePlusReg(reg1, reg2)
+        MemArg::RegScaled(reg1, reg2, I64, false)
     }
 
     /// Memory reference to a label: a global function or value, or data in the constant pool.
@@ -386,26 +385,30 @@ fn shift_for_type(ty: Type) -> usize {
 impl ShowWithRRU for MemArg {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            &MemArg::Base(reg) => format!("[{}]", reg.show_rru(mb_rru)),
-            &MemArg::BaseSImm9(reg, simm9) => {
-                format!("[{}, {}]", reg.show_rru(mb_rru), simm9.show_rru(mb_rru))
+            &MemArg::Unscaled(reg, simm9) => {
+                if simm9.value != 0 {
+                    format!("[{}, {}]", reg.show_rru(mb_rru), simm9.show_rru(mb_rru))
+                } else {
+                    format!("[{}]", reg.show_rru(mb_rru))
+                }
             }
-            &MemArg::BaseUImm12Scaled(reg, uimm12scaled) => format!(
+            &MemArg::UnsignedOffset(reg, uimm12scaled) => format!(
                 "[{}, {}]",
                 reg.show_rru(mb_rru),
                 uimm12scaled.show_rru(mb_rru)
             ),
-            &MemArg::BasePlusReg(r1, r2) => {
-                format!("[{}, {}]", r1.show_rru(mb_rru), r2.show_rru(mb_rru))
-            }
-            &MemArg::BasePlusRegScaled(r1, r2, ty) => {
-                let shift = shift_for_type(ty);
-                format!(
-                    "[{}, {}, lsl #{}]",
-                    r1.show_rru(mb_rru),
-                    r2.show_rru(mb_rru),
-                    shift,
-                )
+            &MemArg::RegScaled(r1, r2, ty, scaled) => {
+                if scaled {
+                    let shift = shift_for_type(ty);
+                    format!(
+                        "[{}, {}, lsl #{}]",
+                        r1.show_rru(mb_rru),
+                        r2.show_rru(mb_rru),
+                        shift,
+                    )
+                } else {
+                    format!("[{}, {}]", r1.show_rru(mb_rru), r2.show_rru(mb_rru),)
+                }
             }
             &MemArg::Label(ref label) => label.show_rru(mb_rru),
             &MemArg::PreIndexed(r, simm9) => format!(

@@ -296,10 +296,10 @@ impl Inst {
 
 fn memarg_regs(memarg: &MemArg, used: &mut Set<Reg>, modified: &mut Set<Writable<Reg>>) {
     match memarg {
-        &MemArg::Base(reg) | &MemArg::BaseSImm9(reg, ..) | &MemArg::BaseUImm12Scaled(reg, ..) => {
+        &MemArg::Unscaled(reg, ..) | &MemArg::UnsignedOffset(reg, ..) => {
             used.insert(reg);
         }
-        &MemArg::BasePlusReg(r1, r2) | &MemArg::BasePlusRegScaled(r1, r2, ..) => {
+        &MemArg::RegScaled(r1, r2, ..) => {
             used.insert(r1);
             used.insert(r2);
         }
@@ -488,12 +488,10 @@ fn arm64_map_regs(
         // ARM64) both read and write registers, so they are "mods" rather
         // than "defs", so must be the same in both the pre- and post-map.
         match mem {
-            &MemArg::Base(reg) => MemArg::Base(map(u, reg)),
-            &MemArg::BaseSImm9(reg, simm9) => MemArg::BaseSImm9(map(u, reg), simm9),
-            &MemArg::BaseUImm12Scaled(reg, uimm12) => MemArg::BaseUImm12Scaled(map(u, reg), uimm12),
-            &MemArg::BasePlusReg(r1, r2) => MemArg::BasePlusReg(map(u, r1), map(u, r2)),
-            &MemArg::BasePlusRegScaled(r1, r2, ty) => {
-                MemArg::BasePlusRegScaled(map(u, r1), map(u, r2), ty)
+            &MemArg::Unscaled(reg, simm9) => MemArg::Unscaled(map(u, reg), simm9),
+            &MemArg::UnsignedOffset(reg, uimm12) => MemArg::UnsignedOffset(map(u, reg), uimm12),
+            &MemArg::RegScaled(r1, r2, ty, scaled) => {
+                MemArg::RegScaled(map(u, r1), map(u, r2), ty, scaled)
             }
             &MemArg::Label(ref l) => MemArg::Label(l.clone()),
             &MemArg::PreIndexed(r, simm9) => MemArg::PreIndexed(map_wr(u, r), simm9),
@@ -1092,11 +1090,11 @@ impl Inst {
             | &Inst::ULoad64 { rd, ref mem } => {
                 let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts);
 
-                let is_unscaled_base = match &mem {
-                    &MemArg::Base(..) | &MemArg::BaseSImm9(..) => true,
+                let is_unscaled = match &mem {
+                    &MemArg::Unscaled(..) => true,
                     _ => false,
                 };
-                let (op, is32) = match (self, is_unscaled_base) {
+                let (op, is32) = match (self, is_unscaled) {
                     (&Inst::ULoad8 { .. }, false) => ("ldrb", true),
                     (&Inst::ULoad8 { .. }, true) => ("ldurb", true),
                     (&Inst::SLoad8 { .. }, false) => ("ldrsb", false),
@@ -1123,11 +1121,11 @@ impl Inst {
             | &Inst::Store64 { rd, ref mem } => {
                 let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts);
 
-                let is_unscaled_base = match &mem {
-                    &MemArg::Base(..) | &MemArg::BaseSImm9(..) => true,
+                let is_unscaled = match &mem {
+                    &MemArg::Unscaled(..) => true,
                     _ => false,
                 };
-                let (op, is32) = match (self, is_unscaled_base) {
+                let (op, is32) = match (self, is_unscaled) {
                     (&Inst::Store8 { .. }, false) => ("strb", true),
                     (&Inst::Store8 { .. }, true) => ("sturb", true),
                     (&Inst::Store16 { .. }, false) => ("strh", true),

@@ -29,7 +29,7 @@ pub fn mem_finalize<CPS: ConstantPoolSink>(
     match mem {
         &MemArg::StackOffset(fp_offset) => {
             if let Some(simm9) = SImm9::maybe_from_i64(fp_offset) {
-                let mem = MemArg::BaseSImm9(fp_reg(), simm9);
+                let mem = MemArg::Unscaled(fp_reg(), simm9);
                 (vec![], mem)
             } else {
                 let tmp = writable_spilltmp_reg();
@@ -49,7 +49,7 @@ pub fn mem_finalize<CPS: ConstantPoolSink>(
                     rn: tmp.to_reg(),
                     rm: fp_reg(),
                 };
-                (vec![const_inst, add_inst], MemArg::Base(tmp.to_reg()))
+                (vec![const_inst, add_inst], MemArg::reg(tmp.to_reg()))
             }
         }
         &MemArg::Label(MemLabel::ConstantData(ref data)) => {
@@ -422,7 +422,7 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                 let rd = rd.to_reg();
 
                 // This is the base opcode (top 10 bits) for the "unscaled
-                // immediate" form (BaseSImm9). Other addressing modes will OR in
+                // immediate" form (Unscaled). Other addressing modes will OR in
                 // other values for bits 24/25 (bits 1/2 of this constant).
                 let op = match self {
                     &Inst::ULoad8 { .. } => 0b0011100001,
@@ -435,20 +435,24 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     _ => unreachable!(),
                 };
                 match &mem {
-                    &MemArg::Base(reg) => {
-                        sink.put4(enc_ldst_simm9(op, SImm9::zero(), 0b00, reg, rd));
-                    }
-                    &MemArg::BaseSImm9(reg, simm9) => {
+                    &MemArg::Unscaled(reg, simm9) => {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b00, reg, rd));
                     }
-                    &MemArg::BaseUImm12Scaled(reg, uimm12scaled) => {
+                    &MemArg::UnsignedOffset(reg, uimm12scaled) => {
                         sink.put4(enc_ldst_uimm12(op | 0b101, uimm12scaled, reg, rd));
                     }
-                    &MemArg::BasePlusReg(r1, r2) => {
-                        sink.put4(enc_ldst_reg(op | 0b01, r1, r2, /* S = */ false, rd));
-                    }
-                    &MemArg::BasePlusRegScaled(r1, r2, _ty) => {
-                        sink.put4(enc_ldst_reg(op | 0b01, r1, r2, /* S = */ true, rd));
+                    &MemArg::RegScaled(r1, r2, ty, scaled) => {
+                        match (ty, self) {
+                            (I8, &Inst::ULoad8 { .. }) => {}
+                            (I8, &Inst::SLoad8 { .. }) => {}
+                            (I16, &Inst::ULoad16 { .. }) => {}
+                            (I16, &Inst::SLoad16 { .. }) => {}
+                            (I32, &Inst::ULoad32 { .. }) => {}
+                            (I32, &Inst::SLoad32 { .. }) => {}
+                            (I64, &Inst::ULoad64 { .. }) => {}
+                            _ => unreachable!(),
+                        }
+                        sink.put4(enc_ldst_reg(op | 0b01, r1, r2, scaled, rd));
                     }
                     &MemArg::Label(ref label) => {
                         let offset = match label {
@@ -501,20 +505,14 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     _ => unreachable!(),
                 };
                 match &mem {
-                    &MemArg::Base(reg) => {
-                        sink.put4(enc_ldst_simm9(op, SImm9::zero(), 0b00, reg, rd));
-                    }
-                    &MemArg::BaseSImm9(reg, simm9) => {
+                    &MemArg::Unscaled(reg, simm9) => {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b00, reg, rd));
                     }
-                    &MemArg::BaseUImm12Scaled(reg, uimm12scaled) => {
+                    &MemArg::UnsignedOffset(reg, uimm12scaled) => {
                         sink.put4(enc_ldst_uimm12(op | 0b100, uimm12scaled, reg, rd));
                     }
-                    &MemArg::BasePlusReg(r1, r2) => {
-                        sink.put4(enc_ldst_reg(op, r1, r2, /* S = */ false, rd));
-                    }
-                    &MemArg::BasePlusRegScaled(r1, r2, _ty) => {
-                        sink.put4(enc_ldst_reg(op, r1, r2, /* S = */ true, rd));
+                    &MemArg::RegScaled(r1, r2, _ty, scaled) => {
+                        sink.put4(enc_ldst_reg(op, r1, r2, scaled, rd));
                     }
                     &MemArg::Label(..) => {
                         panic!("Store to a constant-pool entry not allowed!");
@@ -1353,7 +1351,7 @@ mod test {
         insns.push((
             Inst::ULoad8 {
                 rd: writable_xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "41004038",
             "ldurb w1, [x2]",
@@ -1361,7 +1359,7 @@ mod test {
         insns.push((
             Inst::SLoad8 {
                 rd: writable_xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "41008038",
             "ldursb x1, [x2]",
@@ -1369,7 +1367,7 @@ mod test {
         insns.push((
             Inst::ULoad16 {
                 rd: writable_xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "41004078",
             "ldurh w1, [x2]",
@@ -1377,7 +1375,7 @@ mod test {
         insns.push((
             Inst::SLoad16 {
                 rd: writable_xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "41008078",
             "ldursh x1, [x2]",
@@ -1385,7 +1383,7 @@ mod test {
         insns.push((
             Inst::ULoad32 {
                 rd: writable_xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "410040B8",
             "ldur w1, [x2]",
@@ -1393,7 +1391,7 @@ mod test {
         insns.push((
             Inst::SLoad32 {
                 rd: writable_xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "410080B8",
             "ldursw x1, [x2]",
@@ -1401,7 +1399,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "410040F8",
             "ldur x1, [x2]",
@@ -1409,7 +1407,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::BaseSImm9(xreg(2), SImm9::maybe_from_i64(-256).unwrap()),
+                mem: MemArg::Unscaled(xreg(2), SImm9::maybe_from_i64(-256).unwrap()),
             },
             "410050F8",
             "ldur x1, [x2, #-256]",
@@ -1417,7 +1415,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::BaseSImm9(xreg(2), SImm9::maybe_from_i64(255).unwrap()),
+                mem: MemArg::Unscaled(xreg(2), SImm9::maybe_from_i64(255).unwrap()),
             },
             "41F04FF8",
             "ldur x1, [x2, #255]",
@@ -1425,7 +1423,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::BaseUImm12Scaled(
+                mem: MemArg::UnsignedOffset(
                     xreg(2),
                     UImm12Scaled::maybe_from_i64(32760, I64).unwrap(),
                 ),
@@ -1436,7 +1434,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::BasePlusReg(xreg(2), xreg(3)),
+                mem: MemArg::RegScaled(xreg(2), xreg(3), I64, false),
             },
             "416863F8",
             "ldr x1, [x2, x3]",
@@ -1444,7 +1442,7 @@ mod test {
         insns.push((
             Inst::ULoad64 {
                 rd: writable_xreg(1),
-                mem: MemArg::BasePlusRegScaled(xreg(2), xreg(3), I64),
+                mem: MemArg::RegScaled(xreg(2), xreg(3), I64, true),
             },
             "417863F8",
             "ldr x1, [x2, x3, lsl #3]",
@@ -1493,7 +1491,7 @@ mod test {
         insns.push((
             Inst::Store8 {
                 rd: xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "41000038",
             "sturb w1, [x2]",
@@ -1501,7 +1499,7 @@ mod test {
         insns.push((
             Inst::Store8 {
                 rd: xreg(1),
-                mem: MemArg::BaseUImm12Scaled(
+                mem: MemArg::UnsignedOffset(
                     xreg(2),
                     UImm12Scaled::maybe_from_i64(4095, I8).unwrap(),
                 ),
@@ -1512,7 +1510,7 @@ mod test {
         insns.push((
             Inst::Store16 {
                 rd: xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "41000078",
             "sturh w1, [x2]",
@@ -1520,7 +1518,7 @@ mod test {
         insns.push((
             Inst::Store16 {
                 rd: xreg(1),
-                mem: MemArg::BaseUImm12Scaled(
+                mem: MemArg::UnsignedOffset(
                     xreg(2),
                     UImm12Scaled::maybe_from_i64(8190, I16).unwrap(),
                 ),
@@ -1531,7 +1529,7 @@ mod test {
         insns.push((
             Inst::Store32 {
                 rd: xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "410000B8",
             "stur w1, [x2]",
@@ -1539,7 +1537,7 @@ mod test {
         insns.push((
             Inst::Store32 {
                 rd: xreg(1),
-                mem: MemArg::BaseUImm12Scaled(
+                mem: MemArg::UnsignedOffset(
                     xreg(2),
                     UImm12Scaled::maybe_from_i64(16380, I32).unwrap(),
                 ),
@@ -1550,7 +1548,7 @@ mod test {
         insns.push((
             Inst::Store64 {
                 rd: xreg(1),
-                mem: MemArg::Base(xreg(2)),
+                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "410000F8",
             "stur x1, [x2]",
@@ -1558,7 +1556,7 @@ mod test {
         insns.push((
             Inst::Store64 {
                 rd: xreg(1),
-                mem: MemArg::BaseUImm12Scaled(
+                mem: MemArg::UnsignedOffset(
                     xreg(2),
                     UImm12Scaled::maybe_from_i64(32760, I64).unwrap(),
                 ),
@@ -1569,7 +1567,7 @@ mod test {
         insns.push((
             Inst::Store64 {
                 rd: xreg(1),
-                mem: MemArg::BasePlusReg(xreg(2), xreg(3)),
+                mem: MemArg::RegScaled(xreg(2), xreg(3), I64, false),
             },
             "416823F8",
             "str x1, [x2, x3]",
@@ -1577,7 +1575,7 @@ mod test {
         insns.push((
             Inst::Store64 {
                 rd: xreg(1),
-                mem: MemArg::BasePlusRegScaled(xreg(2), xreg(3), I64),
+                mem: MemArg::RegScaled(xreg(2), xreg(3), I64, true),
             },
             "417823F8",
             "str x1, [x2, x3, lsl #3]",

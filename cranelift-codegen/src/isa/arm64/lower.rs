@@ -570,7 +570,7 @@ fn lower_address<'a, C: LowerCtx<Inst>>(
     if addends.len() == 2 && offset == 0 {
         let ra = input_to_reg(ctx, addends[0], NarrowValueMode::ZeroExtend64);
         let rb = input_to_reg(ctx, addends[1], NarrowValueMode::ZeroExtend64);
-        return MemArg::BasePlusReg(ra, rb);
+        return MemArg::reg_reg(ra, rb);
     }
 
     // Otherwise, generate add instructions.
@@ -590,7 +590,7 @@ fn lower_address<'a, C: LowerCtx<Inst>>(
         });
     }
 
-    MemArg::Base(addr.to_reg())
+    MemArg::reg(addr.to_reg())
 }
 
 fn lower_constant<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, rd: Writable<Reg>, value: u64) {
