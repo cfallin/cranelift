@@ -18,6 +18,10 @@ use regalloc::RealRegUniverse;
 // New backend:
 mod abi;
 mod inst;
+mod inst_args;
+mod inst_emit;
+mod inst_imms;
+mod inst_regs;
 mod lower;
 
 use inst::create_reg_universe;
