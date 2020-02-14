@@ -1,10 +1,22 @@
 TODO:
 
+- NumUses rework
+  - inc_ref as well. When we merge, inc_ref the inputs.
+  - when we skip an insn due to zero uses, dec_ref its inputs.
+  - don't count a side-effect as a magical use; track side-effects separately.
+
+- Split up isa/arm64/inst.rs.
+  - imms, args, enum Inst, fn emit(), tests
+
+- Figure out the legalization story
+  - Run (some of) the legalization passes prior to our isel
+  - Ensure that no I8/I16 values remain: only {I32, I64, F32, F64, vectors}.
+  - Document which opcodes should for sure not appear in legalized code.
+
 - ISA completeness:
   - ImmLogic: implement the algorithm to determine whether an immediate can be
     encoded as a logical immediate.
   - Add opcodes to lowering. Full integer/ALU instruction set.
-  - 8/16-bit ops? Widening for legalization?
 
 - Lowering tests
   - Make sure all (non-vector) filetests can compile

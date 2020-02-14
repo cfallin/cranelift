@@ -426,6 +426,14 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
         None
     };
 
+    // TODO: legalize smaller integer types to larger ones before lowering.
+    if let Some(ty) = ty {
+        assert!(ty == I32 || ty == I64 || ty == B1);
+        // TODO: FP and vector types.
+        // TODO: I8, I16
+        // TODO: B8, B16, B32, B64
+    }
+
     match op {
         Opcode::Iconst | Opcode::Bconst | Opcode::F32const | Opcode::F64const | Opcode::Null => {
             let value = output_to_const(ctx, outputs[0]).unwrap();
@@ -450,7 +458,8 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
         }
 
         Opcode::UaddSat | Opcode::SaddSat => {
-            // TODO
+            // TODO: open-code a sequence: adds, then branch-on-no-overflow
+            // over a load of the saturated value.
         }
 
         Opcode::UsubSat | Opcode::SsubSat => {
@@ -458,14 +467,31 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
         }
 
         Opcode::Ineg => {
-            // TODO
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rn = zero_reg();
+            let rm = input_to_reg(ctx, inputs[0]);
+            let ty = ty.unwrap();
+            let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
+            ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
         }
 
         Opcode::Imul => {
-            // TODO
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rn = input_to_reg(ctx, inputs[0]);
+            let rm = input_to_reg(ctx, inputs[1]);
+            let ty = ty.unwrap();
+            let alu_op = choose_32_64(ty, ALUOp::MAdd32, ALUOp::MAdd64);
+            ctx.emit(Inst::AluRRRR {
+                alu_op,
+                rd,
+                rn,
+                rm,
+                ra: zero_reg(),
+            });
         }
 
         Opcode::Umulhi | Opcode::Smulhi => {
+            let _ty = ty.unwrap();
             // TODO
         }
 

@@ -842,6 +842,8 @@ pub enum ALUOp {
     And64,
     SubS32,
     SubS64,
+    MAdd32, // multiply-add
+    MAdd64,
 }
 
 /// Instruction formats.
@@ -859,6 +861,14 @@ pub enum Inst {
         rd: Writable<Reg>,
         rn: Reg,
         rm: Reg,
+    },
+    /// An ALU operation with three register sources and a register destination.
+    AluRRRR {
+        alu_op: ALUOp,
+        rd: Writable<Reg>,
+        rn: Reg,
+        rm: Reg,
+        ra: Reg,
     },
     /// An ALU operation with a register source and an immediate-12 source, and a register
     /// destination.
@@ -1044,6 +1054,12 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.used.insert(rn);
             iru.used.insert(rm);
         }
+        &Inst::AluRRRR { rd, rn, rm, ra, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+            iru.used.insert(rm);
+            iru.used.insert(ra);
+        }
         &Inst::AluRRImm12 { rd, rn, .. } => {
             iru.defined.insert(rd);
             iru.used.insert(rn);
@@ -1194,6 +1210,19 @@ fn arm64_map_regs(
             rd: map_wr(d, rd),
             rn: map(u, rn),
             rm: map(u, rm),
+        },
+        &mut Inst::AluRRRR {
+            alu_op,
+            rd,
+            rn,
+            rm,
+            ra,
+        } => Inst::AluRRRR {
+            alu_op,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+            rm: map(u, rm),
+            ra: map(u, ra),
         },
         &mut Inst::AluRRImm12 {
             alu_op,
@@ -1528,8 +1557,16 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     ALUOp::And64 => 0b10001010_000,
                     ALUOp::SubS32 => 0b01101011_000,
                     ALUOp::SubS64 => 0b11101011_000,
+                    ALUOp::MAdd32 | ALUOp::MAdd64 => {
+                        // multiply-add is of form RRRR (three-source).
+                        panic!("Bad ALUOp in RRR form!");
+                    }
                 };
                 sink.put4(enc_arith_rrr(top11, 0b000_000, rd, rn, rm));
+            }
+            &Inst::AluRRRR { .. } => {
+                // TODO.
+                unimplemented!();
             }
             &Inst::AluRRImm12 {
                 alu_op,
@@ -2208,6 +2245,8 @@ impl Inst {
                 ALUOp::And64 => ("and", false),
                 ALUOp::SubS32 => ("subs", true),
                 ALUOp::SubS64 => ("subs", false),
+                ALUOp::MAdd32 => ("madd", true),
+                ALUOp::MAdd64 => ("madd", false),
             }
         }
 
@@ -2220,6 +2259,20 @@ impl Inst {
                 let rn = show_ireg_sized(rn, mb_rru, is32);
                 let rm = show_ireg_sized(rm, mb_rru, is32);
                 format!("{} {}, {}, {}", op, rd, rn, rm)
+            }
+            &Inst::AluRRRR {
+                alu_op,
+                rd,
+                rn,
+                rm,
+                ra,
+            } => {
+                let (op, is32) = op_is32(alu_op);
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32);
+                let rn = show_ireg_sized(rn, mb_rru, is32);
+                let rm = show_ireg_sized(rm, mb_rru, is32);
+                let ra = show_ireg_sized(ra, mb_rru, is32);
+                format!("{} {}, {}, {}, {}", op, rd, rn, rm, ra)
             }
             &Inst::AluRRImm12 {
                 alu_op,
