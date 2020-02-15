@@ -1,8 +1,13 @@
 TODO:
 
-- Figure out the legalization story
-  - Run (some of) the legalization passes prior to our isel
-  - Ensure that no I8/I16 values remain: only {I32, I64, F32, F64, vectors}.
+- Legalization
+  - see cranelift-codegen/meta/src/shared/legalize.rs
+  - instructions: global_value, heap_addr, table_addr, trapz, trapnz, br_table,
+                  select, fconst, stack_load, stack_store
+  - widening: I8, I16
+    - see signed-divide and bit ops for special cases
+  - narrowing: I128
+
   - Document which opcodes should for sure not appear in legalized code.
 
 - ISA completeness:
@@ -17,7 +22,6 @@ TODO:
     - add128 / add-with-carry
     - conditional select?
     - bit ops
-    - built-in shifts, extends
     - multiply-add / multiply-subtract
     - address of global (with relos)
 
@@ -28,6 +32,10 @@ TODO:
 
 - Binary emission
   - Resolve relocations: GlobalValue, Function (multiple-insn seq for address?)
+
+- Calling conventions for non-SysV cases
+  - Wasm: take implicit VMContext argument
+  - audit for others
 
 - Limits (handle gracefully / return error from lowering)
   - Jump offsets (19, 26-bit forms)
