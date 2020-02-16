@@ -249,10 +249,30 @@ fn info_RBP() -> (RealReg, String) {
 }
 
 // For external consumption.  It's probably important that LLVM optimises
-// these into a constant.
+// these into a 32-bit constant.  That will require sprinkling a bunch of
+// inline-always pragmas around the place.
+pub fn reg_RAX() -> Reg {
+    info_RAX().0.to_reg()
+}
 pub fn reg_RCX() -> Reg {
     info_RCX().0.to_reg()
 }
+pub fn reg_RDX() -> Reg {
+    info_RDX().0.to_reg()
+}
+pub fn reg_RDI() -> Reg {
+    info_RDI().0.to_reg()
+}
+pub fn reg_RSI() -> Reg {
+    info_RSI().0.to_reg()
+}
+pub fn reg_R8() -> Reg {
+    info_R8().0.to_reg()
+}
+pub fn reg_R9() -> Reg {
+    info_R9().0.to_reg()
+}
+
 pub fn reg_RSP() -> Reg {
     info_RSP().0.to_reg()
 }
@@ -377,7 +397,10 @@ fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: u8) -> Stri
 }
 
 //=============================================================================
-// Instruction sub-components: definitions and printing
+// Instruction sub-components (aka "parts"): definitions and printing
+
+// Don't build these directly.  Instead use the ip_* functions to create them.
+// "ip_" stands for "instruction part".
 
 // A Memory Address.  These denote a 64-bit value only.
 #[derive(Clone)]
@@ -395,11 +418,11 @@ pub enum Addr {
         shift: u8, /* 0 .. 3 only */
     },
 }
-pub fn Addr_IR(simm32: u32, base: Reg) -> Addr {
+pub fn ip_Addr_IR(simm32: u32, base: Reg) -> Addr {
     debug_assert!(base.get_class() == RegClass::I64);
     Addr::IR { simm32, base }
 }
-pub fn Addr_IRRS(simm32: u32, base: Reg, index: Reg, shift: u8) -> Addr {
+pub fn ip_Addr_IRRS(simm32: u32, base: Reg, index: Reg, shift: u8) -> Addr {
     debug_assert!(base.get_class() == RegClass::I64);
     debug_assert!(index.get_class() == RegClass::I64);
     debug_assert!(shift <= 3);
@@ -441,14 +464,14 @@ pub enum RMI {
     M { addr: Addr },
     I { simm32: u32 },
 }
-pub fn RMI_R(reg: Reg) -> RMI {
+pub fn ip_RMI_R(reg: Reg) -> RMI {
     debug_assert!(reg.get_class() == RegClass::I64);
     RMI::R { reg }
 }
-pub fn RMI_M(addr: Addr) -> RMI {
+pub fn ip_RMI_M(addr: Addr) -> RMI {
     RMI::M { addr }
 }
-pub fn RMI_I(simm32: u32) -> RMI {
+pub fn ip_RMI_I(simm32: u32) -> RMI {
     RMI::I { simm32 }
 }
 impl ShowWithRRU for RMI {
@@ -471,11 +494,11 @@ pub enum RM {
     R { reg: Reg },
     M { addr: Addr },
 }
-pub fn RM_R(reg: Reg) -> RM {
+pub fn ip_RM_R(reg: Reg) -> RM {
     debug_assert!(reg.get_class() == RegClass::I64);
     RM::R { reg }
 }
-pub fn RM_M(addr: Addr) -> RM {
+pub fn ip_RM_M(addr: Addr) -> RM {
     RM::M { addr }
 }
 impl ShowWithRRU for RM {
@@ -601,6 +624,9 @@ impl fmt::Debug for CC {
 //=============================================================================
 // Instructions (top level): definition
 
+// Don't build these directly.  Instead use the i_* functions to create them.
+// "i_" stands for "instruction".
+
 /// Instructions.  Destinations are on the RIGHT (a la AT&T syntax).
 #[derive(Clone)]
 pub enum Inst {
@@ -716,7 +742,7 @@ fn low8willSXto64(x: u32) -> bool {
     let xs = (x as i32) as i64;
     xs == ((xs << 56) >> 56)
 }
-fn low32willSXto64(x: u64) -> bool {
+pub fn low32willSXto64(x: u64) -> bool {
     let xs = x as i64;
     xs == ((xs << 32) >> 32)
 }
@@ -729,12 +755,14 @@ fn low8willSXto32(x: u32) -> bool {
     xs == ((xs << 24) >> 24)
 }
 
-pub fn i_Alu_RMI_R(is64: bool, op: RMI_R_Op, src: RMI, dst: Reg) -> Inst {
+pub fn i_Alu_RMI_R(is64: bool, op: RMI_R_Op, src: RMI, wdst: Writable<Reg>) -> Inst {
+    let dst = wdst.to_reg();
     debug_assert!(dst.get_class() == RegClass::I64);
     Inst::Alu_RMI_R { is64, op, src, dst }
 }
 
-pub fn i_Imm_R(dstIs64: bool, simm64: u64, dst: Reg) -> Inst {
+pub fn i_Imm_R(dstIs64: bool, simm64: u64, wdst: Writable<Reg>) -> Inst {
+    let dst = wdst.to_reg();
     debug_assert!(dst.get_class() == RegClass::I64);
     if !dstIs64 {
         debug_assert!(low32willSXto64(simm64));
@@ -746,23 +774,27 @@ pub fn i_Imm_R(dstIs64: bool, simm64: u64, dst: Reg) -> Inst {
     }
 }
 
-pub fn i_Mov_R_R(is64: bool, src: Reg, dst: Reg) -> Inst {
+pub fn i_Mov_R_R(is64: bool, src: Reg, wdst: Writable<Reg>) -> Inst {
+    let dst = wdst.to_reg();
     debug_assert!(src.get_class() == RegClass::I64);
     debug_assert!(dst.get_class() == RegClass::I64);
     Inst::Mov_R_R { is64, src, dst }
 }
 
-pub fn i_MovZX_M_R(extMode: ExtMode, addr: Addr, dst: Reg) -> Inst {
+pub fn i_MovZX_M_R(extMode: ExtMode, addr: Addr, wdst: Writable<Reg>) -> Inst {
+    let dst = wdst.to_reg();
     debug_assert!(dst.get_class() == RegClass::I64);
     Inst::MovZX_M_R { extMode, addr, dst }
 }
 
-pub fn i_Mov64_M_R(addr: Addr, dst: Reg) -> Inst {
+pub fn i_Mov64_M_R(addr: Addr, wdst: Writable<Reg>) -> Inst {
+    let dst = wdst.to_reg();
     debug_assert!(dst.get_class() == RegClass::I64);
     Inst::Mov64_M_R { addr, dst }
 }
 
-pub fn i_MovSX_M_R(extMode: ExtMode, addr: Addr, dst: Reg) -> Inst {
+pub fn i_MovSX_M_R(extMode: ExtMode, addr: Addr, wdst: Writable<Reg>) -> Inst {
+    let dst = wdst.to_reg();
     debug_assert!(dst.get_class() == RegClass::I64);
     Inst::MovSX_M_R { extMode, addr, dst }
 }
@@ -781,8 +813,9 @@ pub fn i_Shift_R(
     is64: bool,
     kind: ShiftKind,
     nBits: u8, // 1 .. #bits-in-type - 1, or 0 to mean "%cl"
-    dst: Reg,
+    wdst: Writable<Reg>,
 ) -> Inst {
+    let dst = wdst.to_reg();
     debug_assert!(nBits < if is64 { 64 } else { 32 });
     debug_assert!(dst.get_class() == RegClass::I64);
     Inst::Shift_R {
@@ -2093,7 +2126,14 @@ impl MachInst for Inst {
     }
 
     fn is_term(&self) -> MachTerminator {
-        unimplemented!()
+        match self {
+            &Inst::Ret {} => MachTerminator::Ret,
+            &Inst::Mov_R_R { .. } => MachTerminator::None,
+            _ => {
+                println!("QQQQ {}", self.show_rru(None));
+                unimplemented!()
+            }
+        }
     }
 
     fn gen_move(_to_reg: Writable<Reg>, _from_reg: Reg) -> Inst {
@@ -2183,6 +2223,24 @@ fn test_x64_insn_encoding_and_printing() {
     let r14 = info_R14().0.to_reg();
     let r15 = info_R15().0.to_reg();
 
+    // And Writable<> versions of the same:
+    let _w_rax = Writable::<Reg>::from_reg(info_RAX().0.to_reg());
+    let w_rbx = Writable::<Reg>::from_reg(info_RBX().0.to_reg());
+    let w_rcx = Writable::<Reg>::from_reg(info_RCX().0.to_reg());
+    let w_rdx = Writable::<Reg>::from_reg(info_RDX().0.to_reg());
+    let w_rsi = Writable::<Reg>::from_reg(info_RSI().0.to_reg());
+    let w_rdi = Writable::<Reg>::from_reg(info_RDI().0.to_reg());
+    let _w_rsp = Writable::<Reg>::from_reg(info_RSP().0.to_reg());
+    let _w_rbp = Writable::<Reg>::from_reg(info_RBP().0.to_reg());
+    let w_r8 = Writable::<Reg>::from_reg(info_R8().0.to_reg());
+    let w_r9 = Writable::<Reg>::from_reg(info_R9().0.to_reg());
+    let _w_r10 = Writable::<Reg>::from_reg(info_R10().0.to_reg());
+    let w_r11 = Writable::<Reg>::from_reg(info_R11().0.to_reg());
+    let w_r12 = Writable::<Reg>::from_reg(info_R12().0.to_reg());
+    let w_r13 = Writable::<Reg>::from_reg(info_R13().0.to_reg());
+    let w_r14 = Writable::<Reg>::from_reg(info_R14().0.to_reg());
+    let _w_r15 = Writable::<Reg>::from_reg(info_R15().0.to_reg());
+
     let mut insns = Vec::<(Inst, &str, &str)>::new();
 
     // ========================================================
@@ -2193,82 +2251,82 @@ fn test_x64_insn_encoding_and_printing() {
     //
     // Addr_IR, offset zero
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, rax), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, rax), w_rdi),
         "488B38",
         "movq    0(%rax), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, rbx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, rbx), w_rdi),
         "488B3B",
         "movq    0(%rbx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, rcx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, rcx), w_rdi),
         "488B39",
         "movq    0(%rcx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, rdx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, rdx), w_rdi),
         "488B3A",
         "movq    0(%rdx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, rbp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, rbp), w_rdi),
         "488B7D00",
         "movq    0(%rbp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, rsp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, rsp), w_rdi),
         "488B3C24",
         "movq    0(%rsp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, rsi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, rsi), w_rdi),
         "488B3E",
         "movq    0(%rsi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, rdi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, rdi), w_rdi),
         "488B3F",
         "movq    0(%rdi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, r8), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, r8), w_rdi),
         "498B38",
         "movq    0(%r8), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, r9), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, r9), w_rdi),
         "498B39",
         "movq    0(%r9), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, r10), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, r10), w_rdi),
         "498B3A",
         "movq    0(%r10), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, r11), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, r11), w_rdi),
         "498B3B",
         "movq    0(%r11), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, r12), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, r12), w_rdi),
         "498B3C24",
         "movq    0(%r12), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, r13), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, r13), w_rdi),
         "498B7D00",
         "movq    0(%r13), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, r14), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, r14), w_rdi),
         "498B3E",
         "movq    0(%r14), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0, r15), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0, r15), w_rdi),
         "498B3F",
         "movq    0(%r15), %rdi",
     ));
@@ -2276,82 +2334,82 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Addr_IR, offset max simm8
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, rax), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, rax), w_rdi),
         "488B787F",
         "movq    127(%rax), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, rbx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, rbx), w_rdi),
         "488B7B7F",
         "movq    127(%rbx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, rcx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, rcx), w_rdi),
         "488B797F",
         "movq    127(%rcx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, rdx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, rdx), w_rdi),
         "488B7A7F",
         "movq    127(%rdx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, rbp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, rbp), w_rdi),
         "488B7D7F",
         "movq    127(%rbp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, rsp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, rsp), w_rdi),
         "488B7C247F",
         "movq    127(%rsp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, rsi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, rsi), w_rdi),
         "488B7E7F",
         "movq    127(%rsi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, rdi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, rdi), w_rdi),
         "488B7F7F",
         "movq    127(%rdi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, r8), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, r8), w_rdi),
         "498B787F",
         "movq    127(%r8), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, r9), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, r9), w_rdi),
         "498B797F",
         "movq    127(%r9), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, r10), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, r10), w_rdi),
         "498B7A7F",
         "movq    127(%r10), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, r11), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, r11), w_rdi),
         "498B7B7F",
         "movq    127(%r11), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, r12), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, r12), w_rdi),
         "498B7C247F",
         "movq    127(%r12), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, r13), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, r13), w_rdi),
         "498B7D7F",
         "movq    127(%r13), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, r14), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, r14), w_rdi),
         "498B7E7F",
         "movq    127(%r14), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(127, r15), rdi),
+        i_Mov64_M_R(ip_Addr_IR(127, r15), w_rdi),
         "498B7F7F",
         "movq    127(%r15), %rdi",
     ));
@@ -2359,82 +2417,82 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Addr_IR, offset min simm8
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, rax), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, rax), w_rdi),
         "488B7880",
         "movq    -128(%rax), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, rbx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, rbx), w_rdi),
         "488B7B80",
         "movq    -128(%rbx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, rcx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, rcx), w_rdi),
         "488B7980",
         "movq    -128(%rcx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, rdx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, rdx), w_rdi),
         "488B7A80",
         "movq    -128(%rdx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, rbp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, rbp), w_rdi),
         "488B7D80",
         "movq    -128(%rbp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, rsp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, rsp), w_rdi),
         "488B7C2480",
         "movq    -128(%rsp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, rsi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, rsi), w_rdi),
         "488B7E80",
         "movq    -128(%rsi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, rdi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, rdi), w_rdi),
         "488B7F80",
         "movq    -128(%rdi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, r8), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, r8), w_rdi),
         "498B7880",
         "movq    -128(%r8), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, r9), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, r9), w_rdi),
         "498B7980",
         "movq    -128(%r9), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, r10), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, r10), w_rdi),
         "498B7A80",
         "movq    -128(%r10), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, r11), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, r11), w_rdi),
         "498B7B80",
         "movq    -128(%r11), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, r12), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, r12), w_rdi),
         "498B7C2480",
         "movq    -128(%r12), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, r13), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, r13), w_rdi),
         "498B7D80",
         "movq    -128(%r13), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, r14), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, r14), w_rdi),
         "498B7E80",
         "movq    -128(%r14), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-128i32 as u32, r15), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-128i32 as u32, r15), w_rdi),
         "498B7F80",
         "movq    -128(%r15), %rdi",
     ));
@@ -2442,82 +2500,82 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Addr_IR, offset smallest positive simm32
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, rax), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, rax), w_rdi),
         "488BB880000000",
         "movq    128(%rax), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, rbx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, rbx), w_rdi),
         "488BBB80000000",
         "movq    128(%rbx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, rcx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, rcx), w_rdi),
         "488BB980000000",
         "movq    128(%rcx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, rdx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, rdx), w_rdi),
         "488BBA80000000",
         "movq    128(%rdx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, rbp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, rbp), w_rdi),
         "488BBD80000000",
         "movq    128(%rbp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, rsp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, rsp), w_rdi),
         "488BBC2480000000",
         "movq    128(%rsp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, rsi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, rsi), w_rdi),
         "488BBE80000000",
         "movq    128(%rsi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, rdi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, rdi), w_rdi),
         "488BBF80000000",
         "movq    128(%rdi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, r8), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, r8), w_rdi),
         "498BB880000000",
         "movq    128(%r8), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, r9), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, r9), w_rdi),
         "498BB980000000",
         "movq    128(%r9), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, r10), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, r10), w_rdi),
         "498BBA80000000",
         "movq    128(%r10), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, r11), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, r11), w_rdi),
         "498BBB80000000",
         "movq    128(%r11), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, r12), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, r12), w_rdi),
         "498BBC2480000000",
         "movq    128(%r12), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, r13), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, r13), w_rdi),
         "498BBD80000000",
         "movq    128(%r13), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, r14), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, r14), w_rdi),
         "498BBE80000000",
         "movq    128(%r14), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(128, r15), rdi),
+        i_Mov64_M_R(ip_Addr_IR(128, r15), w_rdi),
         "498BBF80000000",
         "movq    128(%r15), %rdi",
     ));
@@ -2525,82 +2583,82 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Addr_IR, offset smallest negative simm32
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, rax), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, rax), w_rdi),
         "488BB87FFFFFFF",
         "movq    -129(%rax), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, rbx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, rbx), w_rdi),
         "488BBB7FFFFFFF",
         "movq    -129(%rbx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, rcx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, rcx), w_rdi),
         "488BB97FFFFFFF",
         "movq    -129(%rcx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, rdx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, rdx), w_rdi),
         "488BBA7FFFFFFF",
         "movq    -129(%rdx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, rbp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, rbp), w_rdi),
         "488BBD7FFFFFFF",
         "movq    -129(%rbp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, rsp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, rsp), w_rdi),
         "488BBC247FFFFFFF",
         "movq    -129(%rsp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, rsi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, rsi), w_rdi),
         "488BBE7FFFFFFF",
         "movq    -129(%rsi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, rdi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, rdi), w_rdi),
         "488BBF7FFFFFFF",
         "movq    -129(%rdi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, r8), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, r8), w_rdi),
         "498BB87FFFFFFF",
         "movq    -129(%r8), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, r9), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, r9), w_rdi),
         "498BB97FFFFFFF",
         "movq    -129(%r9), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, r10), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, r10), w_rdi),
         "498BBA7FFFFFFF",
         "movq    -129(%r10), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, r11), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, r11), w_rdi),
         "498BBB7FFFFFFF",
         "movq    -129(%r11), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, r12), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, r12), w_rdi),
         "498BBC247FFFFFFF",
         "movq    -129(%r12), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, r13), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, r13), w_rdi),
         "498BBD7FFFFFFF",
         "movq    -129(%r13), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, r14), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, r14), w_rdi),
         "498BBE7FFFFFFF",
         "movq    -129(%r14), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-129i32 as u32, r15), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-129i32 as u32, r15), w_rdi),
         "498BBF7FFFFFFF",
         "movq    -129(%r15), %rdi",
     ));
@@ -2608,82 +2666,82 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Addr_IR, offset large positive simm32
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, rax), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, rax), w_rdi),
         "488BB877207317",
         "movq    393420919(%rax), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, rbx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, rbx), w_rdi),
         "488BBB77207317",
         "movq    393420919(%rbx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, rcx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, rcx), w_rdi),
         "488BB977207317",
         "movq    393420919(%rcx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, rdx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, rdx), w_rdi),
         "488BBA77207317",
         "movq    393420919(%rdx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, rbp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, rbp), w_rdi),
         "488BBD77207317",
         "movq    393420919(%rbp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, rsp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, rsp), w_rdi),
         "488BBC2477207317",
         "movq    393420919(%rsp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, rsi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, rsi), w_rdi),
         "488BBE77207317",
         "movq    393420919(%rsi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, rdi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, rdi), w_rdi),
         "488BBF77207317",
         "movq    393420919(%rdi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, r8), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, r8), w_rdi),
         "498BB877207317",
         "movq    393420919(%r8), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, r9), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, r9), w_rdi),
         "498BB977207317",
         "movq    393420919(%r9), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, r10), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, r10), w_rdi),
         "498BBA77207317",
         "movq    393420919(%r10), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, r11), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, r11), w_rdi),
         "498BBB77207317",
         "movq    393420919(%r11), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, r12), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, r12), w_rdi),
         "498BBC2477207317",
         "movq    393420919(%r12), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, r13), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, r13), w_rdi),
         "498BBD77207317",
         "movq    393420919(%r13), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, r14), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, r14), w_rdi),
         "498BBE77207317",
         "movq    393420919(%r14), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(0x17732077, r15), rdi),
+        i_Mov64_M_R(ip_Addr_IR(0x17732077, r15), w_rdi),
         "498BBF77207317",
         "movq    393420919(%r15), %rdi",
     ));
@@ -2691,82 +2749,82 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Addr_IR, offset large negative simm32
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rax), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, rax), w_rdi),
         "488BB8D9A6BECE",
         "movq    -826366247(%rax), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rbx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, rbx), w_rdi),
         "488BBBD9A6BECE",
         "movq    -826366247(%rbx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rcx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, rcx), w_rdi),
         "488BB9D9A6BECE",
         "movq    -826366247(%rcx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rdx), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, rdx), w_rdi),
         "488BBAD9A6BECE",
         "movq    -826366247(%rdx), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rbp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, rbp), w_rdi),
         "488BBDD9A6BECE",
         "movq    -826366247(%rbp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rsp), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, rsp), w_rdi),
         "488BBC24D9A6BECE",
         "movq    -826366247(%rsp), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rsi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, rsi), w_rdi),
         "488BBED9A6BECE",
         "movq    -826366247(%rsi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, rdi), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, rdi), w_rdi),
         "488BBFD9A6BECE",
         "movq    -826366247(%rdi), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r8), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, r8), w_rdi),
         "498BB8D9A6BECE",
         "movq    -826366247(%r8), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r9), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, r9), w_rdi),
         "498BB9D9A6BECE",
         "movq    -826366247(%r9), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r10), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, r10), w_rdi),
         "498BBAD9A6BECE",
         "movq    -826366247(%r10), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r11), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, r11), w_rdi),
         "498BBBD9A6BECE",
         "movq    -826366247(%r11), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r12), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, r12), w_rdi),
         "498BBC24D9A6BECE",
         "movq    -826366247(%r12), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r13), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, r13), w_rdi),
         "498BBDD9A6BECE",
         "movq    -826366247(%r13), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r14), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, r14), w_rdi),
         "498BBED9A6BECE",
         "movq    -826366247(%r14), %rdi",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IR(-0x31415927i32 as u32, r15), rdi),
+        i_Mov64_M_R(ip_Addr_IR(-0x31415927i32 as u32, r15), w_rdi),
         "498BBFD9A6BECE",
         "movq    -826366247(%r15), %rdi",
     ));
@@ -2778,42 +2836,42 @@ fn test_x64_insn_encoding_and_printing() {
     //
     // Addr_IRRS, offset max simm8
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(127, rax, rax, 0), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(127, rax, rax, 0), w_r11),
         "4C8B5C007F",
         "movq    127(%rax,%rax,1), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(127, rdi, rax, 1), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(127, rdi, rax, 1), w_r11),
         "4C8B5C477F",
         "movq    127(%rdi,%rax,2), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(127, r8, rax, 2), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(127, r8, rax, 2), w_r11),
         "4D8B5C807F",
         "movq    127(%r8,%rax,4), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(127, r15, rax, 3), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(127, r15, rax, 3), w_r11),
         "4D8B5CC77F",
         "movq    127(%r15,%rax,8), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(127, rax, rdi, 3), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(127, rax, rdi, 3), w_r11),
         "4C8B5CF87F",
         "movq    127(%rax,%rdi,8), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(127, rdi, rdi, 2), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(127, rdi, rdi, 2), w_r11),
         "4C8B5CBF7F",
         "movq    127(%rdi,%rdi,4), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(127, r8, rdi, 1), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(127, r8, rdi, 1), w_r11),
         "4D8B5C787F",
         "movq    127(%r8,%rdi,2), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(127, r15, rdi, 0), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(127, r15, rdi, 0), w_r11),
         "4D8B5C3F7F",
         "movq    127(%r15,%rdi,1), %r11",
     ));
@@ -2821,42 +2879,42 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Addr_IRRS, offset min simm8
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rax, r8, 2), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-128i32 as u32, rax, r8, 2), w_r11),
         "4E8B5C8080",
         "movq    -128(%rax,%r8,4), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rdi, r8, 3), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-128i32 as u32, rdi, r8, 3), w_r11),
         "4E8B5CC780",
         "movq    -128(%rdi,%r8,8), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r8, r8, 0), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-128i32 as u32, r8, r8, 0), w_r11),
         "4F8B5C0080",
         "movq    -128(%r8,%r8,1), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r15, r8, 1), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-128i32 as u32, r15, r8, 1), w_r11),
         "4F8B5C4780",
         "movq    -128(%r15,%r8,2), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rax, r15, 1), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-128i32 as u32, rax, r15, 1), w_r11),
         "4E8B5C7880",
         "movq    -128(%rax,%r15,2), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, rdi, r15, 0), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-128i32 as u32, rdi, r15, 0), w_r11),
         "4E8B5C3F80",
         "movq    -128(%rdi,%r15,1), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r8, r15, 3), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-128i32 as u32, r8, r15, 3), w_r11),
         "4F8B5CF880",
         "movq    -128(%r8,%r15,8), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-128i32 as u32, r15, r15, 2), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-128i32 as u32, r15, r15, 2), w_r11),
         "4F8B5CBF80",
         "movq    -128(%r15,%r15,4), %r11",
     ));
@@ -2864,42 +2922,42 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Addr_IRRS, offset large positive simm32
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(0x4f6625be, rax, rax, 0), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(0x4f6625be, rax, rax, 0), w_r11),
         "4C8B9C00BE25664F",
         "movq    1332094398(%rax,%rax,1), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(0x4f6625be, rdi, rax, 1), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(0x4f6625be, rdi, rax, 1), w_r11),
         "4C8B9C47BE25664F",
         "movq    1332094398(%rdi,%rax,2), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(0x4f6625be, r8, rax, 2), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(0x4f6625be, r8, rax, 2), w_r11),
         "4D8B9C80BE25664F",
         "movq    1332094398(%r8,%rax,4), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(0x4f6625be, r15, rax, 3), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(0x4f6625be, r15, rax, 3), w_r11),
         "4D8B9CC7BE25664F",
         "movq    1332094398(%r15,%rax,8), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(0x4f6625be, rax, rdi, 3), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(0x4f6625be, rax, rdi, 3), w_r11),
         "4C8B9CF8BE25664F",
         "movq    1332094398(%rax,%rdi,8), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(0x4f6625be, rdi, rdi, 2), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(0x4f6625be, rdi, rdi, 2), w_r11),
         "4C8B9CBFBE25664F",
         "movq    1332094398(%rdi,%rdi,4), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(0x4f6625be, r8, rdi, 1), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(0x4f6625be, r8, rdi, 1), w_r11),
         "4D8B9C78BE25664F",
         "movq    1332094398(%r8,%rdi,2), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(0x4f6625be, r15, rdi, 0), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(0x4f6625be, r15, rdi, 0), w_r11),
         "4D8B9C3FBE25664F",
         "movq    1332094398(%r15,%rdi,1), %r11",
     ));
@@ -2907,42 +2965,42 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Addr_IRRS, offset large negative simm32
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rax, r8, 2), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-0x264d1690i32 as u32, rax, r8, 2), w_r11),
         "4E8B9C8070E9B2D9",
         "movq    -642586256(%rax,%r8,4), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rdi, r8, 3), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-0x264d1690i32 as u32, rdi, r8, 3), w_r11),
         "4E8B9CC770E9B2D9",
         "movq    -642586256(%rdi,%r8,8), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r8, r8, 0), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-0x264d1690i32 as u32, r8, r8, 0), w_r11),
         "4F8B9C0070E9B2D9",
         "movq    -642586256(%r8,%r8,1), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r15, r8, 1), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-0x264d1690i32 as u32, r15, r8, 1), w_r11),
         "4F8B9C4770E9B2D9",
         "movq    -642586256(%r15,%r8,2), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rax, r15, 1), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-0x264d1690i32 as u32, rax, r15, 1), w_r11),
         "4E8B9C7870E9B2D9",
         "movq    -642586256(%rax,%r15,2), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, rdi, r15, 0), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-0x264d1690i32 as u32, rdi, r15, 0), w_r11),
         "4E8B9C3F70E9B2D9",
         "movq    -642586256(%rdi,%r15,1), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r8, r15, 3), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-0x264d1690i32 as u32, r8, r15, 3), w_r11),
         "4F8B9CF870E9B2D9",
         "movq    -642586256(%r8,%r15,8), %r11",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(-0x264d1690i32 as u32, r15, r15, 2), r11),
+        i_Mov64_M_R(ip_Addr_IRRS(-0x264d1690i32 as u32, r15, r15, 2), w_r11),
         "4F8B9CBF70E9B2D9",
         "movq    -642586256(%r15,%r15,4), %r11",
     ));
@@ -2956,174 +3014,174 @@ fn test_x64_insn_encoding_and_printing() {
     //
     // Alu_RMI_R
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_R(r15), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Add, ip_RMI_R(r15), w_rdx),
         "4C01FA",
         "addq    %r15, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), r8),
+        i_Alu_RMI_R(false, RMI_R_Op::Add, ip_RMI_R(rcx), w_r8),
         "4101C8",
         "addl    %ecx, %r8d",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_R(rcx), rsi),
+        i_Alu_RMI_R(false, RMI_R_Op::Add, ip_RMI_R(rcx), w_rsi),
         "01CE",
         "addl    %ecx, %esi",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Add, ip_RMI_M(ip_Addr_IR(99, rdi)), w_rdx),
         "48035763",
         "addq    99(%rdi), %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), r8),
+        i_Alu_RMI_R(false, RMI_R_Op::Add, ip_RMI_M(ip_Addr_IR(99, rdi)), w_r8),
         "44034763",
         "addl    99(%rdi), %r8d",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_M(Addr_IR(99, rdi)), rsi),
+        i_Alu_RMI_R(false, RMI_R_Op::Add, ip_RMI_M(ip_Addr_IR(99, rdi)), w_rsi),
         "037763",
         "addl    99(%rdi), %esi",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_I(-127i32 as u32), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Add, ip_RMI_I(-127i32 as u32), w_rdx),
         "4883C281",
         "addq    $-127, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_I(-129i32 as u32), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Add, ip_RMI_I(-129i32 as u32), w_rdx),
         "4881C27FFFFFFF",
         "addq    $-129, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Add, RMI_I(76543210), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Add, ip_RMI_I(76543210), w_rdx),
         "4881C2EAF48F04",
         "addq    $76543210, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-127i32 as u32), r8),
+        i_Alu_RMI_R(false, RMI_R_Op::Add, ip_RMI_I(-127i32 as u32), w_r8),
         "4183C081",
         "addl    $-127, %r8d",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-129i32 as u32), r8),
+        i_Alu_RMI_R(false, RMI_R_Op::Add, ip_RMI_I(-129i32 as u32), w_r8),
         "4181C07FFFFFFF",
         "addl    $-129, %r8d",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-76543210i32 as u32), r8),
+        i_Alu_RMI_R(false, RMI_R_Op::Add, ip_RMI_I(-76543210i32 as u32), w_r8),
         "4181C0160B70FB",
         "addl    $-76543210, %r8d",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-127i32 as u32), rsi),
+        i_Alu_RMI_R(false, RMI_R_Op::Add, ip_RMI_I(-127i32 as u32), w_rsi),
         "83C681",
         "addl    $-127, %esi",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(-129i32 as u32), rsi),
+        i_Alu_RMI_R(false, RMI_R_Op::Add, ip_RMI_I(-129i32 as u32), w_rsi),
         "81C67FFFFFFF",
         "addl    $-129, %esi",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Add, RMI_I(76543210), rsi),
+        i_Alu_RMI_R(false, RMI_R_Op::Add, ip_RMI_I(76543210), w_rsi),
         "81C6EAF48F04",
         "addl    $76543210, %esi",
     ));
     // This is pretty feeble
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Sub, RMI_R(r15), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Sub, ip_RMI_R(r15), w_rdx),
         "4C29FA",
         "subq    %r15, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::And, RMI_R(r15), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::And, ip_RMI_R(r15), w_rdx),
         "4C21FA",
         "andq    %r15, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Or, RMI_R(r15), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Or, ip_RMI_R(r15), w_rdx),
         "4C09FA",
         "orq     %r15, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Xor, RMI_R(r15), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Xor, ip_RMI_R(r15), w_rdx),
         "4C31FA",
         "xorq    %r15, %rdx",
     ));
     // Test all mul cases, though
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_R(r15), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Mul, ip_RMI_R(r15), w_rdx),
         "490FAFD7",
         "imulq   %r15, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_R(rcx), r8),
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, ip_RMI_R(rcx), w_r8),
         "440FAFC1",
         "imull   %ecx, %r8d",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_R(rcx), rsi),
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, ip_RMI_R(rcx), w_rsi),
         "0FAFF1",
         "imull   %ecx, %esi",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Mul, ip_RMI_M(ip_Addr_IR(99, rdi)), w_rdx),
         "480FAF5763",
         "imulq   99(%rdi), %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), r8),
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, ip_RMI_M(ip_Addr_IR(99, rdi)), w_r8),
         "440FAF4763",
         "imull   99(%rdi), %r8d",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_M(Addr_IR(99, rdi)), rsi),
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, ip_RMI_M(ip_Addr_IR(99, rdi)), w_rsi),
         "0FAF7763",
         "imull   99(%rdi), %esi",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_I(-127i32 as u32), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Mul, ip_RMI_I(-127i32 as u32), w_rdx),
         "486BD281",
         "imulq   $-127, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_I(-129i32 as u32), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Mul, ip_RMI_I(-129i32 as u32), w_rdx),
         "4869D27FFFFFFF",
         "imulq   $-129, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(true, RMI_R_Op::Mul, RMI_I(76543210), rdx),
+        i_Alu_RMI_R(true, RMI_R_Op::Mul, ip_RMI_I(76543210), w_rdx),
         "4869D2EAF48F04",
         "imulq   $76543210, %rdx",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-127i32 as u32), r8),
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, ip_RMI_I(-127i32 as u32), w_r8),
         "456BC081",
         "imull   $-127, %r8d",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-129i32 as u32), r8),
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, ip_RMI_I(-129i32 as u32), w_r8),
         "4569C07FFFFFFF",
         "imull   $-129, %r8d",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-76543210i32 as u32), r8),
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, ip_RMI_I(-76543210i32 as u32), w_r8),
         "4569C0160B70FB",
         "imull   $-76543210, %r8d",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-127i32 as u32), rsi),
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, ip_RMI_I(-127i32 as u32), w_rsi),
         "6BF681",
         "imull   $-127, %esi",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(-129i32 as u32), rsi),
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, ip_RMI_I(-129i32 as u32), w_rsi),
         "69F67FFFFFFF",
         "imull   $-129, %esi",
     ));
     insns.push((
-        i_Alu_RMI_R(false, RMI_R_Op::Mul, RMI_I(76543210), rsi),
+        i_Alu_RMI_R(false, RMI_R_Op::Mul, ip_RMI_I(76543210), w_rsi),
         "69F6EAF48F04",
         "imull   $76543210, %esi",
     ));
@@ -3132,156 +3190,156 @@ fn test_x64_insn_encoding_and_printing() {
     // Imm_R
     //
     insns.push((
-        i_Imm_R(false, 1234567, r14),
+        i_Imm_R(false, 1234567, w_r14),
         "41BE87D61200",
         "movl    $1234567, %r14d",
     ));
     insns.push((
-        i_Imm_R(false, -126i64 as u64, r14),
+        i_Imm_R(false, -126i64 as u64, w_r14),
         "41BE82FFFFFF",
         "movl    $-126, %r14d",
     ));
     insns.push((
-        i_Imm_R(true, 1234567898765, r14),
+        i_Imm_R(true, 1234567898765, w_r14),
         "49BE8D26FB711F010000",
         "movabsq $1234567898765, %r14",
     ));
     insns.push((
-        i_Imm_R(true, -126i64 as u64, r14),
+        i_Imm_R(true, -126i64 as u64, w_r14),
         "49BE82FFFFFFFFFFFFFF",
         "movabsq $-126, %r14",
     ));
     insns.push((
-        i_Imm_R(false, 1234567, rcx),
+        i_Imm_R(false, 1234567, w_rcx),
         "B987D61200",
         "movl    $1234567, %ecx",
     ));
     insns.push((
-        i_Imm_R(false, -126i64 as u64, rcx),
+        i_Imm_R(false, -126i64 as u64, w_rcx),
         "B982FFFFFF",
         "movl    $-126, %ecx",
     ));
     insns.push((
-        i_Imm_R(true, 1234567898765, rsi),
+        i_Imm_R(true, 1234567898765, w_rsi),
         "48BE8D26FB711F010000",
         "movabsq $1234567898765, %rsi",
     ));
     insns.push((
-        i_Imm_R(true, -126i64 as u64, rbx),
+        i_Imm_R(true, -126i64 as u64, w_rbx),
         "48BB82FFFFFFFFFFFFFF",
         "movabsq $-126, %rbx",
     ));
 
     // ========================================================
     // Mov_R_R
-    insns.push((i_Mov_R_R(false, rbx, rsi), "89DE", "movl    %ebx, %esi"));
-    insns.push((i_Mov_R_R(false, rbx, r9), "4189D9", "movl    %ebx, %r9d"));
-    insns.push((i_Mov_R_R(false, r11, rsi), "4489DE", "movl    %r11d, %esi"));
-    insns.push((i_Mov_R_R(false, r12, r9), "4589E1", "movl    %r12d, %r9d"));
-    insns.push((i_Mov_R_R(true, rbx, rsi), "4889DE", "movq    %rbx, %rsi"));
-    insns.push((i_Mov_R_R(true, rbx, r9), "4989D9", "movq    %rbx, %r9"));
-    insns.push((i_Mov_R_R(true, r11, rsi), "4C89DE", "movq    %r11, %rsi"));
-    insns.push((i_Mov_R_R(true, r12, r9), "4D89E1", "movq    %r12, %r9"));
+    insns.push((i_Mov_R_R(false, rbx, w_rsi), "89DE", "movl    %ebx, %esi"));
+    insns.push((i_Mov_R_R(false, rbx, w_r9), "4189D9", "movl    %ebx, %r9d"));
+    insns.push((i_Mov_R_R(false, r11, w_rsi), "4489DE", "movl    %r11d, %esi"));
+    insns.push((i_Mov_R_R(false, r12, w_r9), "4589E1", "movl    %r12d, %r9d"));
+    insns.push((i_Mov_R_R(true, rbx, w_rsi), "4889DE", "movq    %rbx, %rsi"));
+    insns.push((i_Mov_R_R(true, rbx, w_r9), "4989D9", "movq    %rbx, %r9"));
+    insns.push((i_Mov_R_R(true, r11, w_rsi), "4C89DE", "movq    %r11, %rsi"));
+    insns.push((i_Mov_R_R(true, r12, w_r9), "4D89E1", "movq    %r12, %r9"));
 
     // ========================================================
     // MovZX_M_R
     insns.push((
-        i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, rcx), rsi),
+        i_MovZX_M_R(ExtMode::BL, ip_Addr_IR(-7i32 as u32, rcx), w_rsi),
         "0FB671F9",
         "movzbl  -7(%rcx), %esi",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r8), rbx),
+        i_MovZX_M_R(ExtMode::BL, ip_Addr_IR(-7i32 as u32, r8), w_rbx),
         "410FB658F9",
         "movzbl  -7(%r8), %ebx",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r10), r9),
+        i_MovZX_M_R(ExtMode::BL, ip_Addr_IR(-7i32 as u32, r10), w_r9),
         "450FB64AF9",
         "movzbl  -7(%r10), %r9d",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r11), rdx),
+        i_MovZX_M_R(ExtMode::BL, ip_Addr_IR(-7i32 as u32, r11), w_rdx),
         "410FB653F9",
         "movzbl  -7(%r11), %edx",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        i_MovZX_M_R(ExtMode::BQ, ip_Addr_IR(-7i32 as u32, rcx), w_rsi),
         "480FB671F9",
         "movzbq  -7(%rcx), %rsi",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r8), rbx),
+        i_MovZX_M_R(ExtMode::BQ, ip_Addr_IR(-7i32 as u32, r8), w_rbx),
         "490FB658F9",
         "movzbq  -7(%r8), %rbx",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r10), r9),
+        i_MovZX_M_R(ExtMode::BQ, ip_Addr_IR(-7i32 as u32, r10), w_r9),
         "4D0FB64AF9",
         "movzbq  -7(%r10), %r9",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r11), rdx),
+        i_MovZX_M_R(ExtMode::BQ, ip_Addr_IR(-7i32 as u32, r11), w_rdx),
         "490FB653F9",
         "movzbq  -7(%r11), %rdx",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, rcx), rsi),
+        i_MovZX_M_R(ExtMode::WL, ip_Addr_IR(-7i32 as u32, rcx), w_rsi),
         "0FB771F9",
         "movzwl  -7(%rcx), %esi",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r8), rbx),
+        i_MovZX_M_R(ExtMode::WL, ip_Addr_IR(-7i32 as u32, r8), w_rbx),
         "410FB758F9",
         "movzwl  -7(%r8), %ebx",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r10), r9),
+        i_MovZX_M_R(ExtMode::WL, ip_Addr_IR(-7i32 as u32, r10), w_r9),
         "450FB74AF9",
         "movzwl  -7(%r10), %r9d",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r11), rdx),
+        i_MovZX_M_R(ExtMode::WL, ip_Addr_IR(-7i32 as u32, r11), w_rdx),
         "410FB753F9",
         "movzwl  -7(%r11), %edx",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        i_MovZX_M_R(ExtMode::WQ, ip_Addr_IR(-7i32 as u32, rcx), w_rsi),
         "480FB771F9",
         "movzwq  -7(%rcx), %rsi",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r8), rbx),
+        i_MovZX_M_R(ExtMode::WQ, ip_Addr_IR(-7i32 as u32, r8), w_rbx),
         "490FB758F9",
         "movzwq  -7(%r8), %rbx",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r10), r9),
+        i_MovZX_M_R(ExtMode::WQ, ip_Addr_IR(-7i32 as u32, r10), w_r9),
         "4D0FB74AF9",
         "movzwq  -7(%r10), %r9",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r11), rdx),
+        i_MovZX_M_R(ExtMode::WQ, ip_Addr_IR(-7i32 as u32, r11), w_rdx),
         "490FB753F9",
         "movzwq  -7(%r11), %rdx",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        i_MovZX_M_R(ExtMode::LQ, ip_Addr_IR(-7i32 as u32, rcx), w_rsi),
         "8B71F9",
         "movl    -7(%rcx), %esi",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r8), rbx),
+        i_MovZX_M_R(ExtMode::LQ, ip_Addr_IR(-7i32 as u32, r8), w_rbx),
         "418B58F9",
         "movl    -7(%r8), %ebx",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r10), r9),
+        i_MovZX_M_R(ExtMode::LQ, ip_Addr_IR(-7i32 as u32, r10), w_r9),
         "458B4AF9",
         "movl    -7(%r10), %r9d",
     ));
     insns.push((
-        i_MovZX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r11), rdx),
+        i_MovZX_M_R(ExtMode::LQ, ip_Addr_IR(-7i32 as u32, r11), w_rdx),
         "418B53F9",
         "movl    -7(%r11), %edx",
     ));
@@ -3289,42 +3347,42 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Mov64_M_R
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(179, rax, rbx, 0), rcx),
+        i_Mov64_M_R(ip_Addr_IRRS(179, rax, rbx, 0), w_rcx),
         "488B8C18B3000000",
         "movq    179(%rax,%rbx,1), %rcx",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(179, rax, rbx, 0), r8),
+        i_Mov64_M_R(ip_Addr_IRRS(179, rax, rbx, 0), w_r8),
         "4C8B8418B3000000",
         "movq    179(%rax,%rbx,1), %r8",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(179, rax, r9, 0), rcx),
+        i_Mov64_M_R(ip_Addr_IRRS(179, rax, r9, 0), w_rcx),
         "4A8B8C08B3000000",
         "movq    179(%rax,%r9,1), %rcx",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(179, rax, r9, 0), r8),
+        i_Mov64_M_R(ip_Addr_IRRS(179, rax, r9, 0), w_r8),
         "4E8B8408B3000000",
         "movq    179(%rax,%r9,1), %r8",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(179, r10, rbx, 0), rcx),
+        i_Mov64_M_R(ip_Addr_IRRS(179, r10, rbx, 0), w_rcx),
         "498B8C1AB3000000",
         "movq    179(%r10,%rbx,1), %rcx",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(179, r10, rbx, 0), r8),
+        i_Mov64_M_R(ip_Addr_IRRS(179, r10, rbx, 0), w_r8),
         "4D8B841AB3000000",
         "movq    179(%r10,%rbx,1), %r8",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(179, r10, r9, 0), rcx),
+        i_Mov64_M_R(ip_Addr_IRRS(179, r10, r9, 0), w_rcx),
         "4B8B8C0AB3000000",
         "movq    179(%r10,%r9,1), %rcx",
     ));
     insns.push((
-        i_Mov64_M_R(Addr_IRRS(179, r10, r9, 0), r8),
+        i_Mov64_M_R(ip_Addr_IRRS(179, r10, r9, 0), w_r8),
         "4F8B840AB3000000",
         "movq    179(%r10,%r9,1), %r8",
     ));
@@ -3332,102 +3390,102 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // MovSX_M_R
     insns.push((
-        i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, rcx), rsi),
+        i_MovSX_M_R(ExtMode::BL, ip_Addr_IR(-7i32 as u32, rcx), w_rsi),
         "0FBE71F9",
         "movsbl  -7(%rcx), %esi",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r8), rbx),
+        i_MovSX_M_R(ExtMode::BL, ip_Addr_IR(-7i32 as u32, r8), w_rbx),
         "410FBE58F9",
         "movsbl  -7(%r8), %ebx",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r10), r9),
+        i_MovSX_M_R(ExtMode::BL, ip_Addr_IR(-7i32 as u32, r10), w_r9),
         "450FBE4AF9",
         "movsbl  -7(%r10), %r9d",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::BL, Addr_IR(-7i32 as u32, r11), rdx),
+        i_MovSX_M_R(ExtMode::BL, ip_Addr_IR(-7i32 as u32, r11), w_rdx),
         "410FBE53F9",
         "movsbl  -7(%r11), %edx",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        i_MovSX_M_R(ExtMode::BQ, ip_Addr_IR(-7i32 as u32, rcx), w_rsi),
         "480FBE71F9",
         "movsbq  -7(%rcx), %rsi",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r8), rbx),
+        i_MovSX_M_R(ExtMode::BQ, ip_Addr_IR(-7i32 as u32, r8), w_rbx),
         "490FBE58F9",
         "movsbq  -7(%r8), %rbx",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r10), r9),
+        i_MovSX_M_R(ExtMode::BQ, ip_Addr_IR(-7i32 as u32, r10), w_r9),
         "4D0FBE4AF9",
         "movsbq  -7(%r10), %r9",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::BQ, Addr_IR(-7i32 as u32, r11), rdx),
+        i_MovSX_M_R(ExtMode::BQ, ip_Addr_IR(-7i32 as u32, r11), w_rdx),
         "490FBE53F9",
         "movsbq  -7(%r11), %rdx",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, rcx), rsi),
+        i_MovSX_M_R(ExtMode::WL, ip_Addr_IR(-7i32 as u32, rcx), w_rsi),
         "0FBF71F9",
         "movswl  -7(%rcx), %esi",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r8), rbx),
+        i_MovSX_M_R(ExtMode::WL, ip_Addr_IR(-7i32 as u32, r8), w_rbx),
         "410FBF58F9",
         "movswl  -7(%r8), %ebx",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r10), r9),
+        i_MovSX_M_R(ExtMode::WL, ip_Addr_IR(-7i32 as u32, r10), w_r9),
         "450FBF4AF9",
         "movswl  -7(%r10), %r9d",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::WL, Addr_IR(-7i32 as u32, r11), rdx),
+        i_MovSX_M_R(ExtMode::WL, ip_Addr_IR(-7i32 as u32, r11), w_rdx),
         "410FBF53F9",
         "movswl  -7(%r11), %edx",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        i_MovSX_M_R(ExtMode::WQ, ip_Addr_IR(-7i32 as u32, rcx), w_rsi),
         "480FBF71F9",
         "movswq  -7(%rcx), %rsi",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r8), rbx),
+        i_MovSX_M_R(ExtMode::WQ, ip_Addr_IR(-7i32 as u32, r8), w_rbx),
         "490FBF58F9",
         "movswq  -7(%r8), %rbx",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r10), r9),
+        i_MovSX_M_R(ExtMode::WQ, ip_Addr_IR(-7i32 as u32, r10), w_r9),
         "4D0FBF4AF9",
         "movswq  -7(%r10), %r9",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::WQ, Addr_IR(-7i32 as u32, r11), rdx),
+        i_MovSX_M_R(ExtMode::WQ, ip_Addr_IR(-7i32 as u32, r11), w_rdx),
         "490FBF53F9",
         "movswq  -7(%r11), %rdx",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, rcx), rsi),
+        i_MovSX_M_R(ExtMode::LQ, ip_Addr_IR(-7i32 as u32, rcx), w_rsi),
         "486371F9",
         "movslq  -7(%rcx), %rsi",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r8), rbx),
+        i_MovSX_M_R(ExtMode::LQ, ip_Addr_IR(-7i32 as u32, r8), w_rbx),
         "496358F9",
         "movslq  -7(%r8), %rbx",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r10), r9),
+        i_MovSX_M_R(ExtMode::LQ, ip_Addr_IR(-7i32 as u32, r10), w_r9),
         "4D634AF9",
         "movslq  -7(%r10), %r9",
     ));
     insns.push((
-        i_MovSX_M_R(ExtMode::LQ, Addr_IR(-7i32 as u32, r11), rdx),
+        i_MovSX_M_R(ExtMode::LQ, ip_Addr_IR(-7i32 as u32, r11), w_rdx),
         "496353F9",
         "movslq  -7(%r11), %rdx",
     ));
@@ -3435,325 +3493,325 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Mov_R_M.  Byte stores are tricky.  Check everything carefully.
     insns.push((
-        i_Mov_R_M(8, rax, Addr_IR(99, rdi)),
+        i_Mov_R_M(8, rax, ip_Addr_IR(99, rdi)),
         "48894763",
         "movq    %rax, 99(%rdi)",
     ));
     insns.push((
-        i_Mov_R_M(8, rbx, Addr_IR(99, r8)),
+        i_Mov_R_M(8, rbx, ip_Addr_IR(99, r8)),
         "49895863",
         "movq    %rbx, 99(%r8)",
     ));
     insns.push((
-        i_Mov_R_M(8, rcx, Addr_IR(99, rsi)),
+        i_Mov_R_M(8, rcx, ip_Addr_IR(99, rsi)),
         "48894E63",
         "movq    %rcx, 99(%rsi)",
     ));
     insns.push((
-        i_Mov_R_M(8, rdx, Addr_IR(99, r9)),
+        i_Mov_R_M(8, rdx, ip_Addr_IR(99, r9)),
         "49895163",
         "movq    %rdx, 99(%r9)",
     ));
     insns.push((
-        i_Mov_R_M(8, rsi, Addr_IR(99, rax)),
+        i_Mov_R_M(8, rsi, ip_Addr_IR(99, rax)),
         "48897063",
         "movq    %rsi, 99(%rax)",
     ));
     insns.push((
-        i_Mov_R_M(8, rdi, Addr_IR(99, r15)),
+        i_Mov_R_M(8, rdi, ip_Addr_IR(99, r15)),
         "49897F63",
         "movq    %rdi, 99(%r15)",
     ));
     insns.push((
-        i_Mov_R_M(8, rsp, Addr_IR(99, rcx)),
+        i_Mov_R_M(8, rsp, ip_Addr_IR(99, rcx)),
         "48896163",
         "movq    %rsp, 99(%rcx)",
     ));
     insns.push((
-        i_Mov_R_M(8, rbp, Addr_IR(99, r14)),
+        i_Mov_R_M(8, rbp, ip_Addr_IR(99, r14)),
         "49896E63",
         "movq    %rbp, 99(%r14)",
     ));
     insns.push((
-        i_Mov_R_M(8, r8, Addr_IR(99, rdi)),
+        i_Mov_R_M(8, r8, ip_Addr_IR(99, rdi)),
         "4C894763",
         "movq    %r8, 99(%rdi)",
     ));
     insns.push((
-        i_Mov_R_M(8, r9, Addr_IR(99, r8)),
+        i_Mov_R_M(8, r9, ip_Addr_IR(99, r8)),
         "4D894863",
         "movq    %r9, 99(%r8)",
     ));
     insns.push((
-        i_Mov_R_M(8, r10, Addr_IR(99, rsi)),
+        i_Mov_R_M(8, r10, ip_Addr_IR(99, rsi)),
         "4C895663",
         "movq    %r10, 99(%rsi)",
     ));
     insns.push((
-        i_Mov_R_M(8, r11, Addr_IR(99, r9)),
+        i_Mov_R_M(8, r11, ip_Addr_IR(99, r9)),
         "4D895963",
         "movq    %r11, 99(%r9)",
     ));
     insns.push((
-        i_Mov_R_M(8, r12, Addr_IR(99, rax)),
+        i_Mov_R_M(8, r12, ip_Addr_IR(99, rax)),
         "4C896063",
         "movq    %r12, 99(%rax)",
     ));
     insns.push((
-        i_Mov_R_M(8, r13, Addr_IR(99, r15)),
+        i_Mov_R_M(8, r13, ip_Addr_IR(99, r15)),
         "4D896F63",
         "movq    %r13, 99(%r15)",
     ));
     insns.push((
-        i_Mov_R_M(8, r14, Addr_IR(99, rcx)),
+        i_Mov_R_M(8, r14, ip_Addr_IR(99, rcx)),
         "4C897163",
         "movq    %r14, 99(%rcx)",
     ));
     insns.push((
-        i_Mov_R_M(8, r15, Addr_IR(99, r14)),
+        i_Mov_R_M(8, r15, ip_Addr_IR(99, r14)),
         "4D897E63",
         "movq    %r15, 99(%r14)",
     ));
     //
     insns.push((
-        i_Mov_R_M(4, rax, Addr_IR(99, rdi)),
+        i_Mov_R_M(4, rax, ip_Addr_IR(99, rdi)),
         "894763",
         "movl    %eax, 99(%rdi)",
     ));
     insns.push((
-        i_Mov_R_M(4, rbx, Addr_IR(99, r8)),
+        i_Mov_R_M(4, rbx, ip_Addr_IR(99, r8)),
         "41895863",
         "movl    %ebx, 99(%r8)",
     ));
     insns.push((
-        i_Mov_R_M(4, rcx, Addr_IR(99, rsi)),
+        i_Mov_R_M(4, rcx, ip_Addr_IR(99, rsi)),
         "894E63",
         "movl    %ecx, 99(%rsi)",
     ));
     insns.push((
-        i_Mov_R_M(4, rdx, Addr_IR(99, r9)),
+        i_Mov_R_M(4, rdx, ip_Addr_IR(99, r9)),
         "41895163",
         "movl    %edx, 99(%r9)",
     ));
     insns.push((
-        i_Mov_R_M(4, rsi, Addr_IR(99, rax)),
+        i_Mov_R_M(4, rsi, ip_Addr_IR(99, rax)),
         "897063",
         "movl    %esi, 99(%rax)",
     ));
     insns.push((
-        i_Mov_R_M(4, rdi, Addr_IR(99, r15)),
+        i_Mov_R_M(4, rdi, ip_Addr_IR(99, r15)),
         "41897F63",
         "movl    %edi, 99(%r15)",
     ));
     insns.push((
-        i_Mov_R_M(4, rsp, Addr_IR(99, rcx)),
+        i_Mov_R_M(4, rsp, ip_Addr_IR(99, rcx)),
         "896163",
         "movl    %esp, 99(%rcx)",
     ));
     insns.push((
-        i_Mov_R_M(4, rbp, Addr_IR(99, r14)),
+        i_Mov_R_M(4, rbp, ip_Addr_IR(99, r14)),
         "41896E63",
         "movl    %ebp, 99(%r14)",
     ));
     insns.push((
-        i_Mov_R_M(4, r8, Addr_IR(99, rdi)),
+        i_Mov_R_M(4, r8, ip_Addr_IR(99, rdi)),
         "44894763",
         "movl    %r8d, 99(%rdi)",
     ));
     insns.push((
-        i_Mov_R_M(4, r9, Addr_IR(99, r8)),
+        i_Mov_R_M(4, r9, ip_Addr_IR(99, r8)),
         "45894863",
         "movl    %r9d, 99(%r8)",
     ));
     insns.push((
-        i_Mov_R_M(4, r10, Addr_IR(99, rsi)),
+        i_Mov_R_M(4, r10, ip_Addr_IR(99, rsi)),
         "44895663",
         "movl    %r10d, 99(%rsi)",
     ));
     insns.push((
-        i_Mov_R_M(4, r11, Addr_IR(99, r9)),
+        i_Mov_R_M(4, r11, ip_Addr_IR(99, r9)),
         "45895963",
         "movl    %r11d, 99(%r9)",
     ));
     insns.push((
-        i_Mov_R_M(4, r12, Addr_IR(99, rax)),
+        i_Mov_R_M(4, r12, ip_Addr_IR(99, rax)),
         "44896063",
         "movl    %r12d, 99(%rax)",
     ));
     insns.push((
-        i_Mov_R_M(4, r13, Addr_IR(99, r15)),
+        i_Mov_R_M(4, r13, ip_Addr_IR(99, r15)),
         "45896F63",
         "movl    %r13d, 99(%r15)",
     ));
     insns.push((
-        i_Mov_R_M(4, r14, Addr_IR(99, rcx)),
+        i_Mov_R_M(4, r14, ip_Addr_IR(99, rcx)),
         "44897163",
         "movl    %r14d, 99(%rcx)",
     ));
     insns.push((
-        i_Mov_R_M(4, r15, Addr_IR(99, r14)),
+        i_Mov_R_M(4, r15, ip_Addr_IR(99, r14)),
         "45897E63",
         "movl    %r15d, 99(%r14)",
     ));
     //
     insns.push((
-        i_Mov_R_M(2, rax, Addr_IR(99, rdi)),
+        i_Mov_R_M(2, rax, ip_Addr_IR(99, rdi)),
         "66894763",
         "movw    %ax, 99(%rdi)",
     ));
     insns.push((
-        i_Mov_R_M(2, rbx, Addr_IR(99, r8)),
+        i_Mov_R_M(2, rbx, ip_Addr_IR(99, r8)),
         "6641895863",
         "movw    %bx, 99(%r8)",
     ));
     insns.push((
-        i_Mov_R_M(2, rcx, Addr_IR(99, rsi)),
+        i_Mov_R_M(2, rcx, ip_Addr_IR(99, rsi)),
         "66894E63",
         "movw    %cx, 99(%rsi)",
     ));
     insns.push((
-        i_Mov_R_M(2, rdx, Addr_IR(99, r9)),
+        i_Mov_R_M(2, rdx, ip_Addr_IR(99, r9)),
         "6641895163",
         "movw    %dx, 99(%r9)",
     ));
     insns.push((
-        i_Mov_R_M(2, rsi, Addr_IR(99, rax)),
+        i_Mov_R_M(2, rsi, ip_Addr_IR(99, rax)),
         "66897063",
         "movw    %si, 99(%rax)",
     ));
     insns.push((
-        i_Mov_R_M(2, rdi, Addr_IR(99, r15)),
+        i_Mov_R_M(2, rdi, ip_Addr_IR(99, r15)),
         "6641897F63",
         "movw    %di, 99(%r15)",
     ));
     insns.push((
-        i_Mov_R_M(2, rsp, Addr_IR(99, rcx)),
+        i_Mov_R_M(2, rsp, ip_Addr_IR(99, rcx)),
         "66896163",
         "movw    %sp, 99(%rcx)",
     ));
     insns.push((
-        i_Mov_R_M(2, rbp, Addr_IR(99, r14)),
+        i_Mov_R_M(2, rbp, ip_Addr_IR(99, r14)),
         "6641896E63",
         "movw    %bp, 99(%r14)",
     ));
     insns.push((
-        i_Mov_R_M(2, r8, Addr_IR(99, rdi)),
+        i_Mov_R_M(2, r8, ip_Addr_IR(99, rdi)),
         "6644894763",
         "movw    %r8w, 99(%rdi)",
     ));
     insns.push((
-        i_Mov_R_M(2, r9, Addr_IR(99, r8)),
+        i_Mov_R_M(2, r9, ip_Addr_IR(99, r8)),
         "6645894863",
         "movw    %r9w, 99(%r8)",
     ));
     insns.push((
-        i_Mov_R_M(2, r10, Addr_IR(99, rsi)),
+        i_Mov_R_M(2, r10, ip_Addr_IR(99, rsi)),
         "6644895663",
         "movw    %r10w, 99(%rsi)",
     ));
     insns.push((
-        i_Mov_R_M(2, r11, Addr_IR(99, r9)),
+        i_Mov_R_M(2, r11, ip_Addr_IR(99, r9)),
         "6645895963",
         "movw    %r11w, 99(%r9)",
     ));
     insns.push((
-        i_Mov_R_M(2, r12, Addr_IR(99, rax)),
+        i_Mov_R_M(2, r12, ip_Addr_IR(99, rax)),
         "6644896063",
         "movw    %r12w, 99(%rax)",
     ));
     insns.push((
-        i_Mov_R_M(2, r13, Addr_IR(99, r15)),
+        i_Mov_R_M(2, r13, ip_Addr_IR(99, r15)),
         "6645896F63",
         "movw    %r13w, 99(%r15)",
     ));
     insns.push((
-        i_Mov_R_M(2, r14, Addr_IR(99, rcx)),
+        i_Mov_R_M(2, r14, ip_Addr_IR(99, rcx)),
         "6644897163",
         "movw    %r14w, 99(%rcx)",
     ));
     insns.push((
-        i_Mov_R_M(2, r15, Addr_IR(99, r14)),
+        i_Mov_R_M(2, r15, ip_Addr_IR(99, r14)),
         "6645897E63",
         "movw    %r15w, 99(%r14)",
     ));
     //
     insns.push((
-        i_Mov_R_M(1, rax, Addr_IR(99, rdi)),
+        i_Mov_R_M(1, rax, ip_Addr_IR(99, rdi)),
         "884763",
         "movb    %al, 99(%rdi)",
     ));
     insns.push((
-        i_Mov_R_M(1, rbx, Addr_IR(99, r8)),
+        i_Mov_R_M(1, rbx, ip_Addr_IR(99, r8)),
         "41885863",
         "movb    %bl, 99(%r8)",
     ));
     insns.push((
-        i_Mov_R_M(1, rcx, Addr_IR(99, rsi)),
+        i_Mov_R_M(1, rcx, ip_Addr_IR(99, rsi)),
         "884E63",
         "movb    %cl, 99(%rsi)",
     ));
     insns.push((
-        i_Mov_R_M(1, rdx, Addr_IR(99, r9)),
+        i_Mov_R_M(1, rdx, ip_Addr_IR(99, r9)),
         "41885163",
         "movb    %dl, 99(%r9)",
     ));
     insns.push((
-        i_Mov_R_M(1, rsi, Addr_IR(99, rax)),
+        i_Mov_R_M(1, rsi, ip_Addr_IR(99, rax)),
         "40887063",
         "movb    %sil, 99(%rax)",
     ));
     insns.push((
-        i_Mov_R_M(1, rdi, Addr_IR(99, r15)),
+        i_Mov_R_M(1, rdi, ip_Addr_IR(99, r15)),
         "41887F63",
         "movb    %dil, 99(%r15)",
     ));
     insns.push((
-        i_Mov_R_M(1, rsp, Addr_IR(99, rcx)),
+        i_Mov_R_M(1, rsp, ip_Addr_IR(99, rcx)),
         "40886163",
         "movb    %spl, 99(%rcx)",
     ));
     insns.push((
-        i_Mov_R_M(1, rbp, Addr_IR(99, r14)),
+        i_Mov_R_M(1, rbp, ip_Addr_IR(99, r14)),
         "41886E63",
         "movb    %bpl, 99(%r14)",
     ));
     insns.push((
-        i_Mov_R_M(1, r8, Addr_IR(99, rdi)),
+        i_Mov_R_M(1, r8, ip_Addr_IR(99, rdi)),
         "44884763",
         "movb    %r8b, 99(%rdi)",
     ));
     insns.push((
-        i_Mov_R_M(1, r9, Addr_IR(99, r8)),
+        i_Mov_R_M(1, r9, ip_Addr_IR(99, r8)),
         "45884863",
         "movb    %r9b, 99(%r8)",
     ));
     insns.push((
-        i_Mov_R_M(1, r10, Addr_IR(99, rsi)),
+        i_Mov_R_M(1, r10, ip_Addr_IR(99, rsi)),
         "44885663",
         "movb    %r10b, 99(%rsi)",
     ));
     insns.push((
-        i_Mov_R_M(1, r11, Addr_IR(99, r9)),
+        i_Mov_R_M(1, r11, ip_Addr_IR(99, r9)),
         "45885963",
         "movb    %r11b, 99(%r9)",
     ));
     insns.push((
-        i_Mov_R_M(1, r12, Addr_IR(99, rax)),
+        i_Mov_R_M(1, r12, ip_Addr_IR(99, rax)),
         "44886063",
         "movb    %r12b, 99(%rax)",
     ));
     insns.push((
-        i_Mov_R_M(1, r13, Addr_IR(99, r15)),
+        i_Mov_R_M(1, r13, ip_Addr_IR(99, r15)),
         "45886F63",
         "movb    %r13b, 99(%r15)",
     ));
     insns.push((
-        i_Mov_R_M(1, r14, Addr_IR(99, rcx)),
+        i_Mov_R_M(1, r14, ip_Addr_IR(99, rcx)),
         "44887163",
         "movb    %r14b, 99(%rcx)",
     ));
     insns.push((
-        i_Mov_R_M(1, r15, Addr_IR(99, r14)),
+        i_Mov_R_M(1, r15, ip_Addr_IR(99, r14)),
         "45887E63",
         "movb    %r15b, 99(%r14)",
     ));
@@ -3761,107 +3819,107 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Shift_R
     insns.push((
-        i_Shift_R(false, ShiftKind::Left, 0, rdi),
+        i_Shift_R(false, ShiftKind::Left, 0, w_rdi),
         "D3E7",
         "shll    %cl, %edi",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::Left, 0, r12),
+        i_Shift_R(false, ShiftKind::Left, 0, w_r12),
         "41D3E4",
         "shll    %cl, %r12d",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::Left, 2, r8),
+        i_Shift_R(false, ShiftKind::Left, 2, w_r8),
         "41C1E002",
         "shll    $2, %r8d",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::Left, 31, r13),
+        i_Shift_R(false, ShiftKind::Left, 31, w_r13),
         "41C1E51F",
         "shll    $31, %r13d",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::Left, 0, r13),
+        i_Shift_R(true, ShiftKind::Left, 0, w_r13),
         "49D3E5",
         "shlq    %cl, %r13",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::Left, 0, rdi),
+        i_Shift_R(true, ShiftKind::Left, 0, w_rdi),
         "48D3E7",
         "shlq    %cl, %rdi",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::Left, 2, r8),
+        i_Shift_R(true, ShiftKind::Left, 2, w_r8),
         "49C1E002",
         "shlq    $2, %r8",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::Left, 3, rbx),
+        i_Shift_R(true, ShiftKind::Left, 3, w_rbx),
         "48C1E303",
         "shlq    $3, %rbx",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::Left, 63, r13),
+        i_Shift_R(true, ShiftKind::Left, 63, w_r13),
         "49C1E53F",
         "shlq    $63, %r13",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::RightZ, 0, rdi),
+        i_Shift_R(false, ShiftKind::RightZ, 0, w_rdi),
         "D3EF",
         "shrl    %cl, %edi",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::RightZ, 2, r8),
+        i_Shift_R(false, ShiftKind::RightZ, 2, w_r8),
         "41C1E802",
         "shrl    $2, %r8d",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::RightZ, 31, r13),
+        i_Shift_R(false, ShiftKind::RightZ, 31, w_r13),
         "41C1ED1F",
         "shrl    $31, %r13d",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::RightZ, 0, rdi),
+        i_Shift_R(true, ShiftKind::RightZ, 0, w_rdi),
         "48D3EF",
         "shrq    %cl, %rdi",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::RightZ, 2, r8),
+        i_Shift_R(true, ShiftKind::RightZ, 2, w_r8),
         "49C1E802",
         "shrq    $2, %r8",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::RightZ, 63, r13),
+        i_Shift_R(true, ShiftKind::RightZ, 63, w_r13),
         "49C1ED3F",
         "shrq    $63, %r13",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::RightS, 0, rdi),
+        i_Shift_R(false, ShiftKind::RightS, 0, w_rdi),
         "D3FF",
         "sarl    %cl, %edi",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::RightS, 2, r8),
+        i_Shift_R(false, ShiftKind::RightS, 2, w_r8),
         "41C1F802",
         "sarl    $2, %r8d",
     ));
     insns.push((
-        i_Shift_R(false, ShiftKind::RightS, 31, r13),
+        i_Shift_R(false, ShiftKind::RightS, 31, w_r13),
         "41C1FD1F",
         "sarl    $31, %r13d",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::RightS, 0, rdi),
+        i_Shift_R(true, ShiftKind::RightS, 0, w_rdi),
         "48D3FF",
         "sarq    %cl, %rdi",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::RightS, 2, r8),
+        i_Shift_R(true, ShiftKind::RightS, 2, w_r8),
         "49C1F802",
         "sarq    $2, %r8",
     ));
     insns.push((
-        i_Shift_R(true, ShiftKind::RightS, 63, r13),
+        i_Shift_R(true, ShiftKind::RightS, 63, w_r13),
         "49C1FD3F",
         "sarq    $63, %r13",
     ));
@@ -3869,294 +3927,294 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Cmp_RMI_R
     insns.push((
-        i_Cmp_RMI_R(8, RMI_R(r15), rdx),
+        i_Cmp_RMI_R(8, ip_RMI_R(r15), rdx),
         "4C39FA",
         "cmpq    %r15, %rdx",
     ));
     insns.push((
-        i_Cmp_RMI_R(8, RMI_R(rcx), r8),
+        i_Cmp_RMI_R(8, ip_RMI_R(rcx), r8),
         "4939C8",
         "cmpq    %rcx, %r8",
     ));
     insns.push((
-        i_Cmp_RMI_R(8, RMI_R(rcx), rsi),
+        i_Cmp_RMI_R(8, ip_RMI_R(rcx), rsi),
         "4839CE",
         "cmpq    %rcx, %rsi",
     ));
     insns.push((
-        i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), rdx),
+        i_Cmp_RMI_R(8, ip_RMI_M(ip_Addr_IR(99, rdi)), rdx),
         "483B5763",
         "cmpq    99(%rdi), %rdx",
     ));
     insns.push((
-        i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), r8),
+        i_Cmp_RMI_R(8, ip_RMI_M(ip_Addr_IR(99, rdi)), r8),
         "4C3B4763",
         "cmpq    99(%rdi), %r8",
     ));
     insns.push((
-        i_Cmp_RMI_R(8, RMI_M(Addr_IR(99, rdi)), rsi),
+        i_Cmp_RMI_R(8, ip_RMI_M(ip_Addr_IR(99, rdi)), rsi),
         "483B7763",
         "cmpq    99(%rdi), %rsi",
     ));
     insns.push((
-        i_Cmp_RMI_R(8, RMI_I(76543210), rdx),
+        i_Cmp_RMI_R(8, ip_RMI_I(76543210), rdx),
         "4881FAEAF48F04",
         "cmpq    $76543210, %rdx",
     ));
     insns.push((
-        i_Cmp_RMI_R(8, RMI_I(-76543210i32 as u32), r8),
+        i_Cmp_RMI_R(8, ip_RMI_I(-76543210i32 as u32), r8),
         "4981F8160B70FB",
         "cmpq    $-76543210, %r8",
     ));
     insns.push((
-        i_Cmp_RMI_R(8, RMI_I(76543210), rsi),
+        i_Cmp_RMI_R(8, ip_RMI_I(76543210), rsi),
         "4881FEEAF48F04",
         "cmpq    $76543210, %rsi",
     ));
     //
     insns.push((
-        i_Cmp_RMI_R(4, RMI_R(r15), rdx),
+        i_Cmp_RMI_R(4, ip_RMI_R(r15), rdx),
         "4439FA",
         "cmpl    %r15d, %edx",
     ));
     insns.push((
-        i_Cmp_RMI_R(4, RMI_R(rcx), r8),
+        i_Cmp_RMI_R(4, ip_RMI_R(rcx), r8),
         "4139C8",
         "cmpl    %ecx, %r8d",
     ));
     insns.push((
-        i_Cmp_RMI_R(4, RMI_R(rcx), rsi),
+        i_Cmp_RMI_R(4, ip_RMI_R(rcx), rsi),
         "39CE",
         "cmpl    %ecx, %esi",
     ));
     insns.push((
-        i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), rdx),
+        i_Cmp_RMI_R(4, ip_RMI_M(ip_Addr_IR(99, rdi)), rdx),
         "3B5763",
         "cmpl    99(%rdi), %edx",
     ));
     insns.push((
-        i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), r8),
+        i_Cmp_RMI_R(4, ip_RMI_M(ip_Addr_IR(99, rdi)), r8),
         "443B4763",
         "cmpl    99(%rdi), %r8d",
     ));
     insns.push((
-        i_Cmp_RMI_R(4, RMI_M(Addr_IR(99, rdi)), rsi),
+        i_Cmp_RMI_R(4, ip_RMI_M(ip_Addr_IR(99, rdi)), rsi),
         "3B7763",
         "cmpl    99(%rdi), %esi",
     ));
     insns.push((
-        i_Cmp_RMI_R(4, RMI_I(76543210), rdx),
+        i_Cmp_RMI_R(4, ip_RMI_I(76543210), rdx),
         "81FAEAF48F04",
         "cmpl    $76543210, %edx",
     ));
     insns.push((
-        i_Cmp_RMI_R(4, RMI_I(-76543210i32 as u32), r8),
+        i_Cmp_RMI_R(4, ip_RMI_I(-76543210i32 as u32), r8),
         "4181F8160B70FB",
         "cmpl    $-76543210, %r8d",
     ));
     insns.push((
-        i_Cmp_RMI_R(4, RMI_I(76543210), rsi),
+        i_Cmp_RMI_R(4, ip_RMI_I(76543210), rsi),
         "81FEEAF48F04",
         "cmpl    $76543210, %esi",
     ));
     //
     insns.push((
-        i_Cmp_RMI_R(2, RMI_R(r15), rdx),
+        i_Cmp_RMI_R(2, ip_RMI_R(r15), rdx),
         "664439FA",
         "cmpw    %r15w, %dx",
     ));
     insns.push((
-        i_Cmp_RMI_R(2, RMI_R(rcx), r8),
+        i_Cmp_RMI_R(2, ip_RMI_R(rcx), r8),
         "664139C8",
         "cmpw    %cx, %r8w",
     ));
     insns.push((
-        i_Cmp_RMI_R(2, RMI_R(rcx), rsi),
+        i_Cmp_RMI_R(2, ip_RMI_R(rcx), rsi),
         "6639CE",
         "cmpw    %cx, %si",
     ));
     insns.push((
-        i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), rdx),
+        i_Cmp_RMI_R(2, ip_RMI_M(ip_Addr_IR(99, rdi)), rdx),
         "663B5763",
         "cmpw    99(%rdi), %dx",
     ));
     insns.push((
-        i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), r8),
+        i_Cmp_RMI_R(2, ip_RMI_M(ip_Addr_IR(99, rdi)), r8),
         "66443B4763",
         "cmpw    99(%rdi), %r8w",
     ));
     insns.push((
-        i_Cmp_RMI_R(2, RMI_M(Addr_IR(99, rdi)), rsi),
+        i_Cmp_RMI_R(2, ip_RMI_M(ip_Addr_IR(99, rdi)), rsi),
         "663B7763",
         "cmpw    99(%rdi), %si",
     ));
     insns.push((
-        i_Cmp_RMI_R(2, RMI_I(23210), rdx),
+        i_Cmp_RMI_R(2, ip_RMI_I(23210), rdx),
         "6681FAAA5A",
         "cmpw    $23210, %dx",
     ));
     insns.push((
-        i_Cmp_RMI_R(2, RMI_I(-7654i32 as u32), r8),
+        i_Cmp_RMI_R(2, ip_RMI_I(-7654i32 as u32), r8),
         "664181F81AE2",
         "cmpw    $-7654, %r8w",
     ));
     insns.push((
-        i_Cmp_RMI_R(2, RMI_I(7654), rsi),
+        i_Cmp_RMI_R(2, ip_RMI_I(7654), rsi),
         "6681FEE61D",
         "cmpw    $7654, %si",
     ));
     //
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(r15), rdx),
+        i_Cmp_RMI_R(1, ip_RMI_R(r15), rdx),
         "4438FA",
         "cmpb    %r15b, %dl",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(rcx), r8),
+        i_Cmp_RMI_R(1, ip_RMI_R(rcx), r8),
         "4138C8",
         "cmpb    %cl, %r8b",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(rcx), rsi),
+        i_Cmp_RMI_R(1, ip_RMI_R(rcx), rsi),
         "4038CE",
         "cmpb    %cl, %sil",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), rdx),
+        i_Cmp_RMI_R(1, ip_RMI_M(ip_Addr_IR(99, rdi)), rdx),
         "3A5763",
         "cmpb    99(%rdi), %dl",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), r8),
+        i_Cmp_RMI_R(1, ip_RMI_M(ip_Addr_IR(99, rdi)), r8),
         "443A4763",
         "cmpb    99(%rdi), %r8b",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_M(Addr_IR(99, rdi)), rsi),
+        i_Cmp_RMI_R(1, ip_RMI_M(ip_Addr_IR(99, rdi)), rsi),
         "403A7763",
         "cmpb    99(%rdi), %sil",
     ));
-    insns.push((i_Cmp_RMI_R(1, RMI_I(70), rdx), "80FA46", "cmpb    $70, %dl"));
+    insns.push((i_Cmp_RMI_R(1, ip_RMI_I(70), rdx), "80FA46", "cmpb    $70, %dl"));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_I(-76i32 as u32), r8),
+        i_Cmp_RMI_R(1, ip_RMI_I(-76i32 as u32), r8),
         "4180F8B4",
         "cmpb    $-76, %r8b",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_I(76), rsi),
+        i_Cmp_RMI_R(1, ip_RMI_I(76), rsi),
         "4080FE4C",
         "cmpb    $76, %sil",
     ));
     // Extra byte-cases (paranoia!) for Cmp_RMI_R for first operand = R
-    insns.push((i_Cmp_RMI_R(1, RMI_R(rax), rbx), "38C3", "cmpb    %al, %bl"));
-    insns.push((i_Cmp_RMI_R(1, RMI_R(rbx), rax), "38D8", "cmpb    %bl, %al"));
-    insns.push((i_Cmp_RMI_R(1, RMI_R(rcx), rdx), "38CA", "cmpb    %cl, %dl"));
+    insns.push((i_Cmp_RMI_R(1, ip_RMI_R(rax), rbx), "38C3", "cmpb    %al, %bl"));
+    insns.push((i_Cmp_RMI_R(1, ip_RMI_R(rbx), rax), "38D8", "cmpb    %bl, %al"));
+    insns.push((i_Cmp_RMI_R(1, ip_RMI_R(rcx), rdx), "38CA", "cmpb    %cl, %dl"));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(rcx), rsi),
+        i_Cmp_RMI_R(1, ip_RMI_R(rcx), rsi),
         "4038CE",
         "cmpb    %cl, %sil",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(rcx), r10),
+        i_Cmp_RMI_R(1, ip_RMI_R(rcx), r10),
         "4138CA",
         "cmpb    %cl, %r10b",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(rcx), r14),
+        i_Cmp_RMI_R(1, ip_RMI_R(rcx), r14),
         "4138CE",
         "cmpb    %cl, %r14b",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(rbp), rdx),
+        i_Cmp_RMI_R(1, ip_RMI_R(rbp), rdx),
         "4038EA",
         "cmpb    %bpl, %dl",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(rbp), rsi),
+        i_Cmp_RMI_R(1, ip_RMI_R(rbp), rsi),
         "4038EE",
         "cmpb    %bpl, %sil",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(rbp), r10),
+        i_Cmp_RMI_R(1, ip_RMI_R(rbp), r10),
         "4138EA",
         "cmpb    %bpl, %r10b",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(rbp), r14),
+        i_Cmp_RMI_R(1, ip_RMI_R(rbp), r14),
         "4138EE",
         "cmpb    %bpl, %r14b",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(r9), rdx),
+        i_Cmp_RMI_R(1, ip_RMI_R(r9), rdx),
         "4438CA",
         "cmpb    %r9b, %dl",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(r9), rsi),
+        i_Cmp_RMI_R(1, ip_RMI_R(r9), rsi),
         "4438CE",
         "cmpb    %r9b, %sil",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(r9), r10),
+        i_Cmp_RMI_R(1, ip_RMI_R(r9), r10),
         "4538CA",
         "cmpb    %r9b, %r10b",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(r9), r14),
+        i_Cmp_RMI_R(1, ip_RMI_R(r9), r14),
         "4538CE",
         "cmpb    %r9b, %r14b",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(r13), rdx),
+        i_Cmp_RMI_R(1, ip_RMI_R(r13), rdx),
         "4438EA",
         "cmpb    %r13b, %dl",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(r13), rsi),
+        i_Cmp_RMI_R(1, ip_RMI_R(r13), rsi),
         "4438EE",
         "cmpb    %r13b, %sil",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(r13), r10),
+        i_Cmp_RMI_R(1, ip_RMI_R(r13), r10),
         "4538EA",
         "cmpb    %r13b, %r10b",
     ));
     insns.push((
-        i_Cmp_RMI_R(1, RMI_R(r13), r14),
+        i_Cmp_RMI_R(1, ip_RMI_R(r13), r14),
         "4538EE",
         "cmpb    %r13b, %r14b",
     ));
 
     // ========================================================
     // Push64
-    insns.push((i_Push64(RMI_R(rdi)), "57", "pushq   %rdi"));
-    insns.push((i_Push64(RMI_R(r8)), "4150", "pushq   %r8"));
+    insns.push((i_Push64(ip_RMI_R(rdi)), "57", "pushq   %rdi"));
+    insns.push((i_Push64(ip_RMI_R(r8)), "4150", "pushq   %r8"));
     insns.push((
-        i_Push64(RMI_M(Addr_IRRS(321, rsi, rcx, 3))),
+        i_Push64(ip_RMI_M(ip_Addr_IRRS(321, rsi, rcx, 3))),
         "FFB4CE41010000",
         "pushq   321(%rsi,%rcx,8)",
     ));
     insns.push((
-        i_Push64(RMI_M(Addr_IRRS(321, r9, rbx, 2))),
+        i_Push64(ip_RMI_M(ip_Addr_IRRS(321, r9, rbx, 2))),
         "41FFB49941010000",
         "pushq   321(%r9,%rbx,4)",
     ));
-    insns.push((i_Push64(RMI_I(0)), "6A00", "pushq   $0"));
-    insns.push((i_Push64(RMI_I(127)), "6A7F", "pushq   $127"));
-    insns.push((i_Push64(RMI_I(128)), "6880000000", "pushq   $128"));
+    insns.push((i_Push64(ip_RMI_I(0)), "6A00", "pushq   $0"));
+    insns.push((i_Push64(ip_RMI_I(127)), "6A7F", "pushq   $127"));
+    insns.push((i_Push64(ip_RMI_I(128)), "6880000000", "pushq   $128"));
     insns.push((
-        i_Push64(RMI_I(0x31415927)),
+        i_Push64(ip_RMI_I(0x31415927)),
         "6827594131",
         "pushq   $826366247",
     ));
-    insns.push((i_Push64(RMI_I(-128i32 as u32)), "6A80", "pushq   $-128"));
+    insns.push((i_Push64(ip_RMI_I(-128i32 as u32)), "6A80", "pushq   $-128"));
     insns.push((
-        i_Push64(RMI_I(-129i32 as u32)),
+        i_Push64(ip_RMI_I(-129i32 as u32)),
         "687FFFFFFF",
         "pushq   $-129",
     ));
     insns.push((
-        i_Push64(RMI_I(-0x75c4e8a1i32 as u32)),
+        i_Push64(ip_RMI_I(-0x75c4e8a1i32 as u32)),
         "685F173B8A",
         "pushq   $-1975838881",
     ));
@@ -4166,15 +4224,15 @@ fn test_x64_insn_encoding_and_printing() {
 
     // ========================================================
     // JmpUnknown
-    insns.push((i_JmpUnknown(RM_R(rbp)), "FFE5", "jmp     *%rbp"));
-    insns.push((i_JmpUnknown(RM_R(r11)), "41FFE3", "jmp     *%r11"));
+    insns.push((i_JmpUnknown(ip_RM_R(rbp)), "FFE5", "jmp     *%rbp"));
+    insns.push((i_JmpUnknown(ip_RM_R(r11)), "41FFE3", "jmp     *%r11"));
     insns.push((
-        i_JmpUnknown(RM_M(Addr_IRRS(321, rsi, rcx, 3))),
+        i_JmpUnknown(ip_RM_M(ip_Addr_IRRS(321, rsi, rcx, 3))),
         "FFA4CE41010000",
         "jmp     *321(%rsi,%rcx,8)",
     ));
     insns.push((
-        i_JmpUnknown(RM_M(Addr_IRRS(321, r10, rdx, 2))),
+        i_JmpUnknown(ip_RM_M(ip_Addr_IRRS(321, r10, rdx, 2))),
         "41FFA49241010000",
         "jmp     *321(%r10,%rdx,4)",
     ));
@@ -4187,15 +4245,15 @@ fn test_x64_insn_encoding_and_printing() {
 
     // ========================================================
     // CallUnknown
-    insns.push((i_CallUnknown(RM_R(rbp)), "FFD5", "call    *%rbp"));
-    insns.push((i_CallUnknown(RM_R(r11)), "41FFD3", "call    *%r11"));
+    insns.push((i_CallUnknown(ip_RM_R(rbp)), "FFD5", "call    *%rbp"));
+    insns.push((i_CallUnknown(ip_RM_R(r11)), "41FFD3", "call    *%r11"));
     insns.push((
-        i_CallUnknown(RM_M(Addr_IRRS(321, rsi, rcx, 3))),
+        i_CallUnknown(ip_RM_M(ip_Addr_IRRS(321, rsi, rcx, 3))),
         "FF94CE41010000",
         "call    *321(%rsi,%rcx,8)",
     ));
     insns.push((
-        i_CallUnknown(RM_M(Addr_IRRS(321, r10, rdx, 2))),
+        i_CallUnknown(ip_RM_M(ip_Addr_IRRS(321, r10, rdx, 2))),
         "41FF949241010000",
         "call    *321(%r10,%rdx,4)",
     ));
