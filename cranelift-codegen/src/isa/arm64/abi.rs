@@ -221,7 +221,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         self.stackslots.len()
     }
 
-    fn load_arg(&self, idx: usize, into_reg: Writable<Reg>) -> Inst {
+    fn gen_copy_arg_to_reg(&self, idx: usize, into_reg: Writable<Reg>) -> Inst {
         match &self.args[idx] {
             &ABIArg::Reg(r) => {
                 return Inst::gen_move(into_reg, r.to_reg());
@@ -230,7 +230,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         }
     }
 
-    fn store_retval(&self, idx: usize, from_reg: Reg) -> Inst {
+    fn gen_copy_reg_to_retval(&self, idx: usize, from_reg: Reg) -> Inst {
         match &self.rets[idx] {
             &ABIRet::Reg(r) => {
                 return Inst::gen_move(Writable::from_reg(r.to_reg()), from_reg);

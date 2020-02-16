@@ -45,11 +45,11 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn load_arg(&self, _idx: usize, _into_reg: Writable<Reg>) -> Inst {
+    fn gen_copy_arg_to_reg(&self, _idx: usize, _into_reg: Writable<Reg>) -> Inst {
         unimplemented!()
     }
 
-    fn store_retval(&self, _idx: usize, _from_reg: Reg) -> Inst {
+    fn gen_copy_reg_to_retval(&self, _idx: usize, _from_reg: Reg) -> Inst {
         unimplemented!()
     }
 

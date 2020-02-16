@@ -23,11 +23,13 @@ pub trait ABIBody<I: VCodeInst> {
     /// Number of stack slots (not spill slots).
     fn num_stackslots(&self) -> usize;
 
-    /// Generate an argument load sequence, given a destination register.
-    fn load_arg(&self, idx: usize, into_reg: Writable<Reg>) -> I;
+    /// Generate an instruction which copies an argument to a destination
+    /// register.
+    fn gen_copy_arg_to_reg(&self, idx: usize, into_reg: Writable<Reg>) -> I;
 
-    /// Generate a return-value store sequence, given a source register.
-    fn store_retval(&self, idx: usize, from_reg: Reg) -> I;
+    /// Generate an instruction which copies a source register to a return
+    /// value slot.
+    fn gen_copy_reg_to_retval(&self, idx: usize, from_reg: Reg) -> I;
 
     // -----------------------------------------------------------------
     // Every function above this line may only be called pre-regalloc.

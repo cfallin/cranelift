@@ -185,15 +185,15 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         if let Some(entry_bb) = self.f.layout.entry_block() {
             for (i, param) in self.f.dfg.block_params(entry_bb).iter().enumerate() {
                 let reg = Writable::from_reg(self.value_regs[*param]);
-                let insn = self.vcode.abi().load_arg(i, reg);
+                let insn = self.vcode.abi().gen_copy_arg_to_reg(i, reg);
                 self.vcode.push(insn);
             }
         }
     }
 
     fn gen_retval_setup(&mut self) {
-        for (i, r) in self.retval_regs.iter().enumerate() {
-            let insn = self.vcode.abi().store_retval(i, *r);
+        for (i, reg) in self.retval_regs.iter().enumerate() {
+            let insn = self.vcode.abi().gen_copy_reg_to_retval(i, *reg);
             self.vcode.push(insn);
         }
     }
