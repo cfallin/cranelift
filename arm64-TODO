@@ -6,6 +6,9 @@ TODO:
                   select, fconst, stack_load, stack_store
   - widening: I8, I16
     - see signed-divide and bit ops for special cases
+    - (sewardj 2020Feb16: let's discuss before implementing? I think
+       dealing with I8/I16 ops directly in the isel is simple and gives
+       good results)
   - narrowing: I128
 
   - Document which opcodes should for sure not appear in legalized code.
