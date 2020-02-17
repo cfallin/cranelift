@@ -506,7 +506,6 @@ use regalloc::{RealReg, Reg, RegClass, VirtualReg};
 //zz                 let abi_reg = xreg(0);
 //zz                 ctx.emit(Inst::gen_move(abi_reg, retval));
 //zz             }
-//zz             ctx.emit(Inst::Ret {});
 //zz         }
 //zz
 //zz         // TODO: cmp
@@ -676,10 +675,6 @@ impl LowerBackend for X64Backend {
         //zz                     // normal fallthrough. TODO: Do we need to handle this
         //zz                     // differently?
         //zz                     unimplemented!();
-        //zz                 }
-        //zz
-        //zz                 Opcode::Return => {
-        //zz                     ctx.emit(Inst::Ret {});
         //zz                 }
         //zz
         //zz                 Opcode::Trap => unimplemented!(),

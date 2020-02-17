@@ -196,6 +196,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             let insn = self.vcode.abi().gen_copy_reg_to_retval(i, *reg);
             self.vcode.push(insn);
         }
+        let ret = self.vcode.abi().gen_ret();
+        self.vcode.push(ret);
     }
 
     /// Lower the function.

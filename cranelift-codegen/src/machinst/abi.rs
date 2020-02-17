@@ -31,6 +31,9 @@ pub trait ABIBody<I: VCodeInst> {
     /// value slot.
     fn gen_copy_reg_to_retval(&self, idx: usize, from_reg: Reg) -> I;
 
+    /// Generate a return instruction.
+    fn gen_ret(&self) -> I;
+
     // -----------------------------------------------------------------
     // Every function above this line may only be called pre-regalloc.
     // Every function below this line may only be called post-regalloc.

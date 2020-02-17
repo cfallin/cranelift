@@ -57,7 +57,7 @@ fn get_intreg_for_arg_ELF(idx: usize) -> Option<Reg> {
         3 => Some(reg_RCX()),
         4 => Some(reg_R8()),
         5 => Some(reg_R9()),
-        _ => None
+        _ => None,
     }
 }
 
@@ -65,7 +65,7 @@ fn get_intreg_for_retval_ELF(idx: usize) -> Option<Reg> {
     match idx {
         0 => Some(reg_RAX()),
         1 => Some(reg_RDX()), // is that correct?
-        _ => None
+        _ => None,
     }
 }
 
@@ -79,8 +79,7 @@ impl X64ABIBody {
         let mut next_int_arg = 0;
         for param in &f.signature.params {
             let mut ok = false;
-            if &param.purpose == &ir::ArgumentPurpose::Normal
-                && in_int_reg(param.value_type) {
+            if &param.purpose == &ir::ArgumentPurpose::Normal && in_int_reg(param.value_type) {
                 if let Some(reg) = get_intreg_for_arg_ELF(next_int_arg) {
                     args.push(ABIArg::Reg(reg.to_real_reg()));
                     ok = true;
@@ -96,8 +95,7 @@ impl X64ABIBody {
         let mut next_int_retval = 0;
         for ret in &f.signature.returns {
             let mut ok = false;
-            if &ret.purpose == &ir::ArgumentPurpose::Normal
-                && in_int_reg(ret.value_type) {
+            if &ret.purpose == &ir::ArgumentPurpose::Normal && in_int_reg(ret.value_type) {
                 if let Some(reg) = get_intreg_for_retval_ELF(next_int_retval) {
                     rets.push(ABIRet::Reg(reg.to_real_reg()));
                     ok = true;
@@ -170,15 +168,23 @@ impl ABIBody<Inst> for X64ABIBody {
 
     fn gen_copy_arg_to_reg(&self, idx: usize, to_reg: Writable<Reg>) -> Inst {
         if let Some(from_reg) = get_intreg_for_arg_ELF(idx) {
-            return i_Mov_R_R(/*is64=*/true, from_reg, to_reg);
+            return i_Mov_R_R(/*is64=*/ true, from_reg, to_reg);
         }
         unimplemented!()
     }
 
     fn gen_copy_reg_to_retval(&self, idx: usize, from_reg: Reg) -> Inst {
         if let Some(to_reg) = get_intreg_for_retval_ELF(idx) {
-            return i_Mov_R_R(/*is64=*/true, from_reg, Writable::<Reg>::from_reg(to_reg));
+            return i_Mov_R_R(
+                /*is64=*/ true,
+                from_reg,
+                Writable::<Reg>::from_reg(to_reg),
+            );
         }
+        unimplemented!()
+    }
+
+    fn gen_ret(&self) -> Inst {
         unimplemented!()
     }
 

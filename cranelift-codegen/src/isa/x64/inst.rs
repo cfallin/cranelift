@@ -3234,7 +3234,11 @@ fn test_x64_insn_encoding_and_printing() {
     // Mov_R_R
     insns.push((i_Mov_R_R(false, rbx, w_rsi), "89DE", "movl    %ebx, %esi"));
     insns.push((i_Mov_R_R(false, rbx, w_r9), "4189D9", "movl    %ebx, %r9d"));
-    insns.push((i_Mov_R_R(false, r11, w_rsi), "4489DE", "movl    %r11d, %esi"));
+    insns.push((
+        i_Mov_R_R(false, r11, w_rsi),
+        "4489DE",
+        "movl    %r11d, %esi",
+    ));
     insns.push((i_Mov_R_R(false, r12, w_r9), "4589E1", "movl    %r12d, %r9d"));
     insns.push((i_Mov_R_R(true, rbx, w_rsi), "4889DE", "movq    %rbx, %rsi"));
     insns.push((i_Mov_R_R(true, rbx, w_r9), "4989D9", "movq    %rbx, %r9"));
@@ -4094,7 +4098,11 @@ fn test_x64_insn_encoding_and_printing() {
         "403A7763",
         "cmpb    99(%rdi), %sil",
     ));
-    insns.push((i_Cmp_RMI_R(1, ip_RMI_I(70), rdx), "80FA46", "cmpb    $70, %dl"));
+    insns.push((
+        i_Cmp_RMI_R(1, ip_RMI_I(70), rdx),
+        "80FA46",
+        "cmpb    $70, %dl",
+    ));
     insns.push((
         i_Cmp_RMI_R(1, ip_RMI_I(-76i32 as u32), r8),
         "4180F8B4",
@@ -4106,9 +4114,21 @@ fn test_x64_insn_encoding_and_printing() {
         "cmpb    $76, %sil",
     ));
     // Extra byte-cases (paranoia!) for Cmp_RMI_R for first operand = R
-    insns.push((i_Cmp_RMI_R(1, ip_RMI_R(rax), rbx), "38C3", "cmpb    %al, %bl"));
-    insns.push((i_Cmp_RMI_R(1, ip_RMI_R(rbx), rax), "38D8", "cmpb    %bl, %al"));
-    insns.push((i_Cmp_RMI_R(1, ip_RMI_R(rcx), rdx), "38CA", "cmpb    %cl, %dl"));
+    insns.push((
+        i_Cmp_RMI_R(1, ip_RMI_R(rax), rbx),
+        "38C3",
+        "cmpb    %al, %bl",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, ip_RMI_R(rbx), rax),
+        "38D8",
+        "cmpb    %bl, %al",
+    ));
+    insns.push((
+        i_Cmp_RMI_R(1, ip_RMI_R(rcx), rdx),
+        "38CA",
+        "cmpb    %cl, %dl",
+    ));
     insns.push((
         i_Cmp_RMI_R(1, ip_RMI_R(rcx), rsi),
         "4038CE",

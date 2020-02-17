@@ -15,6 +15,8 @@ use alloc::vec::Vec;
 
 use regalloc::{RealReg, Reg, RegClass, Set, SpillSlot, Writable};
 
+use log::debug;
+
 #[derive(Clone, Debug)]
 enum ABIArg {
     Reg(RealReg),
@@ -239,6 +241,10 @@ impl ABIBody<Inst> for ARM64ABIBody {
         }
     }
 
+    fn gen_ret(&self) -> Inst {
+        Inst::Ret {}
+    }
+
     fn set_num_spillslots(&mut self, slots: usize) {
         self.spillslots = Some(slots);
     }
@@ -409,6 +415,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
             ),
         });
         insts.push(Inst::Ret {});
+        debug!("Epilogue: {:?}", insts);
         insts
     }
 
