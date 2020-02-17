@@ -19,13 +19,15 @@ where
     // This lowers the CL IR.
     let mut vcode = Lower::new(f, abi).lower(b);
 
-    debug!("vcode from lowering:\n{:?}", vcode);
+    let universe = &B::MInst::reg_universe();
+
+    debug!("vcode from lowering: \n{}", vcode.show_rru(Some(universe)));
 
     // Perform register allocation.
     let result = allocate_registers(
         &mut vcode,
         RegAllocAlgorithm::Backtracking,
-        &B::MInst::reg_universe(),
+        universe,
     )
     .expect("register allocation");
 
@@ -33,16 +35,17 @@ where
     // all at once. This also inserts prologues/epilogues.
     vcode.replace_insns_from_regalloc(result);
 
-    debug!("vcode after regalloc:\n{:?}", vcode);
+    debug!("vcode after regalloc:\n{}", vcode.show_rru(Some(universe)));
 
     vcode.remove_redundant_branches();
 
-    debug!("vcode after removing redundant branches:\n{:?}", vcode);
+    debug!("vcode after removing redundant branches:\n{}",
+           vcode.show_rru(Some(universe)));
 
     // Do final passes over code to finalize branches.
     vcode.finalize_branches();
 
-    debug!("final VCode:\n{:?}", vcode);
+    debug!("final VCode:\n{}", vcode.show_rru(Some(universe)));
 
     //println!("{}\n", vcode.show_rru(Some(&B::MInst::reg_universe())));
 

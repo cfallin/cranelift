@@ -622,17 +622,17 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
 
 impl<I: VCodeInst> fmt::Debug for VCode<I> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "VCode {{")?;
+        writeln!(f, "VCode_Debug {{")?;
         writeln!(f, "  Entry block: {}", self.entry)?;
         writeln!(f, "  Final block order: {:?}", self.final_block_order)?;
 
         for block in 0..self.num_blocks() {
             writeln!(f, "Block {}:", block,)?;
             for succ in self.succs(block as BlockIndex) {
-                writeln!(f, "    (successor: Block {})", succ)?;
+                writeln!(f, "  (successor: Block {})", succ)?;
             }
             let (start, end) = self.block_ranges[block];
-            writeln!(f, "    (instruction range: {} .. {})", start, end)?;
+            writeln!(f, "  (instruction range: {} .. {})", start, end)?;
             for inst in start..end {
                 writeln!(f, "  Inst {}: {:?}", inst, self.insts[inst as usize])?;
             }
@@ -647,14 +647,36 @@ impl<I: VCodeInst> fmt::Debug for VCode<I> {
 impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         use std::fmt::Write;
+        use crate::alloc::string::ToString;
+
         let mut s = String::new();
-        for block in &self.final_block_order {
-            writeln!(s, "block{}:", block).expect("write");
-            let (start, end) = self.block_ranges[*block as usize];
+        s = s + &format!("VCode_ShowWithRRU {{{{");
+        s = s + &"\n".to_string();
+        s = s + &format!("  Entry block: {}", self.entry);
+        s = s + &"\n".to_string();
+        s = s + &format!("  Final block order: {:?}", self.final_block_order);
+        s = s + &"\n".to_string();
+
+        for block in 0..self.num_blocks() {
+            s = s + &format!("Block {}:", block);
+            s = s + &"\n".to_string();
+            for succ in self.succs(block as BlockIndex) {
+                s = s + &format!("  (successor: Block {})", succ);
+                s = s + &"\n".to_string();
+            }
+            let (start, end) = self.block_ranges[block];
+            s = s + &format!("  (instruction range: {} .. {})", start, end);
+            s = s + &"\n".to_string();
             for inst in start..end {
-                writeln!(s, "  {}", self.insts[inst as usize].show_rru(mb_rru)).expect("write");
+                s = s + &format!("  Inst {}:   {}", inst,
+                                 self.insts[inst as usize].show_rru(mb_rru));
+                s = s + &"\n".to_string();
             }
         }
+
+        s = s + &format!("}}}}");
+        s = s + &"\n".to_string();
+
         s
     }
 }
