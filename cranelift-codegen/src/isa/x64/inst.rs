@@ -2062,6 +2062,15 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
                 }
             }
         }
+        Inst::Pop64 { dst } => {
+            let encDst = iregEnc(*dst);
+            if encDst >= 8 {
+                // 0x41 == REX.{W=0, B=1}.  It seems that REX.W is irrelevant
+                // here.
+                sink.put1(0x41);
+            }
+            sink.put1(0x58 + (encDst & 7));
+        }
         // Inst::JmpKnown
         Inst::JmpUnknown { target } => {
             match target {
@@ -2246,7 +2255,7 @@ fn test_x64_insn_encoding_and_printing() {
     let r15 = info_R15().0.to_reg();
 
     // And Writable<> versions of the same:
-    let _w_rax = Writable::<Reg>::from_reg(info_RAX().0.to_reg());
+    let w_rax = Writable::<Reg>::from_reg(info_RAX().0.to_reg());
     let w_rbx = Writable::<Reg>::from_reg(info_RBX().0.to_reg());
     let w_rcx = Writable::<Reg>::from_reg(info_RCX().0.to_reg());
     let w_rdx = Writable::<Reg>::from_reg(info_RDX().0.to_reg());
@@ -2261,7 +2270,7 @@ fn test_x64_insn_encoding_and_printing() {
     let w_r12 = Writable::<Reg>::from_reg(info_R12().0.to_reg());
     let w_r13 = Writable::<Reg>::from_reg(info_R13().0.to_reg());
     let w_r14 = Writable::<Reg>::from_reg(info_R14().0.to_reg());
-    let _w_r15 = Writable::<Reg>::from_reg(info_R15().0.to_reg());
+    let w_r15 = Writable::<Reg>::from_reg(info_R15().0.to_reg());
 
     let mut insns = Vec::<(Inst, &str, &str)>::new();
 
@@ -4260,6 +4269,13 @@ fn test_x64_insn_encoding_and_printing() {
         "685F173B8A",
         "pushq   $-1975838881",
     ));
+
+    // ========================================================
+    // Pop64
+    insns.push((i_Pop64(w_rax), "58", "popq    %rax"));
+    insns.push((i_Pop64(w_rdi), "5F", "popq    %rdi"));
+    insns.push((i_Pop64(w_r8), "4158", "popq    %r8"));
+    insns.push((i_Pop64(w_r15), "415F", "popq    %r15"));
 
     // ========================================================
     // JmpKnown skipped for now
