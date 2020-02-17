@@ -65,10 +65,12 @@ pub trait ABIBody<I: VCodeInst> {
     /// Store to a spillslot.
     fn store_spillslot(&self, slot: SpillSlot, ty: Type, from_reg: Reg) -> I;
 
-    /// Generate a prologue, post-regalloc. This should include any stack frame
-    /// or other setup necessary to use the other methods (`load_arg`,
-    /// `store_retval`, and spillslot accesses.)
-    fn gen_prologue(&self) -> Vec<I>;
+    /// Generate a prologue, post-regalloc. This should include any stack
+    /// frame or other setup necessary to use the other methods (`load_arg`,
+    /// `store_retval`, and spillslot accesses.)  |self| is mutable so that we
+    /// can store information in it which will be useful when creating the
+    /// epilogue.
+    fn gen_prologue(&mut self) -> Vec<I>;
 
     /// Generate an epilogue, post-regalloc. Note that this must generate the
     /// actual return instruction (rather than emitting this in the lowering

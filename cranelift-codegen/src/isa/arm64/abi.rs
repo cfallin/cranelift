@@ -293,7 +293,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
         store_stack(fp_off, from_reg, ty)
     }
 
-    fn gen_prologue(&self) -> Vec<Inst> {
+    fn gen_prologue(&mut self) -> Vec<Inst> {
         let mut insts = vec![];
         let total_stacksize = self.stackslots_size + 8 * self.spillslots.unwrap();
         let total_stacksize = (total_stacksize + 15) & !15; // 16-align the stack.

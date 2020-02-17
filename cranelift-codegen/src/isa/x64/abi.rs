@@ -38,6 +38,10 @@ pub struct X64ABIBody {
     stackslots_size: usize,            // total stack size of all stackslots
     clobbered: Set<Writable<RealReg>>, // clobbered registers, from regalloc.
     spillslots: Option<usize>,         // total number of spillslots, from regalloc.
+    // Calculated while creating the prologue, and used when creating the
+    // epilogue.  Amount by which RSP is adjusted downwards to allocate the
+    // spill area.
+    spill_area_sizeB: Option<usize>
 }
 
 // Clone of arm64 version
@@ -67,6 +71,26 @@ fn get_intreg_for_retval_ELF(idx: usize) -> Option<Reg> {
         1 => Some(reg_RDX()), // is that correct?
         _ => None,
     }
+}
+
+fn is_callee_save_ELF(r: RealReg) -> bool {
+    match r.get_class() {
+        RegClass::I64 => {
+            match r.get_hw_encoding() as u8 {
+                ENC_RBX | ENC_RBP | ENC_R12 | ENC_R13 | ENC_R14 | ENC_R15
+                    => true,
+                _ => false
+            }
+        },
+        _ => unimplemented!()
+    }
+}
+
+// Clone of arm64 version
+fn get_callee_saves(regs: Vec<Writable<RealReg>>) -> Vec<Writable<RealReg>> {
+    regs.into_iter()
+        .filter(|r| is_callee_save_ELF(r.to_reg()))
+        .collect()
 }
 
 impl X64ABIBody {
@@ -125,6 +149,7 @@ impl X64ABIBody {
             stackslots_size: stack_offset,
             clobbered: Set::empty(),
             spillslots: None,
+            spill_area_sizeB: None
         }
     }
 }
@@ -188,12 +213,14 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn set_num_spillslots(&mut self, _slots: usize) {
-        unimplemented!()
+    // Clone of arm64
+    fn set_num_spillslots(&mut self, slots: usize) {
+        self.spillslots = Some(slots);
     }
 
-    fn set_clobbered(&mut self, _clobbered: Set<Writable<RealReg>>) {
-        unimplemented!()
+    // Clone of arm64
+    fn set_clobbered(&mut self, clobbered: Set<Writable<RealReg>>) {
+        self.clobbered = clobbered;
     }
 
     fn load_stackslot(
@@ -218,12 +245,97 @@ impl ABIBody<Inst> for X64ABIBody {
         unimplemented!()
     }
 
-    fn gen_prologue(&self) -> Vec<Inst> {
-        unimplemented!()
+    fn gen_prologue(&mut self) -> Vec<Inst> {
+        let mut insts = vec![];
+        let total_stacksize = self.stackslots_size + 8 * self.spillslots.unwrap();
+        let total_stacksize = (total_stacksize + 15) & !15; // 16-align the stack
+
+        let r_rbp = reg_RBP();
+        let r_rsp = reg_RSP();
+        let w_rbp = Writable::<Reg>::from_reg(r_rbp);
+        let w_rsp = Writable::<Reg>::from_reg(r_rsp);
+
+        // The "traditional" pre-preamble
+        // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
+        insts.push(i_Push64(ip_RMI_R(r_rbp)));
+        // RSP is now 0 % 16
+        insts.push(i_Mov_R_R(true, r_rsp, w_rbp));
+
+        // Save callee saved registers that we trash.  Keep track of how much
+        // space we've used, so as to know what we have to do to get the base
+        // of the spill area 0 % 16.
+        let mut callee_saved_used = 0;
+        let clobbered = get_callee_saves(self.clobbered.to_vec());
+        for reg in clobbered {
+            let r_reg = reg.to_reg();
+            match r_reg.get_class() {
+                RegClass::I64 => {
+                    insts.push(i_Push64(ip_RMI_R(r_reg.to_reg())));
+                    callee_saved_used += 8;
+                },
+                _ => unimplemented!()
+            }
+        }
+
+        // Allocate the frame.  Now, be careful: RSP may now not be 0 % 16.
+        // If it isn't, increase total_stacksize to compensate.  Because
+        // total_stacksize is 0 % 16, this ensures that RSP after this
+        // subtraction, is still 16 aligned.
+        let spill_area_sizeB = total_stacksize + ((16 - callee_saved_used) % 16);
+        if spill_area_sizeB >= 0 {
+            // FIXME JRS 2020Feb16: what if spill_area_size >= 2G?
+            insts.push(i_Alu_RMI_R(true, RMI_R_Op::Sub,
+                                   ip_RMI_I(spill_area_sizeB as u32), w_rsp));
+        }
+        debug_assert!(self.spill_area_sizeB.is_none());
+        // Stash this value.  We'll need it for the epilogue.
+        self.spill_area_sizeB = Some(spill_area_sizeB);
+
+        insts
     }
 
     fn gen_epilogue(&self) -> Vec<Inst> {
-        unimplemented!()
+        let mut insts = vec![];
+        let r_rbp = reg_RBP();
+        let r_rsp = reg_RSP();
+        let w_rbp = Writable::<Reg>::from_reg(r_rbp);
+        let w_rsp = Writable::<Reg>::from_reg(r_rsp);
+
+        // Undo what we did in the prologue.
+
+        // Clear the spill area and the 16-alignment padding below it.
+        debug_assert!(self.spill_area_sizeB.is_some());
+        let spill_area_sizeB = self.spill_area_sizeB.unwrap();
+        if spill_area_sizeB >= 0 {
+            // FIXME JRS 2020Feb16: what if spill_area_size >= 2G?
+            insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add,
+                                   ip_RMI_I(spill_area_sizeB as u32), w_rsp));
+        }
+
+        // Restore regs.
+        let mut tmp_insts = vec![];
+        let clobbered = get_callee_saves(self.clobbered.to_vec());
+        for w_real_reg in clobbered {
+            match w_real_reg.to_reg().get_class() {
+                RegClass::I64 => {
+                    // TODO: make these conversion sequences less cumbersome.
+                    tmp_insts.push(i_Pop64(Writable::<Reg>::from_reg(w_real_reg.to_reg().to_reg())))
+                },
+                _ => unimplemented!()
+            }
+        }
+        tmp_insts.reverse();
+        for i in tmp_insts {
+            insts.push(i);
+        }
+
+        // Undo the "traditional" pre-preamble
+        // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
+        // uhhhh .. insts.push(i_Mov_R_R(true, r_rbp, w_rsp));
+        insts.push(i_Pop64(w_rbp));
+
+        insts.push(i_Ret());
+        insts
     }
 
     fn get_spillslot_size(&self, rc: RegClass, ty: Type) -> u32 {
