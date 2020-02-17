@@ -88,6 +88,33 @@ pub trait ABIBody<I: VCodeInst> {
 
 /// Trait implemented by an object that tracks ABI-related state and can
 /// generate code while emitting a *call* to a function.
+///
+/// An instance of this trait returns information for a *particular*
+/// callsite. It will usually be computed from the called function's
+/// signature.
+///
+/// Unlike `ABIBody` above, methods on this trait are not invoked directly
+/// by the machine-independent code. Rather, the machine-specific lowering
+/// code will typically create an `ABICall` when creating machine instructions
+/// for an IR call instruction inside `lower()`, directly emit the arg and
+/// and retval copies, and attach the
 pub trait ABICall<I: VCodeInst> {
-    // TODO.
+    /// Save the clobbered registers.
+    /// Copy an argument value from a source register, prior to the call.
+    fn gen_copy_reg_to_arg(&self, idx: usize, from_reg: Reg) -> I;
+
+    /// Copy a return value into a destination register, after the call returns.
+    fn gen_copy_retval_to_reg(&self, idx: usize, into_reg: Writable<Reg>) -> I;
+
+    /// Generate the call itself.
+    ///
+    /// The returned instruction should have proper use- and def-sets according
+    /// to the argument registers, return-value registers, and clobbered
+    /// registers for this function signature in this ABI.
+    ///
+    /// (Arg registers are uses, and retval registers are defs. Clobbered
+    /// registers are also logically defs, but should never be read; their
+    /// values are "defined" (to the regalloc) but "undefined" in every other
+    /// sense.)
+    fn gen_call(&self) -> I;
 }
