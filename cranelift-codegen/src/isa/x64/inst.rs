@@ -711,7 +711,7 @@ pub enum Inst {
 
     /// popq reg
     Pop64 {
-        dst: Reg
+        dst: Reg,
     },
 
     /// jmp simm32
@@ -1024,9 +1024,7 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
         Inst::Push64 { src } => {
             format!("{} {}", ljustify("pushq".to_string()), src.show_rru(mb_rru))
         }
-        Inst::Pop64 { dst } => {
-            format!("{} {}", ljustify("popq".to_string()), dst.show_rru(mb_rru))
-        },
+        Inst::Pop64 { dst } => format!("{} {}", ljustify("popq".to_string()), dst.show_rru(mb_rru)),
         Inst::JmpKnown { simm32 } => format!("{} simm32={}", ljustify("jmp".to_string()), *simm32),
         Inst::JmpUnknown { target } => format!(
             "{} *{}",
@@ -1185,7 +1183,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
         }
         Inst::Pop64 { dst } => {
             iru.defined.insert(Writable::from_reg(*dst));
-        },
+        }
         Inst::JmpKnown { simm32: _ } => {}
         Inst::JmpUnknown { target } => {
             target.get_regs(&mut iru.used);
@@ -2152,8 +2150,7 @@ impl MachInst for Inst {
     fn is_term(&self) -> MachTerminator {
         match self {
             &Inst::Ret {} => MachTerminator::Ret,
-            &Inst::Alu_RMI_R { .. } |
-            &Inst::Mov_R_R { .. } => MachTerminator::None,
+            &Inst::Alu_RMI_R { .. } | &Inst::Mov_R_R { .. } => MachTerminator::None,
             _ => {
                 println!("QQQQ {}", self.show_rru(None));
                 unimplemented!()

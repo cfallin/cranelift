@@ -41,7 +41,7 @@ pub struct X64ABIBody {
     // Calculated while creating the prologue, and used when creating the
     // epilogue.  Amount by which RSP is adjusted downwards to allocate the
     // spill area.
-    spill_area_sizeB: Option<usize>
+    spill_area_sizeB: Option<usize>,
 }
 
 // Clone of arm64 version
@@ -75,14 +75,11 @@ fn get_intreg_for_retval_ELF(idx: usize) -> Option<Reg> {
 
 fn is_callee_save_ELF(r: RealReg) -> bool {
     match r.get_class() {
-        RegClass::I64 => {
-            match r.get_hw_encoding() as u8 {
-                ENC_RBX | ENC_RBP | ENC_R12 | ENC_R13 | ENC_R14 | ENC_R15
-                    => true,
-                _ => false
-            }
+        RegClass::I64 => match r.get_hw_encoding() as u8 {
+            ENC_RBX | ENC_RBP | ENC_R12 | ENC_R13 | ENC_R14 | ENC_R15 => true,
+            _ => false,
         },
-        _ => unimplemented!()
+        _ => unimplemented!(),
     }
 }
 
@@ -149,7 +146,7 @@ impl X64ABIBody {
             stackslots_size: stack_offset,
             clobbered: Set::empty(),
             spillslots: None,
-            spill_area_sizeB: None
+            spill_area_sizeB: None,
         }
     }
 }
@@ -272,8 +269,8 @@ impl ABIBody<Inst> for X64ABIBody {
                 RegClass::I64 => {
                     insts.push(i_Push64(ip_RMI_R(r_reg.to_reg())));
                     callee_saved_used += 8;
-                },
-                _ => unimplemented!()
+                }
+                _ => unimplemented!(),
             }
         }
 
@@ -284,8 +281,12 @@ impl ABIBody<Inst> for X64ABIBody {
         let spill_area_sizeB = total_stacksize + ((16 - callee_saved_used) % 16);
         if spill_area_sizeB >= 0 {
             // FIXME JRS 2020Feb16: what if spill_area_size >= 2G?
-            insts.push(i_Alu_RMI_R(true, RMI_R_Op::Sub,
-                                   ip_RMI_I(spill_area_sizeB as u32), w_rsp));
+            insts.push(i_Alu_RMI_R(
+                true,
+                RMI_R_Op::Sub,
+                ip_RMI_I(spill_area_sizeB as u32),
+                w_rsp,
+            ));
         }
         debug_assert!(self.spill_area_sizeB.is_none());
         // Stash this value.  We'll need it for the epilogue.
@@ -308,8 +309,12 @@ impl ABIBody<Inst> for X64ABIBody {
         let spill_area_sizeB = self.spill_area_sizeB.unwrap();
         if spill_area_sizeB >= 0 {
             // FIXME JRS 2020Feb16: what if spill_area_size >= 2G?
-            insts.push(i_Alu_RMI_R(true, RMI_R_Op::Add,
-                                   ip_RMI_I(spill_area_sizeB as u32), w_rsp));
+            insts.push(i_Alu_RMI_R(
+                true,
+                RMI_R_Op::Add,
+                ip_RMI_I(spill_area_sizeB as u32),
+                w_rsp,
+            ));
         }
 
         // Restore regs.
@@ -319,9 +324,11 @@ impl ABIBody<Inst> for X64ABIBody {
             match w_real_reg.to_reg().get_class() {
                 RegClass::I64 => {
                     // TODO: make these conversion sequences less cumbersome.
-                    tmp_insts.push(i_Pop64(Writable::<Reg>::from_reg(w_real_reg.to_reg().to_reg())))
-                },
-                _ => unimplemented!()
+                    tmp_insts.push(i_Pop64(Writable::<Reg>::from_reg(
+                        w_real_reg.to_reg().to_reg(),
+                    )))
+                }
+                _ => unimplemented!(),
             }
         }
         tmp_insts.reverse();
