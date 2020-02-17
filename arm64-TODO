@@ -1,5 +1,10 @@
 TODO:
 
+- Debugging and misc fixups
+  - Ret in epilogue: appears before return-value move?
+  - Whole backend runs twice (see debug spew)?
+  - Ensure that clobbered reg saves in ARM64 ABI consider register class
+
 - Legalization
   - see cranelift-codegen/meta/src/shared/legalize.rs
   - instructions: global_value, heap_addr, table_addr, trapz, trapnz, br_table,
@@ -42,9 +47,6 @@ TODO:
 
 - Limits (handle gracefully / return error from lowering)
   - Jump offsets (19, 26-bit forms)
-  - Spill-slot and argument offsets from FP
-    - reserve a temp register for address computation?
-
 
 - Performance tests vs. SpiderMonkey WASM
   - make sure that cranelift-wasm can run (or wasmtime?)
