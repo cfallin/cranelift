@@ -1,8 +1,6 @@
 TODO:
 
 - Debugging and misc fixups
-  - Ret in epilogue: appears before return-value move?
-  - Whole backend runs twice (see debug spew)?
   - Ensure that clobbered reg saves in ARM64 ABI consider register class
 
 - Legalization
