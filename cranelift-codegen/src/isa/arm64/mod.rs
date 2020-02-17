@@ -107,8 +107,9 @@ mod test {
         let mut stackmaps = NullStackmapSink {};
         let backend = Arm64Backend::new();
         let code = backend
-            .compile_function_to_memory(func, &mut relocs, &mut traps, &mut stackmaps)
-            .unwrap();
+            .compile_function(func, &mut relocs, &mut traps, &mut stackmaps, false)
+            .unwrap()
+            .code;
 
         // stp x29, x30, [sp, #-16]!
         // mov x29, sp
