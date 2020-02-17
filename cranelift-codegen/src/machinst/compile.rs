@@ -24,12 +24,8 @@ where
     debug!("vcode from lowering: \n{}", vcode.show_rru(Some(universe)));
 
     // Perform register allocation.
-    let result = allocate_registers(
-        &mut vcode,
-        RegAllocAlgorithm::Backtracking,
-        universe,
-    )
-    .expect("register allocation");
+    let result = allocate_registers(&mut vcode, RegAllocAlgorithm::Backtracking, universe)
+        .expect("register allocation");
 
     // Reorder vcode into final order and copy out final instruction sequence
     // all at once. This also inserts prologues/epilogues.
@@ -39,8 +35,10 @@ where
 
     vcode.remove_redundant_branches();
 
-    debug!("vcode after removing redundant branches:\n{}",
-           vcode.show_rru(Some(universe)));
+    debug!(
+        "vcode after removing redundant branches:\n{}",
+        vcode.show_rru(Some(universe))
+    );
 
     // Do final passes over code to finalize branches.
     vcode.finalize_branches();

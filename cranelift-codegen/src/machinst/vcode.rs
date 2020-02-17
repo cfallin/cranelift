@@ -646,8 +646,8 @@ impl<I: VCodeInst> fmt::Debug for VCode<I> {
 // Pretty-printing with `RealRegUniverse` context.
 impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
-        use std::fmt::Write;
         use crate::alloc::string::ToString;
+        use std::fmt::Write;
 
         let mut s = String::new();
         s = s + &format!("VCode_ShowWithRRU {{{{");
@@ -668,8 +668,11 @@ impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
             s = s + &format!("  (instruction range: {} .. {})", start, end);
             s = s + &"\n".to_string();
             for inst in start..end {
-                s = s + &format!("  Inst {}:   {}", inst,
-                                 self.insts[inst as usize].show_rru(mb_rru));
+                s = s + &format!(
+                    "  Inst {}:   {}",
+                    inst,
+                    self.insts[inst as usize].show_rru(mb_rru)
+                );
                 s = s + &"\n".to_string();
             }
         }
