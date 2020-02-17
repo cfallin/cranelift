@@ -99,7 +99,9 @@ pub trait ABIBody<I: VCodeInst> {
 /// by the machine-independent code. Rather, the machine-specific lowering
 /// code will typically create an `ABICall` when creating machine instructions
 /// for an IR call instruction inside `lower()`, directly emit the arg and
-/// and retval copies, and attach the
+/// and retval copies, and attach the register use/def info to the call.
+///
+/// This trait is thus provided for convenience to the backends.
 pub trait ABICall<I: VCodeInst> {
     /// Save the clobbered registers.
     /// Copy an argument value from a source register, prior to the call.

@@ -29,10 +29,54 @@ enum ABIRet {
     Mem, // TODO
 }
 
-/// ARM64 ABI object for a function body.
-pub struct ARM64ABIBody {
+/// ARM64 ABI information shared between body (callee) and caller.
+struct ABISig {
     args: Vec<ABIArg>,
     rets: Vec<ABIRet>,
+}
+
+impl ABISig {
+    fn from_func_sig(sig: &ir::Signature) -> ABISig {
+        // Compute args and retvals from signature.
+        let mut args = vec![];
+        let mut next_xreg = 0;
+        for param in &sig.params {
+            if &param.purpose == &ir::ArgumentPurpose::Normal
+                && in_int_reg(param.value_type)
+                && next_xreg < 8
+            {
+                let x = next_xreg;
+                next_xreg += 1;
+                let reg = xreg(x).to_real_reg();
+                args.push(ABIArg::Reg(reg));
+            } else {
+                panic!("Unsupported argument in signature: {:?}", sig);
+            }
+        }
+
+        let mut rets = vec![];
+        next_xreg = 0;
+        for ret in &sig.returns {
+            if &ret.purpose == &ir::ArgumentPurpose::Normal
+                && in_int_reg(ret.value_type)
+                && next_xreg < 8
+            {
+                let x = next_xreg;
+                next_xreg += 1;
+                let reg = xreg(x).to_real_reg();
+                rets.push(ABIRet::Reg(reg));
+            } else {
+                panic!("Unsupported return value in signature: {:?}", sig);
+            }
+        }
+
+        ABISig { args, rets }
+    }
+}
+
+/// ARM64 ABI object for a function body.
+pub struct ARM64ABIBody {
+    sig: ABISig,                       // signature: arg and retval regs
     stackslots: Vec<usize>,            // offsets to each stackslot
     stackslots_size: usize,            // total stack size of all stackslots
     clobbered: Set<Writable<RealReg>>, // clobbered registers, from regalloc.
@@ -52,38 +96,7 @@ impl ARM64ABIBody {
     pub fn new(f: &ir::Function) -> ARM64ABIBody {
         //println!("ARM64 ABI: func signature {:?}", f.signature);
 
-        // Compute args and retvals from signature.
-        let mut args = vec![];
-        let mut next_xreg = 0;
-        for param in &f.signature.params {
-            if &param.purpose == &ir::ArgumentPurpose::Normal
-                && in_int_reg(param.value_type)
-                && next_xreg < 8
-            {
-                let x = next_xreg;
-                next_xreg += 1;
-                let reg = xreg(x).to_real_reg();
-                args.push(ABIArg::Reg(reg));
-            } else {
-                panic!("Unsupported argument in signature: {:?}", f.signature);
-            }
-        }
-
-        let mut rets = vec![];
-        next_xreg = 0;
-        for ret in &f.signature.returns {
-            if &ret.purpose == &ir::ArgumentPurpose::Normal
-                && in_int_reg(ret.value_type)
-                && next_xreg < 8
-            {
-                let x = next_xreg;
-                next_xreg += 1;
-                let reg = xreg(x).to_real_reg();
-                rets.push(ABIRet::Reg(reg));
-            } else {
-                panic!("Unsupported return value in signature: {:?}", f.signature);
-            }
-        }
+        let sig = ABISig::from_func_sig(&f.signature);
 
         // Compute stackslot locations and total stackslot size.
         let mut stack_offset: usize = 0;
@@ -97,8 +110,7 @@ impl ARM64ABIBody {
         }
 
         ARM64ABIBody {
-            args,
-            rets,
+            sig,
             stackslots,
             stackslots_size: stack_offset,
             clobbered: Set::empty(),
@@ -171,17 +183,17 @@ fn get_callee_saves(regs: Vec<Writable<RealReg>>) -> Vec<Writable<RealReg>> {
         .collect()
 }
 
-fn get_caller_saves_set() -> Set<RealReg> {
+fn get_caller_saves_set() -> Set<Writable<Reg>> {
     let mut set = Set::empty();
     for i in 0..32 {
-        let x = xreg(i).to_real_reg();
-        if is_caller_save(x) {
+        let x = writable_xreg(i);
+        if is_caller_save(x.to_reg().to_real_reg()) {
             set.insert(x);
         }
     }
     for i in 0..32 {
-        let v = vreg(i).to_real_reg();
-        if is_caller_save(v) {
+        let v = writable_vreg(i);
+        if is_caller_save(v.to_reg().to_real_reg()) {
             set.insert(v);
         }
     }
@@ -191,32 +203,30 @@ fn get_caller_saves_set() -> Set<RealReg> {
 impl ABIBody<Inst> for ARM64ABIBody {
     fn liveins(&self) -> Set<RealReg> {
         let mut set: Set<RealReg> = Set::empty();
-        for arg in &self.args {
+        for arg in &self.sig.args {
             if let &ABIArg::Reg(r) = arg {
                 set.insert(r);
             }
         }
-        //println!("ARM64 ABI: liveins {:?}", set);
         set
     }
 
     fn liveouts(&self) -> Set<RealReg> {
         let mut set: Set<RealReg> = Set::empty();
-        for ret in &self.rets {
+        for ret in &self.sig.rets {
             if let &ABIRet::Reg(r) = ret {
                 set.insert(r);
             }
         }
-        //println!("ARM64 ABI: liveouts {:?}", set);
         set
     }
 
     fn num_args(&self) -> usize {
-        self.args.len()
+        self.sig.args.len()
     }
 
     fn num_retvals(&self) -> usize {
-        self.rets.len()
+        self.sig.rets.len()
     }
 
     fn num_stackslots(&self) -> usize {
@@ -224,7 +234,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
     }
 
     fn gen_copy_arg_to_reg(&self, idx: usize, into_reg: Writable<Reg>) -> Inst {
-        match &self.args[idx] {
+        match &self.sig.args[idx] {
             &ABIArg::Reg(r) => {
                 return Inst::gen_move(into_reg, r.to_reg());
             }
@@ -233,7 +243,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
     }
 
     fn gen_copy_reg_to_retval(&self, idx: usize, from_reg: Reg) -> Inst {
-        match &self.rets[idx] {
+        match &self.sig.rets[idx] {
             &ABIRet::Reg(r) => {
                 return Inst::gen_move(Writable::from_reg(r.to_reg()), from_reg);
             }
@@ -435,5 +445,100 @@ impl ABIBody<Inst> for ARM64ABIBody {
 
     fn gen_reload(&self, to_reg: Writable<RealReg>, from_slot: SpillSlot, ty: Type) -> Inst {
         self.load_spillslot(from_slot, ty, to_reg.map(|r| r.to_reg()))
+    }
+}
+
+enum CallDest {
+    ExtName(ir::ExternalName),
+    Reg(Reg),
+}
+
+/// ARM64 ABI object for a function call.
+pub struct ARM64ABICall {
+    sig: ABISig,
+    uses: Set<Reg>,
+    defs: Set<Writable<Reg>>,
+    dest: CallDest,
+}
+
+fn abisig_to_uses_and_defs(sig: &ABISig) -> (Set<Reg>, Set<Writable<Reg>>) {
+    // Compute uses: all arg regs.
+    let mut uses = Set::empty();
+    for arg in &sig.args {
+        match arg {
+            &ABIArg::Reg(reg) => uses.insert(reg.to_reg()),
+            _ => {}
+        }
+    }
+
+    // Compute defs: all retval regs, and all caller-save (clobbered) regs.
+    let mut defs = get_caller_saves_set();
+    for ret in &sig.rets {
+        match ret {
+            &ABIRet::Reg(reg) => defs.insert(Writable::from_reg(reg.to_reg())),
+            _ => {}
+        }
+    }
+
+    (uses, defs)
+}
+
+impl ARM64ABICall {
+    /// Create a callsite ABI object for a call directly to the
+    /// specified function.
+    pub fn from_func(f: &ir::Function) -> ARM64ABICall {
+        let sig = ABISig::from_func_sig(&f.signature);
+        let (uses, defs) = abisig_to_uses_and_defs(&sig);
+        ARM64ABICall {
+            sig,
+            uses,
+            defs,
+            dest: CallDest::ExtName(f.name.clone()),
+        }
+    }
+
+    /// Create a callsite ABI object for a call to a function pointer with the
+    /// given signature.
+    pub fn from_ptr(sig: &ir::Signature, ptr: Reg) -> ARM64ABICall {
+        let sig = ABISig::from_func_sig(sig);
+        let (uses, defs) = abisig_to_uses_and_defs(&sig);
+        ARM64ABICall {
+            sig,
+            uses,
+            defs,
+            dest: CallDest::Reg(ptr),
+        }
+    }
+}
+
+impl ABICall<Inst> for ARM64ABICall {
+    fn gen_copy_reg_to_arg(&self, idx: usize, from_reg: Reg) -> Inst {
+        match &self.sig.args[idx] {
+            &ABIArg::Reg(reg) => Inst::gen_move(Writable::from_reg(reg.to_reg()), from_reg),
+            _ => unimplemented!(),
+        }
+    }
+
+    fn gen_copy_retval_to_reg(&self, idx: usize, into_reg: Writable<Reg>) -> Inst {
+        match &self.sig.rets[idx] {
+            &ABIRet::Reg(reg) => Inst::gen_move(into_reg, reg.to_reg()),
+            _ => unimplemented!(),
+        }
+    }
+
+    fn gen_call(&self) -> Inst {
+        let (uses, defs) = (self.uses.clone(), self.defs.clone());
+        match &self.dest {
+            &CallDest::ExtName(ref name) => Inst::Call {
+                dest: name.clone(),
+                uses,
+                defs,
+            },
+            &CallDest::Reg(reg) => Inst::CallInd {
+                rn: reg,
+                uses,
+                defs,
+            },
+        }
     }
 }

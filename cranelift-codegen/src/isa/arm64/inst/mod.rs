@@ -8,7 +8,7 @@
 use crate::binemit::{CodeOffset, CodeSink, ConstantPoolSink, NullConstantPoolSink};
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
-use crate::ir::{FuncRef, GlobalValue, Type};
+use crate::ir::{ExternalName, GlobalValue, Type};
 use crate::machinst::*;
 
 use regalloc::Map as RegallocMap;
@@ -170,9 +170,17 @@ pub enum Inst {
     },
 
     /// A machine call instruction.
-    Call { dest: FuncRef },
+    Call {
+        dest: ExternalName,
+        uses: Set<Reg>,
+        defs: Set<Writable<Reg>>,
+    },
     /// A machine indirect-call instruction.
-    CallInd { rn: Reg },
+    CallInd {
+        rn: Reg,
+        uses: Set<Reg>,
+        defs: Set<Writable<Reg>>,
+    },
 
     // ---- branches (exactly one must appear at end of BB) ----
     /// A machine return instruction.
@@ -329,8 +337,21 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
         &Inst::MovZ { rd, .. } | &Inst::MovN { rd, .. } => {
             iru.defined.insert(rd);
         }
-        &Inst::Jump { .. } | &Inst::Call { .. } | &Inst::Ret { .. } => {}
-        &Inst::CallInd { rn, .. } => {
+        &Inst::Jump { .. } | &Inst::Ret { .. } => {}
+        &Inst::Call {
+            ref uses, ref defs, ..
+        } => {
+            iru.used.union(uses);
+            iru.defined.union(defs);
+        }
+        &Inst::CallInd {
+            ref uses,
+            ref defs,
+            rn,
+            ..
+        } => {
+            iru.used.union(uses);
+            iru.defined.union(defs);
             iru.used.insert(rn);
         }
         &Inst::CondBr { ref kind, .. }
@@ -559,9 +580,30 @@ fn arm64_map_regs(
             imm: imm.clone(),
         },
         &mut Inst::Jump { dest } => Inst::Jump { dest },
-        &mut Inst::Call { dest } => Inst::Call { dest },
+        &mut Inst::Call {
+            ref uses,
+            ref defs,
+            ref dest,
+        } => {
+            let uses = uses.map(|r| map(u, *r));
+            let defs = defs.map(|r| map_wr(d, *r));
+            let dest = dest.clone();
+            Inst::Call { dest, uses, defs }
+        }
         &mut Inst::Ret {} => Inst::Ret {},
-        &mut Inst::CallInd { rn } => Inst::CallInd { rn: map(u, rn) },
+        &mut Inst::CallInd {
+            ref uses,
+            ref defs,
+            rn,
+        } => {
+            let uses = uses.map(|r| map(u, *r));
+            let defs = defs.map(|r| map_wr(d, *r));
+            Inst::CallInd {
+                uses,
+                defs,
+                rn: map(u, rn),
+            }
+        }
         &mut Inst::CondBr {
             taken,
             not_taken,
@@ -980,11 +1022,11 @@ impl Inst {
                 let imm = imm.show_rru(mb_rru);
                 format!("movn {}, {}", rd, imm)
             }
-            &Inst::Call { dest: _ } => {
+            &Inst::Call { dest: _, .. } => {
                 let dest = "!!".to_string(); // TODO
                 format!("bl {}", dest)
             }
-            &Inst::CallInd { rn } => {
+            &Inst::CallInd { rn, .. } => {
                 let rn = rn.show_rru(mb_rru);
                 format!("bl {}", rn)
             }
