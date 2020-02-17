@@ -39,6 +39,14 @@ pub trait LowerCtx<I> {
     /// Get the producing instruction, if any, and output number, for the `idx`th input to the
     /// given IR instruction
     fn input_inst(&self, ir_inst: Inst, idx: usize) -> Option<(Inst, usize)>;
+    /// Map a Value to its associated writable (probably virtual) Reg.
+    fn value_to_writable_reg(&self, val: Value) -> Writable<Reg>;
+    /// Map a Value to its associated (probably virtual) Reg.
+    fn value_to_reg(&self, val: Value) -> Reg;
+    /// Return the Reg assigned for an instruction's input slot.
+    fn get_input_reg(&self, ir_inst: Inst, arg_no: usize) -> Reg;
+    /// Return the Reg assigned for an instruction's output slot.
+    fn get_output_writable_reg(&self, ir_inst: Inst, res_no: usize) -> Writable<Reg>;
     /// Get the `idx`th input to the given IR instruction as a virtual register.
     fn input(&self, ir_inst: Inst, idx: usize) -> Reg;
     /// Get the `idx`th output of the given IR instruction as a virtual register.
@@ -455,16 +463,38 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
         }
     }
 
+    /// Map a Value to its associated writable (probably virtual) Reg.
+    fn value_to_writable_reg(&self, val: Value) -> Writable<Reg> {
+        Writable::from_reg(self.value_regs[val])
+    }
+
+    /// Map a Value to its associated (probably virtual) Reg.
+    fn value_to_reg(&self, val: Value) -> Reg {
+        self.value_regs[val]
+    }
+
+    /// Return the Reg assigned for an instruction's input slot.
+    fn get_input_reg(&self, ir_inst: Inst, arg_no: usize) -> Reg {
+        let val = self.f.dfg.inst_args(ir_inst)[arg_no];
+        self.value_to_reg(val)
+    }
+
+    /// Return the Reg assigned for an instruction's output slot.
+    fn get_output_writable_reg(&self, ir_inst: Inst, res_no: usize) -> Writable<Reg> {
+        let val = self.f.dfg.inst_results(ir_inst)[res_no];
+        self.value_to_writable_reg(val)
+    }
+
     /// Get the `idx`th input to the given IR instruction as a virtual register.
     fn input(&self, ir_inst: Inst, idx: usize) -> Reg {
         let val = self.f.dfg.inst_args(ir_inst)[idx];
-        self.value_regs[val]
+        self.value_to_reg(val)
     }
 
     /// Get the `idx`th output of the given IR instruction as a virtual register.
     fn output(&self, ir_inst: Inst, idx: usize) -> Writable<Reg> {
         let val = self.f.dfg.inst_results(ir_inst)[idx];
-        Writable::from_reg(self.value_regs[val])
+        self.value_to_writable_reg(val)
     }
 
     /// Get a new temp.

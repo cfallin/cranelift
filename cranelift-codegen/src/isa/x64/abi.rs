@@ -210,7 +210,7 @@ impl ABIBody<Inst> for X64ABIBody {
     }
 
     fn gen_ret(&self) -> Inst {
-        unimplemented!()
+        i_Ret()
     }
 
     // Clone of arm64
