@@ -34,10 +34,13 @@ use smallvec::SmallVec;
 // Registers, the Universe thereof, and printing
 
 // These are the hardware encodings for various integer registers.
-const ENC_RSP: u8 = 4;
-const ENC_RBP: u8 = 5;
-const ENC_R12: u8 = 12;
-const ENC_R13: u8 = 13;
+pub const ENC_RBX: u8 = 3;
+pub const ENC_RSP: u8 = 4;
+pub const ENC_RBP: u8 = 5;
+pub const ENC_R12: u8 = 12;
+pub const ENC_R13: u8 = 13;
+pub const ENC_R14: u8 = 14;
+pub const ENC_R15: u8 = 15;
 
 // These are ordered by sequence number, as required in the Universe.  The
 // strange ordering is intended to make callee-save registers available before
@@ -65,19 +68,19 @@ fn info_R13() -> (RealReg, String) {
 }
 fn info_R14() -> (RealReg, String) {
     (
-        Reg::new_real(RegClass::I64, /*enc=*/ 14, /*index=*/ 2).to_real_reg(),
+        Reg::new_real(RegClass::I64, ENC_R14, /*index=*/ 2).to_real_reg(),
         "%r14".to_string(),
     )
 }
 fn info_R15() -> (RealReg, String) {
     (
-        Reg::new_real(RegClass::I64, /*enc=*/ 15, /*index=*/ 3).to_real_reg(),
+        Reg::new_real(RegClass::I64, ENC_R15, /*index=*/ 3).to_real_reg(),
         "%r15".to_string(),
     )
 }
 fn info_RBX() -> (RealReg, String) {
     (
-        Reg::new_real(RegClass::I64, /*enc=*/ 3, /*index=*/ 4).to_real_reg(),
+        Reg::new_real(RegClass::I64, ENC_RBX, /*index=*/ 4).to_real_reg(),
         "%rbx".to_string(),
     )
 }
@@ -275,6 +278,9 @@ pub fn reg_R9() -> Reg {
 
 pub fn reg_RSP() -> Reg {
     info_RSP().0.to_reg()
+}
+pub fn reg_RBP() -> Reg {
+    info_RBP().0.to_reg()
 }
 
 /// Create the register universe for X64.
@@ -703,6 +709,11 @@ pub enum Inst {
         src: RMI,
     },
 
+    /// popq reg
+    Pop64 {
+        dst: Reg
+    },
+
     /// jmp simm32
     JmpKnown {
         simm32: u32,
@@ -838,6 +849,10 @@ pub fn i_Cmp_RMI_R(
 
 pub fn i_Push64(src: RMI) -> Inst {
     Inst::Push64 { src }
+}
+
+pub fn i_Pop64(wdst: Writable<Reg>) -> Inst {
+    Inst::Pop64 { dst: wdst.to_reg() }
 }
 
 pub fn i_JmpKnown(simm32: u32) -> Inst {
@@ -1009,6 +1024,9 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
         Inst::Push64 { src } => {
             format!("{} {}", ljustify("pushq".to_string()), src.show_rru(mb_rru))
         }
+        Inst::Pop64 { dst } => {
+            format!("{} {}", ljustify("popq".to_string()), dst.show_rru(mb_rru))
+        },
         Inst::JmpKnown { simm32 } => format!("{} simm32={}", ljustify("jmp".to_string()), *simm32),
         Inst::JmpUnknown { target } => format!(
             "{} *{}",
@@ -1165,6 +1183,9 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             src.get_regs(&mut iru.used);
             iru.modified.insert(Writable::from_reg(reg_RSP()));
         }
+        Inst::Pop64 { dst } => {
+            iru.defined.insert(Writable::from_reg(*dst));
+        },
         Inst::JmpKnown { simm32: _ } => {}
         Inst::JmpUnknown { target } => {
             target.get_regs(&mut iru.used);
@@ -1335,6 +1356,9 @@ fn x64_map_regs(
         }
         Inst::Push64 { ref mut src } => {
             src.apply_map(pre_map);
+        }
+        Inst::Pop64 { ref mut dst } => {
+            apply_map(dst, post_map);
         }
         Inst::JmpKnown { simm32: _ } => {}
         Inst::JmpUnknown { target } => {
@@ -2128,6 +2152,7 @@ impl MachInst for Inst {
     fn is_term(&self) -> MachTerminator {
         match self {
             &Inst::Ret {} => MachTerminator::Ret,
+            &Inst::Alu_RMI_R { .. } |
             &Inst::Mov_R_R { .. } => MachTerminator::None,
             _ => {
                 println!("QQQQ {}", self.show_rru(None));
