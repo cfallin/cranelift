@@ -4,7 +4,7 @@
 
 use crate::binemit::{CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink};
 use crate::ir::Function;
-use crate::machinst::{compile, MachBackend, ShowWithRRU, VCode};
+use crate::machinst::{compile, MachBackend, MachCompileResult, ShowWithRRU, VCode};
 use crate::result::CodegenResult;
 use crate::settings;
 
@@ -43,25 +43,27 @@ impl X64Backend {
 }
 
 impl MachBackend for X64Backend {
-    fn compile_function_to_memory(
+    fn compile_function(
         &self,
         func: Function,
         relocs: &mut dyn RelocSink,
         traps: &mut dyn TrapSink,
         stackmaps: &mut dyn StackmapSink,
-    ) -> CodegenResult<Vec<u8>> {
+        want_disasm: bool,
+    ) -> CodegenResult<MachCompileResult> {
         let vcode = self.compile_vcode(func);
-        let mut buf: Vec<u8> = vec![0; vcode.emitted_size()];
+        let mut code: Vec<u8> = vec![0; vcode.emitted_size()];
 
-        let mut sink = unsafe { MemoryCodeSink::new(buf.as_mut_ptr(), relocs, traps, stackmaps) };
+        let mut sink = unsafe { MemoryCodeSink::new(code.as_mut_ptr(), relocs, traps, stackmaps) };
         vcode.emit(&mut sink);
 
-        Ok(buf)
-    }
+        let disasm = if want_disasm {
+            Some(vcode.show_rru(Some(&create_reg_universe())))
+        } else {
+            None
+        };
 
-    fn compile_function_to_vcode(&self, func: Function) -> CodegenResult<String> {
-        let vcode = self.compile_vcode(func);
-        Ok(vcode.show_rru(Some(&create_reg_universe())))
+        Ok(MachCompileResult { code, disasm })
     }
 
     fn flags(&self) -> &settings::Flags {

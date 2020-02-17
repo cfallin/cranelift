@@ -228,20 +228,27 @@ pub trait MachInstEmit<CS: CodeSink, CPS: ConstantPoolSink> {
     fn emit(&self, cs: &mut CS, consts: &mut CPS);
 }
 
+/// The result of a `MachBackend::compile_function()` call. Contains machine
+/// code (as bytes) and a disassembly, if requested.
+pub struct MachCompileResult {
+    /// Machine code.
+    pub code: Vec<u8>,
+    /// Disassembly.
+    pub disasm: Option<String>,
+}
+
 /// Top-level machine backend trait, which wraps all monomorphized code and
 /// allows a virtual call from the machine-independent `Function::compile()`.
 pub trait MachBackend {
-    /// Compile the given function to a vcode string. Consumes the function.
-    fn compile_function_to_vcode(&self, func: Function) -> CodegenResult<String>;
-
-    /// Compile the given function to memory. Consumes the function.
-    fn compile_function_to_memory(
+    /// Compile the given function. Consumes the function.
+    fn compile_function(
         &self,
         func: Function,
         relocs: &mut dyn RelocSink,
         traps: &mut dyn TrapSink,
         stackmaps: &mut dyn StackmapSink,
-    ) -> CodegenResult<Vec<u8>>;
+        want_disasm: bool,
+    ) -> CodegenResult<MachCompileResult>;
 
     /// Return flags for this backend.
     fn flags(&self) -> &Flags;

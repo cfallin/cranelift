@@ -1,4 +1,5 @@
 use crate::subtest::{run_filecheck, Context, SubTest, SubtestResult};
+use cranelift_codegen::binemit::{NullRelocSink, NullStackmapSink, NullTrapSink};
 use cranelift_codegen::ir::Function;
 use cranelift_codegen::isa::{lookup, IsaBackend};
 use cranelift_reader::{TestCommand, TestOption};
@@ -58,8 +59,16 @@ impl SubTest for TestVCode {
         };
 
         let text = backend
-            .compile_function_to_vcode(func)
-            .map_err(|e| format!("Error from backend compilation: {:?}", e))?;
+            .compile_function(
+                func,
+                &mut NullRelocSink {},
+                &mut NullTrapSink {},
+                &mut NullStackmapSink {},
+                /* want_disasm = */ true,
+            )
+            .map_err(|e| format!("Error from backend compilation: {:?}", e))?
+            .disasm
+            .unwrap();
 
         info!("text input to filecheck is:\n{}\n", text);
 

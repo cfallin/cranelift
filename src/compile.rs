@@ -87,21 +87,23 @@ fn handle_module(
                 )?;
             }
         } else if let Some(backend) = backend {
-            if flag_disasm {
-                let f = func.clone();
-                let disasm = backend
-                    .compile_function_to_vcode(f)
-                    .expect("Compilation error");
-                println!("{}", disasm);
-            }
-
-            let code = backend
-                .compile_function_to_memory(func, &mut relocs, &mut traps, &mut stackmaps)
+            let result = backend
+                .compile_function(
+                    func,
+                    &mut relocs,
+                    &mut traps,
+                    &mut stackmaps,
+                    /* want_disasm = */ flag_disasm,
+                )
                 .expect("Compilation error");
+
+            if flag_disasm {
+                println!("{}", result.disasm.unwrap());
+            }
 
             if flag_print {
                 println!("Machine code:");
-                for word in code.chunks(4) {
+                for word in result.code.chunks(4) {
                     println!(
                         "{:02x}{:02x}{:02x}{:02x}",
                         word[3], word[2], word[1], word[0]
