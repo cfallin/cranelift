@@ -172,8 +172,28 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
         }
 
         Opcode::Ishl | Opcode::Ushr | Opcode::Sshr => {
-            // TODO
-            unimplemented = true;
+            // TODO: implement imm shift value into insn
+            let tySL = ctx.input_ty(iri, 0);
+            let tyD = ctx.output_ty(iri, 0); // should be the same as tySL
+            let regSL = ctx.input(iri, 0);
+            let regSR = ctx.input(iri, 1);
+            let regD = ctx.output(iri, 0);
+            if tyD == tySL && (tyD == types::I32 || tyD == types::I64) {
+                let how = match op {
+                    Opcode::Ishl => ShiftKind::Left,
+                    Opcode::Ushr => ShiftKind::RightZ,
+                    Opcode::Sshr => ShiftKind::RightS,
+                    _ => unreachable!()
+                };
+                let is64 = tyD == types::I64;
+                let r_rcx = reg_RCX();
+                let w_rcx = Writable::<Reg>::from_reg(r_rcx);
+                ctx.emit(i_Mov_R_R(true, regSL, regD));
+                ctx.emit(i_Mov_R_R(true, regSR, w_rcx));
+                ctx.emit(i_Shift_R(is64, how, 0/*%cl*/, regD));
+            } else {
+                unimplemented = true;
+            }
         }
 
         Opcode::Bitrev => {

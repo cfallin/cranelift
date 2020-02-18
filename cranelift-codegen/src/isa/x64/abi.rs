@@ -278,9 +278,21 @@ impl ABIBody<Inst> for X64ABIBody {
         // If it isn't, increase total_stacksize to compensate.  Because
         // total_stacksize is 0 % 16, this ensures that RSP after this
         // subtraction, is still 16 aligned.
-        let spill_area_sizeB = total_stacksize + ((16 - callee_saved_used) % 16);
+        //
+        // Ultra paranoid approach:
+        let mut spill_area_sizeB = total_stacksize;
+        match callee_saved_used % 16 {
+            0 => spill_area_sizeB += 0,
+            8 => spill_area_sizeB += 8,
+            // note that in general we map N to += 16-N
+            // Really there should be no other cases, though.
+            _ => panic!("gen_prologue(x86): total_stacksize is not 8-aligned")
+        }
+        if spill_area_sizeB > 0x7FFF_FFFF {
+            panic!("gen_prologue(x86): total_stacksize >= 2G");
+        }
         if spill_area_sizeB >= 0 {
-            // FIXME JRS 2020Feb16: what if spill_area_size >= 2G?
+            // FIXME JRS 2020Feb16: handle spill_area_size >= 2G?
             insts.push(i_Alu_RMI_R(
                 true,
                 RMI_R_Op::Sub,
