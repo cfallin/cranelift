@@ -38,6 +38,22 @@ fn to_is64(ty: Type) -> bool {
     }
 }
 
+fn iri_to_u64_immediate<'a>(ctx: Ctx<'a>, iri: IRInst) -> Option<u64> {
+    let inst_data = ctx.data(iri);
+    if inst_data.opcode() == Opcode::Null {
+        Some(0)
+    } else {
+        match inst_data {
+            &InstructionData::UnaryImm { opcode: _, imm } => {
+                // Only has Into for i64; we use u64 elsewhere, so we cast.
+                let imm: i64 = imm.into();
+                Some(imm as u64)
+            }
+            _ => None
+        }
+    }
+}
+
 //=============================================================================
 // Top-level instruction lowering entry point, for one instruction.
 
@@ -50,8 +66,21 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
         None
     };
 
+    // This is all outstandingly feeble.  TODO: much better!
+
     match op {
-        Opcode::Iconst | Opcode::Bconst | Opcode::F32const | Opcode::F64const | Opcode::Null => {
+        Opcode::Iconst => {
+            if let Some(w64) = iri_to_u64_immediate(ctx, iri) {
+                // Get exactly the bit pattern in 'w64' into the dest.  No
+                // monkeying with sign extension etc.
+                let dstIs64 = w64 > 0xFFFF_FFFF;
+                let regD = ctx.output(iri, 0);
+                ctx.emit(i_Imm_R(dstIs64, w64, regD));
+            } else {
+                unimplemented!()
+            }
+        }
+        Opcode::Bconst | Opcode::F32const | Opcode::F64const | Opcode::Null => {
             //let value = output_to_const(ctx, outputs[0]).unwrap();
             //let rd = output_to_reg(ctx, outputs[0]);
             //lower_constant(ctx, rd, value);
@@ -297,7 +326,27 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             unimplemented!()
         }
 
-        Opcode::Ireduce | Opcode::Uextend | Opcode::Sextend | Opcode::Isplit | Opcode::Iconcat => {
+        Opcode::Uextend | Opcode::Sextend => {
+            // TODO: this is all extremely lame, all because Mov{ZX,SX}_M_R
+            // don't accept a register source operand.  They should be changed
+            // so as to have _RM_R form.
+            // TODO2: if the source operand is a load, incorporate that.
+            let isZX = op == Opcode::Uextend;
+            let tyS = ctx.input_ty(iri, 0);
+            let tyD = ctx.output_ty(iri, 0);
+            let regS = ctx.input(iri, 0);
+            let regD = ctx.output(iri, 0);
+            ctx.emit(i_Mov_R_R(true, regS, regD));
+            match (tyS, tyD, isZX) {
+                (types::I8, types::I64, false) => {
+                    ctx.emit(i_Shift_R(true, ShiftKind::Left, 56, regD));
+                    ctx.emit(i_Shift_R(true, ShiftKind::RightS, 56, regD));
+                }
+                _ => unimplemented!()
+            }
+        }
+
+        Opcode::Ireduce | Opcode::Isplit | Opcode::Iconcat => {
             // TODO
             unimplemented!()
         }

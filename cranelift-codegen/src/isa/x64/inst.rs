@@ -2312,8 +2312,24 @@ impl MachInst for Inst {
 
     fn is_term(&self) -> MachTerminator {
         match self {
+            // Boring cases
+            // Nop
+            &Inst::Alu_RMI_R { .. } |
+            &Inst::Imm_R { .. } |
+            &Inst::Mov_R_R { .. } |
+            // MovZX_M_R
+            // Mov64_M_R
+            // MovSX_M_R
+            // Mov_R_M
+            &Inst::Shift_R { .. }
+            // Cmp_RMI_R
+            // Push64
+            // Pop64
+            // CallKnown
+            // CallUnknown
+            => MachTerminator::None,
+            // Interesting cases
             &Inst::Ret {} => MachTerminator::Ret,
-            &Inst::Alu_RMI_R { .. } | &Inst::Mov_R_R { .. } => MachTerminator::None,
             _ => {
                 println!("QQQQ {}", self.show_rru(None));
                 unimplemented!()
