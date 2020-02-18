@@ -49,7 +49,7 @@ fn iri_to_u64_immediate<'a>(ctx: Ctx<'a>, iri: IRInst) -> Option<u64> {
                 let imm: i64 = imm.into();
                 Some(imm as u64)
             }
-            _ => None
+            _ => None,
         }
     }
 }
@@ -183,14 +183,14 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
                     Opcode::Ishl => ShiftKind::Left,
                     Opcode::Ushr => ShiftKind::RightZ,
                     Opcode::Sshr => ShiftKind::RightS,
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 };
                 let is64 = tyD == types::I64;
                 let r_rcx = reg_RCX();
                 let w_rcx = Writable::<Reg>::from_reg(r_rcx);
                 ctx.emit(i_Mov_R_R(true, regSL, regD));
                 ctx.emit(i_Mov_R_R(true, regSR, w_rcx));
-                ctx.emit(i_Shift_R(is64, how, 0/*%cl*/, regD));
+                ctx.emit(i_Shift_R(is64, how, 0 /*%cl*/, regD));
             } else {
                 unimplemented = true;
             }

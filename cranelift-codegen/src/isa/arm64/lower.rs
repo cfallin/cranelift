@@ -9,9 +9,9 @@ use crate::ir::{Block, InstructionData, Opcode, Type};
 use crate::machinst::lower::*;
 use crate::machinst::*;
 
+use crate::isa::arm64::abi::*;
 use crate::isa::arm64::inst::*;
 use crate::isa::arm64::Arm64Backend;
-use crate::isa::arm64::abi::*;
 
 use regalloc::{RealReg, Reg, RegClass, VirtualReg, Writable};
 

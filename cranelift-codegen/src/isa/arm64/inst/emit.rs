@@ -1534,23 +1534,23 @@ mod test {
         ));
 
         insns.push((
-                Inst::Call {
-                    dest: ExternalName::testcase("test0"),
-                    uses: Set::empty(),
-                    defs: Set::empty(),
-                },
-                "00000094",
-                "bl 0",
+            Inst::Call {
+                dest: ExternalName::testcase("test0"),
+                uses: Set::empty(),
+                defs: Set::empty(),
+            },
+            "00000094",
+            "bl 0",
         ));
 
         insns.push((
-                Inst::CallInd {
-                    rn: xreg(10),
-                    uses: Set::empty(),
-                    defs: Set::empty(),
-                },
-                "40013FD6",
-                "blr x10",
+            Inst::CallInd {
+                rn: xreg(10),
+                uses: Set::empty(),
+                defs: Set::empty(),
+            },
+            "40013FD6",
+            "blr x10",
         ));
 
         let rru = create_reg_universe();

@@ -688,7 +688,7 @@ impl BranchTarget {
                 } else {
                     None
                 }
-            },
+            }
             _ => None,
         }
     }
@@ -715,9 +715,7 @@ impl BranchTarget {
 #[derive(Clone)]
 pub enum Inst {
     /// nops of various sizes, including zero
-    Nop {
-        len: u8,
-    },
+    Nop { len: u8 },
 
     /// (add sub and or xor mul adc? sbb?) (32 64) (reg addr imm) reg
     Alu_RMI_R {
@@ -736,11 +734,7 @@ pub enum Inst {
     },
 
     /// mov (64 32) reg reg
-    Mov_R_R {
-        is64: bool,
-        src: Reg,
-        dst: Reg,
-    },
+    Mov_R_R { is64: bool, src: Reg, dst: Reg },
 
     /// movz (bl bq wl wq lq) addr reg (good for all ZX loads except 64->64).
     /// Note that the lq variant doesn't really exist since the default
@@ -753,10 +747,7 @@ pub enum Inst {
     },
 
     /// A plain 64-bit integer load, since MovZX_M_R can't represent that
-    Mov64_M_R {
-        addr: Addr,
-        dst: Reg,
-    },
+    Mov64_M_R { addr: Addr, dst: Reg },
 
     /// movs (bl bq wl wq lq) addr reg (good for all SX loads)
     MovSX_M_R {
@@ -788,14 +779,10 @@ pub enum Inst {
     },
 
     /// pushq (reg addr imm)
-    Push64 {
-        src: RMI,
-    },
+    Push64 { src: RMI },
 
     /// popq reg
-    Pop64 {
-        dst: Reg,
-    },
+    Pop64 { dst: Reg },
 
     /// call simm32
     CallKnown {
@@ -816,9 +803,7 @@ pub enum Inst {
     Ret {},
 
     /// jmp simm32
-    JmpKnown {
-        dest: BranchTarget
-    },
+    JmpKnown { dest: BranchTarget },
 
     /// jcond cond target target
     // Symmetrical two-way conditional branch.
@@ -850,9 +835,7 @@ pub enum Inst {
     },
 
     /// jmpq (reg mem)
-    JmpUnknown {
-        target: RM,
-    },
+    JmpUnknown { target: RM },
 }
 
 // Handy constructors for Insts.
@@ -1045,9 +1028,7 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
     }
 
     match inst {
-        Inst::Nop { len } => format!(
-            "{} len={}", ljustify("nop".to_string()), len
-        ),
+        Inst::Nop { len } => format!("{} len={}", ljustify("nop".to_string()), len),
         Inst::Alu_RMI_R { is64, op, src, dst } => format!(
             "{} {}, {}",
             ljustify2(op.to_string(), suffixLQ(*is64)),
@@ -1161,13 +1142,13 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
         Inst::JmpKnown { .. } => "**JmpKnown**".to_string(),
         Inst::JmpCondSymm {
             cc,
-            taken:_,
-            not_taken:_,
+            taken: _,
+            not_taken: _,
         } => format!(
             "{} tsimm32={} fsimm32={}",
             ljustify2("j".to_string(), cc.to_string()),
-            "**taken**".to_string(), //*tsimm32,
-            "**not_taken**".to_string() //*fsimm32
+            "**taken**".to_string(),     //*tsimm32,
+            "**not_taken**".to_string()  //*fsimm32
         ),
         //
         Inst::JmpCond { .. } => "**JmpCond**".to_string(),
@@ -1315,7 +1296,11 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
         Inst::Pop64 { dst } => {
             iru.defined.insert(Writable::from_reg(*dst));
         }
-        Inst::CallKnown { dest:_, uses:_, defs:_ } => {
+        Inst::CallKnown {
+            dest: _,
+            uses: _,
+            defs: _,
+        } => {
             // FIXME add arg regs (iru.used) and caller-saved regs (iru.defined)
             unimplemented!();
         }
@@ -1328,7 +1313,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             cc: _,
             taken: _,
             not_taken: _,
-        } => {},
+        } => {}
         //
         // ** JmpCond
         //
@@ -1337,7 +1322,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
         //Inst::JmpUnknown { target } => {
         //    target.get_regs(&mut iru.used);
         //}
-        other => panic!("x64_get_regs: {}", other.show_rru(None))
+        other => panic!("x64_get_regs: {}", other.show_rru(None)),
     }
 
     // Enforce invariants described above.
@@ -1496,17 +1481,21 @@ fn x64_map_regs(
         Inst::Pop64 { ref mut dst } => {
             apply_map(dst, post_map);
         }
-        Inst::CallKnown { dest:_, uses:_, defs:_ } => {}
+        Inst::CallKnown {
+            dest: _,
+            uses: _,
+            defs: _,
+        } => {}
         Inst::CallUnknown { dest } => {
             dest.apply_map(pre_map);
         }
         Inst::Ret {} => {}
-        Inst::JmpKnown { dest:_ } => {}
+        Inst::JmpKnown { dest: _ } => {}
         Inst::JmpCondSymm {
             cc: _,
             taken: _,
             not_taken: _,
-        } => {},
+        } => {}
         //
         // ** JmpCond
         //
@@ -1515,7 +1504,7 @@ fn x64_map_regs(
         //Inst::JmpUnknown { target } => {
         //    target.apply_map(pre_map);
         //}
-        other => panic!("x64_map_regs: {}", other.show_rru(None))
+        other => panic!("x64_map_regs: {}", other.show_rru(None)),
     }
 }
 
@@ -2369,7 +2358,7 @@ impl MachInst for Inst {
                 dest.map(block_target_map);
             }
             &mut Inst::JmpCondSymm {
-                cc:_,
+                cc: _,
                 ref mut taken,
                 ref mut not_taken,
             } => {
@@ -2422,7 +2411,10 @@ impl MachInst for Inst {
     fn with_block_offsets(&mut self, my_offset: CodeOffset, targets: &[CodeOffset]) {
         // This is identical (modulo renaming) to the arm64 version.
         match self {
-            &mut Inst::JmpCond { cc:_, ref mut target } => {
+            &mut Inst::JmpCond {
+                cc: _,
+                ref mut target,
+            } => {
                 target.lower(targets, my_offset);
             }
             &mut Inst::JmpCondCompound {
@@ -2439,7 +2431,6 @@ impl MachInst for Inst {
             }
             _ => {}
         }
-
     }
 
     fn reg_universe() -> RealRegUniverse {
