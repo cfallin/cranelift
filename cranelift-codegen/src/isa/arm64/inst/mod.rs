@@ -207,7 +207,7 @@ pub enum Inst {
 
     /// As for `CondBrLowered`, but represents a condbr/uncond-br sequence (two
     /// actual machine instructions). Needed when the final block layout implies
-    /// that both arms of a conditional branch are not the fallthrough block.
+    /// that neither arm of a conditional branch targets the fallthrough block.
     CondBrLoweredCompound {
         taken: BranchTarget,
         not_taken: BranchTarget,
