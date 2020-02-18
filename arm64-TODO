@@ -26,6 +26,12 @@ TODO:
     encoded as a logical immediate.
   - Add opcodes to lowering. Full integer/ALU instruction set.
 
+- Top-level pipeline:
+  - Better story to integrate with existing Cranelift users
+  - Wrap in a skeleton TargetIsa implementation?
+  - Make sure we invoke all optimization passes, legalization passes, etc.
+    (Function::compile is responsible for this?)
+
 - Lowering tests
   - Make sure all (non-vector) filetests can compile
   - Develop suite of golden-machine-code (or golden-assembly?) tests
