@@ -692,7 +692,7 @@ impl fmt::Debug for CC {
 
 /// A branch target. Either unresolved (basic-block index) or resolved (offset
 /// from end of current instruction).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum BranchTarget {
     /// An unresolved reference to a BlockIndex, as passed into
     /// `lower_branch_group()`.
@@ -1223,7 +1223,9 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
             not_taken.show_rru(mb_rru)
         ),
         //
-        Inst::JmpCond { .. } => "**JmpCond**".to_string(),
+        Inst::JmpCond { cc, ref target } => {
+            format!("JmpCond(cc = {:?}, target = {:?})", cc, target)
+        }
         //
         Inst::JmpCondCompound { .. } => "**JmpCondCompound**".to_string(),
         Inst::JmpUnknown { target } => format!(
@@ -2313,6 +2315,18 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
         //
         Inst::JmpCond {
             cc,
+            target: BranchTarget::Block(..),
+        } => {
+            // This case occurs when we are computing block offsets / sizes,
+            // prior to lowering block-index targets to concrete-offset targets.
+            // Only the size matters, so let's emit 6 bytes, as below.
+            sink.put1(0);
+            sink.put1(0);
+            sink.put4(0);
+        }
+
+        Inst::JmpCond {
+            cc,
             target: BranchTarget::ResolvedOffset(bix, offset),
         } if *offset >= -0x7FFF_FF00 && *offset <= 0x7FFF_FF00 => {
             // This insn is 6 bytes long.  Currently |offset| is relative to
@@ -2354,7 +2368,9 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
                 }
             }
         }
-        _ => panic!("x64_emit: unhandled: {}", inst.show_rru(None)),
+        Inst::Nop { .. } => {}
+
+        _ => panic!("x64_emit: unhandled: {} ({:?})", inst.show_rru(None), inst),
     }
 }
 
@@ -2468,7 +2484,7 @@ impl MachInst for Inst {
                 not_taken,
             } => {
                 if taken.as_block_index() == fallthrough {
-                    *self = i_JmpCond(cc, not_taken);
+                    *self = i_JmpCond(cc.invert(), not_taken);
                 } else if not_taken.as_block_index() == fallthrough {
                     *self = i_JmpCond(cc, taken);
                 } else {
