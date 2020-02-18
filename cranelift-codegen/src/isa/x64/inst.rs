@@ -403,7 +403,7 @@ fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: u8) -> Stri
 }
 
 //=============================================================================
-// Instruction sub-components (aka "parts"): definitions and printing
+// Instruction operand sub-components (aka "parts"): definitions and printing
 
 // Don't build these directly.  Instead use the ip_* functions to create them.
 // "ip_" stands for "instruction part".
@@ -608,7 +608,7 @@ impl fmt::Debug for ShiftKind {
 
 // These indicate condition code tests.  Not all are represented since not all
 // are useful in compiler-generated code.
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub enum CC {
     Z,
     NZ,
@@ -620,10 +620,88 @@ impl CC {
             CC::NZ => "nz".to_string(),
         }
     }
+    fn invert(&self) -> CC {
+        match self {
+            CC::Z => CC::NZ,
+            CC::NZ => CC::Z,
+        }
+    }
 }
 impl fmt::Debug for CC {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "{}", self.to_string())
+    }
+}
+
+//=============================================================================
+// Instruction sub-components: branch targets
+
+/// A branch target. Either unresolved (basic-block index) or resolved (offset
+/// from end of current instruction).
+#[derive(Clone, Copy, Debug)]
+pub enum BranchTarget {
+    /// An unresolved reference to a BlockIndex, as passed into
+    /// `lower_branch_group()`.
+    Block(BlockIndex),
+    /// A resolved reference to another instruction, after
+    /// `Inst::with_block_offsets()`.  This offset is in bytes.
+    ResolvedOffset(BlockIndex, isize),
+}
+
+impl BranchTarget {
+    /// Lower the branch target given offsets of each block.
+    pub fn lower(&mut self, targets: &[CodeOffset], my_offset: CodeOffset) {
+        match self {
+            &mut BranchTarget::Block(bix) => {
+                let bix = bix as usize;
+                assert!(bix < targets.len());
+                let block_offset_in_func = targets[bix];
+                let branch_offset = (block_offset_in_func as isize) - (my_offset as isize);
+                *self = BranchTarget::ResolvedOffset(bix as BlockIndex, branch_offset);
+            }
+            &mut BranchTarget::ResolvedOffset(..) => {}
+        }
+    }
+
+    /// Get the block index.
+    pub fn as_block_index(&self) -> Option<BlockIndex> {
+        match self {
+            &BranchTarget::Block(bix) => Some(bix),
+            _ => None,
+        }
+    }
+
+    /// Get the offset as a signed 32 bit byte offset.  This returns the
+    /// offset in bytes between the first byte of the source and the first
+    /// byte of the target.  It does not take into account the Intel-specific
+    /// rule that a branch offset is encoded as relative to the start of the
+    /// following instruction.  That is a problem for the emitter to deal
+    /// with.
+    pub fn as_offset_i32(&self) -> Option<i32> {
+        match self {
+            &BranchTarget::ResolvedOffset(_, off) => {
+                // Leave a bit of slack so that the emitter is guaranteed to
+                // be able to add the length of the jump instruction encoding
+                // to this value and still have a value in signed-32 range.
+                if off >= -0x7FFF_FF00isize && off <= 0x7FFF_FF00isize {
+                    Some(off as i32)
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        }
+    }
+
+    /// Map the block index given a transform map.
+    pub fn map(&mut self, block_index_map: &[BlockIndex]) {
+        match self {
+            &mut BranchTarget::Block(ref mut bix) => {
+                let n = block_index_map[*bix as usize];
+                *bix = n;
+            }
+            _ => panic!("BranchTarget::map() called on already-lowered BranchTarget!"),
+        }
     }
 }
 
@@ -636,6 +714,11 @@ impl fmt::Debug for CC {
 /// Instructions.  Destinations are on the RIGHT (a la AT&T syntax).
 #[derive(Clone)]
 pub enum Inst {
+    /// nops of various sizes, including zero
+    Nop {
+        len: u8,
+    },
+
     /// (add sub and or xor mul adc? sbb?) (32 64) (reg addr imm) reg
     Alu_RMI_R {
         is64: bool,
@@ -669,7 +752,7 @@ pub enum Inst {
         dst: Reg,
     },
 
-    /// A plain 64-bit integer load, since MovXZ_M_R can't represent that
+    /// A plain 64-bit integer load, since MovZX_M_R can't represent that
     Mov64_M_R {
         addr: Addr,
         dst: Reg,
@@ -714,35 +797,62 @@ pub enum Inst {
         dst: Reg,
     },
 
+    /// call simm32
+    CallKnown {
+        dest: ExternalName,
+        uses: Set<Reg>,
+        defs: Set<Writable<Reg>>,
+    },
+
+    /// callq (reg mem)
+    CallUnknown {
+        dest: RM,
+        //uses: Set<Reg>,
+        //defs: Set<Writable<Reg>>,
+    },
+
+    // ---- branches (exactly one must appear at end of BB) ----
+    /// ret
+    Ret {},
+
     /// jmp simm32
     JmpKnown {
-        simm32: u32,
+        dest: BranchTarget
+    },
+
+    /// jcond cond target target
+    // Symmetrical two-way conditional branch.
+    // Should never reach the emitter.
+    JmpCondSymm {
+        cc: CC,
+        taken: BranchTarget,
+        not_taken: BranchTarget,
+    },
+
+    /// Lowered conditional branch: contains the original instruction, and a
+    /// flag indicating whether to invert the taken-condition or not. Only one
+    /// BranchTarget is retained, and the other is implicitly the next
+    /// instruction, given the final basic-block layout.
+    JmpCond {
+        cc: CC,
+        //inverted: bool, is this needed?
+        target: BranchTarget,
+    },
+
+    /// As for `CondBrLowered`, but represents a condbr/uncond-br sequence (two
+    /// actual machine instructions). Needed when the final block layout implies
+    /// that neither arm of a conditional branch targets the fallthrough block.
+    // Should never reach the emitter
+    JmpCondCompound {
+        cc: CC,
+        taken: BranchTarget,
+        not_taken: BranchTarget,
     },
 
     /// jmpq (reg mem)
     JmpUnknown {
         target: RM,
     },
-
-    /// jcond cond simm32 simm32
-    JmpCond {
-        cc: CC,
-        tsimm32: u32,
-        fsimm32: u32,
-    },
-
-    /// call simm32
-    CallKnown {
-        target: FuncRef,
-    },
-
-    // callq (reg mem)
-    CallUnknown {
-        target: RM,
-    },
-
-    // ret
-    Ret {},
 }
 
 // Handy constructors for Insts.
@@ -764,6 +874,11 @@ pub fn low32willSXto64(x: u64) -> bool {
 fn low8willSXto32(x: u32) -> bool {
     let xs = x as i32;
     xs == ((xs << 24) >> 24)
+}
+
+pub fn i_Nop(len: u8) -> Inst {
+    debug_assert!(len <= 16);
+    Inst::Nop { len }
 }
 
 pub fn i_Alu_RMI_R(is64: bool, op: RMI_R_Op, src: RMI, wdst: Writable<Reg>) -> Inst {
@@ -855,32 +970,36 @@ pub fn i_Pop64(wdst: Writable<Reg>) -> Inst {
     Inst::Pop64 { dst: wdst.to_reg() }
 }
 
-pub fn i_JmpKnown(simm32: u32) -> Inst {
-    Inst::JmpKnown { simm32 }
-}
+//pub fn i_CallKnown(target: FuncRef) -> Inst {
+//    Inst::CallKnown { target }
+//}
 
-pub fn i_JmpUnknown(target: RM) -> Inst {
-    Inst::JmpUnknown { target }
-}
-
-pub fn i_JmpCond(cc: CC, tsimm32: u32, fsimm32: u32) -> Inst {
-    Inst::JmpCond {
-        cc,
-        tsimm32,
-        fsimm32,
-    }
-}
-
-pub fn i_CallKnown(target: FuncRef) -> Inst {
-    Inst::CallKnown { target }
-}
-
-pub fn i_CallUnknown(target: RM) -> Inst {
-    Inst::CallUnknown { target }
+pub fn i_CallUnknown(dest: RM) -> Inst {
+    Inst::CallUnknown { dest }
 }
 
 pub fn i_Ret() -> Inst {
     Inst::Ret {}
+}
+
+//pub fn i_JmpKnown(simm32: u32) -> Inst {
+//    Inst::JmpKnown { simm32 }
+//}
+//
+//pub fn i_JmpCondSymm(cc: CC, tsimm32: u32, fsimm32: u32) -> Inst {
+//    Inst::JmpCondSymm {
+//        cc,
+//        tsimm32,
+//        fsimm32,
+//    }
+//}
+//
+// ** JmpCond
+//
+// ** JmpCondCompound
+
+pub fn i_JmpUnknown(target: RM) -> Inst {
+    Inst::JmpUnknown { target }
 }
 
 //=============================================================================
@@ -926,6 +1045,9 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
     }
 
     match inst {
+        Inst::Nop { len } => format!(
+            "{} len={}", ljustify("nop".to_string()), len
+        ),
         Inst::Alu_RMI_R { is64, op, src, dst } => format!(
             "{} {}, {}",
             ljustify2(op.to_string(), suffixLQ(*is64)),
@@ -1025,29 +1147,37 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
             format!("{} {}", ljustify("pushq".to_string()), src.show_rru(mb_rru))
         }
         Inst::Pop64 { dst } => format!("{} {}", ljustify("popq".to_string()), dst.show_rru(mb_rru)),
-        Inst::JmpKnown { simm32 } => format!("{} simm32={}", ljustify("jmp".to_string()), *simm32),
+        //
+        //Inst::CallKnown { target } => format!("{} {:?}", ljustify("call".to_string()), target),
+        Inst::CallKnown { .. } => "**CallKnown**".to_string(),
+        //
+        Inst::CallUnknown { dest } => format!(
+            "{} *{}",
+            ljustify("call".to_string()),
+            dest.show_rru(mb_rru)
+        ),
+        Inst::Ret {} => "ret".to_string(),
+        //Inst::JmpKnown { simm32 } => format!("{} simm32={}", ljustify("jmp".to_string()), *simm32),
+        Inst::JmpKnown { .. } => "**JmpKnown**".to_string(),
+        Inst::JmpCondSymm {
+            cc,
+            taken:_,
+            not_taken:_,
+        } => format!(
+            "{} tsimm32={} fsimm32={}",
+            ljustify2("j".to_string(), cc.to_string()),
+            "**taken**".to_string(), //*tsimm32,
+            "**not_taken**".to_string() //*fsimm32
+        ),
+        //
+        Inst::JmpCond { .. } => "**JmpCond**".to_string(),
+        //
+        Inst::JmpCondCompound { .. } => "**JmpCondCompound**".to_string(),
         Inst::JmpUnknown { target } => format!(
             "{} *{}",
             ljustify("jmp".to_string()),
             target.show_rru(mb_rru)
         ),
-        Inst::JmpCond {
-            cc,
-            tsimm32,
-            fsimm32,
-        } => format!(
-            "{} tsimm32={} fsimm32={}",
-            ljustify2("j".to_string(), cc.to_string()),
-            *tsimm32,
-            *fsimm32
-        ),
-        Inst::CallKnown { target } => format!("{} {:?}", ljustify("call".to_string()), target),
-        Inst::CallUnknown { target } => format!(
-            "{} *{}",
-            ljustify("call".to_string()),
-            target.show_rru(mb_rru)
-        ),
-        Inst::Ret {} => "ret".to_string(),
     }
 }
 
@@ -1118,6 +1248,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
     let mut iru = InstRegUses::new();
 
     match inst {
+        // ** Nop
         Inst::Alu_RMI_R {
             is64: _,
             op: _,
@@ -1184,23 +1315,29 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
         Inst::Pop64 { dst } => {
             iru.defined.insert(Writable::from_reg(*dst));
         }
-        Inst::JmpKnown { simm32: _ } => {}
-        Inst::JmpUnknown { target } => {
-            target.get_regs(&mut iru.used);
-        }
-        Inst::JmpCond {
-            cc: _,
-            tsimm32: _,
-            fsimm32: _,
-        } => {}
-        Inst::CallKnown { target: _ } => {
+        Inst::CallKnown { dest:_, uses:_, defs:_ } => {
             // FIXME add arg regs (iru.used) and caller-saved regs (iru.defined)
             unimplemented!();
         }
-        Inst::CallUnknown { target } => {
-            target.get_regs(&mut iru.used);
+        Inst::CallUnknown { dest } => {
+            dest.get_regs(&mut iru.used);
         }
         Inst::Ret {} => {}
+        Inst::JmpKnown { dest: _ } => {}
+        Inst::JmpCondSymm {
+            cc: _,
+            taken: _,
+            not_taken: _,
+        } => {},
+        //
+        // ** JmpCond
+        //
+        // ** JmpCondCompound
+        //
+        //Inst::JmpUnknown { target } => {
+        //    target.get_regs(&mut iru.used);
+        //}
+        other => panic!("x64_get_regs: {}", other.show_rru(None))
     }
 
     // Enforce invariants described above.
@@ -1284,6 +1421,7 @@ fn x64_map_regs(
     // the sense that each arm "agrees" with the one in |fn regs| about which
     // fields are read, modifed or written.
     match inst {
+        // ** Nop
         Inst::Alu_RMI_R {
             is64: _,
             op: _,
@@ -1358,20 +1496,26 @@ fn x64_map_regs(
         Inst::Pop64 { ref mut dst } => {
             apply_map(dst, post_map);
         }
-        Inst::JmpKnown { simm32: _ } => {}
-        Inst::JmpUnknown { target } => {
-            target.apply_map(pre_map);
-        }
-        Inst::JmpCond {
-            cc: _,
-            tsimm32: _,
-            fsimm32: _,
-        } => {}
-        Inst::CallKnown { target: _ } => {}
-        Inst::CallUnknown { target } => {
-            target.apply_map(pre_map);
+        Inst::CallKnown { dest:_, uses:_, defs:_ } => {}
+        Inst::CallUnknown { dest } => {
+            dest.apply_map(pre_map);
         }
         Inst::Ret {} => {}
+        Inst::JmpKnown { dest:_ } => {}
+        Inst::JmpCondSymm {
+            cc: _,
+            taken: _,
+            not_taken: _,
+        } => {},
+        //
+        // ** JmpCond
+        //
+        // ** JmpCondCompound
+        //
+        //Inst::JmpUnknown { target } => {
+        //    target.apply_map(pre_map);
+        //}
+        other => panic!("x64_map_regs: {}", other.show_rru(None))
     }
 }
 
@@ -1694,6 +1838,7 @@ fn emit_simm<CS: CodeSink>(sink: &mut CS, size: u8, simm32: u32) {
 
 fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
     match inst {
+        // ** Nop
         Inst::Alu_RMI_R {
             is64,
             op,
@@ -2071,7 +2216,44 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
             }
             sink.put1(0x58 + (encDst & 7));
         }
-        // Inst::JmpKnown
+        //
+        // ** Inst::CallKnown
+        //
+        Inst::CallUnknown { dest } => {
+            match dest {
+                RM::R { reg } => {
+                    let regEnc = iregEnc(*reg);
+                    emit_REX_OPCODES_MODRM_encG_encE(
+                        sink,
+                        0xFF,
+                        1,
+                        2, /*subopcode*/
+                        regEnc,
+                        F_CLEAR_REX_W,
+                    );
+                }
+                RM::M { addr } => {
+                    emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE(
+                        sink,
+                        0xFF,
+                        1,
+                        2, /*subopcode*/
+                        addr,
+                        F_CLEAR_REX_W,
+                    );
+                }
+            }
+        }
+        Inst::Ret {} => sink.put1(0xC3),
+        //
+        // ** Inst::JmpKnown
+        //
+        // ** Inst::JmpCondSymm   XXXX should never happen
+        //
+        // ** Inst::JmpCond
+        //
+        // ** Inst::JmpCondCompound   XXXX should never happen
+        //
         Inst::JmpUnknown { target } => {
             match target {
                 RM::R { reg } => {
@@ -2097,34 +2279,6 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
                 }
             }
         }
-        // Inst::JmpCond
-        // Inst::CallKnown
-        Inst::CallUnknown { target } => {
-            match target {
-                RM::R { reg } => {
-                    let regEnc = iregEnc(*reg);
-                    emit_REX_OPCODES_MODRM_encG_encE(
-                        sink,
-                        0xFF,
-                        1,
-                        2, /*subopcode*/
-                        regEnc,
-                        F_CLEAR_REX_W,
-                    );
-                }
-                RM::M { addr } => {
-                    emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE(
-                        sink,
-                        0xFF,
-                        1,
-                        2, /*subopcode*/
-                        addr,
-                        F_CLEAR_REX_W,
-                    );
-                }
-            }
-        }
-        Inst::Ret {} => sink.put1(0xC3),
         _ => panic!("x64_emit"),
     }
 }
@@ -2192,16 +2346,84 @@ impl MachInst for Inst {
         unimplemented!()
     }
 
-    fn with_block_rewrites(&mut self, _block_target_map: &[BlockIndex]) {
-        unimplemented!()
+    fn with_block_rewrites(&mut self, block_target_map: &[BlockIndex]) {
+        // This is identical (modulo renaming) to the arm64 version.
+        match self {
+            &mut Inst::JmpKnown { ref mut dest } => {
+                dest.map(block_target_map);
+            }
+            &mut Inst::JmpCondSymm {
+                cc:_,
+                ref mut taken,
+                ref mut not_taken,
+            } => {
+                taken.map(block_target_map);
+                not_taken.map(block_target_map);
+            }
+            &mut Inst::JmpCond { .. } | &mut Inst::JmpCondCompound { .. } => {
+                panic!("with_block_rewrites called after branch lowering!");
+            }
+            _ => {}
+        }
     }
 
-    fn with_fallthrough_block(&mut self, _fallthrough: Option<BlockIndex>) {
-        unimplemented!()
+    fn with_fallthrough_block(&mut self, fallthrough: Option<BlockIndex>) {
+        // This is identical (modulo renaming) to the arm64 version.
+        match self {
+            &mut Inst::JmpCondSymm {
+                cc,
+                taken,
+                not_taken,
+            } => {
+                if taken.as_block_index() == fallthrough {
+                    *self = Inst::JmpCond {
+                        cc: cc.invert(),
+                        target: not_taken,
+                    };
+                } else if not_taken.as_block_index() == fallthrough {
+                    *self = Inst::JmpCond {
+                        cc: cc,
+                        target: taken,
+                    };
+                } else {
+                    // We need a compound sequence (condbr / uncond-br).
+                    *self = Inst::JmpCondCompound {
+                        cc,
+                        taken,
+                        not_taken,
+                    };
+                }
+            }
+            &mut Inst::JmpKnown { dest } => {
+                if dest.as_block_index() == fallthrough {
+                    *self = i_Nop(0);
+                }
+            }
+            _ => {}
+        }
     }
 
-    fn with_block_offsets(&mut self, _my_offset: CodeOffset, _targets: &[CodeOffset]) {
-        unimplemented!()
+    fn with_block_offsets(&mut self, my_offset: CodeOffset, targets: &[CodeOffset]) {
+        // This is identical (modulo renaming) to the arm64 version.
+        match self {
+            &mut Inst::JmpCond { cc:_, ref mut target } => {
+                target.lower(targets, my_offset);
+            }
+            &mut Inst::JmpCondCompound {
+                cc: _,
+                ref mut taken,
+                ref mut not_taken,
+                ..
+            } => {
+                taken.lower(targets, my_offset);
+                not_taken.lower(targets, my_offset);
+            }
+            &mut Inst::JmpKnown { ref mut dest } => {
+                dest.lower(targets, my_offset);
+            }
+            _ => {}
+        }
+
     }
 
     fn reg_universe() -> RealRegUniverse {
@@ -4278,27 +4500,6 @@ fn test_x64_insn_encoding_and_printing() {
     insns.push((i_Pop64(w_r15), "415F", "popq    %r15"));
 
     // ========================================================
-    // JmpKnown skipped for now
-
-    // ========================================================
-    // JmpUnknown
-    insns.push((i_JmpUnknown(ip_RM_R(rbp)), "FFE5", "jmp     *%rbp"));
-    insns.push((i_JmpUnknown(ip_RM_R(r11)), "41FFE3", "jmp     *%r11"));
-    insns.push((
-        i_JmpUnknown(ip_RM_M(ip_Addr_IRRS(321, rsi, rcx, 3))),
-        "FFA4CE41010000",
-        "jmp     *321(%rsi,%rcx,8)",
-    ));
-    insns.push((
-        i_JmpUnknown(ip_RM_M(ip_Addr_IRRS(321, r10, rdx, 2))),
-        "41FFA49241010000",
-        "jmp     *321(%r10,%rdx,4)",
-    ));
-
-    // ========================================================
-    // JmpCond skipped for now
-
-    // ========================================================
     // CallKnown skipped for now
 
     // ========================================================
@@ -4319,6 +4520,33 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Ret
     insns.push((i_Ret(), "C3", "ret"));
+
+    // ========================================================
+    // JmpKnown skipped for now
+
+    // ========================================================
+    // JmpCondSymm isn't a real instruction
+
+    // ========================================================
+    // JmpCond skipped for now
+
+    // ========================================================
+    // JmpCondCompound isn't a real instruction
+
+    // ========================================================
+    // JmpUnknown
+    insns.push((i_JmpUnknown(ip_RM_R(rbp)), "FFE5", "jmp     *%rbp"));
+    insns.push((i_JmpUnknown(ip_RM_R(r11)), "41FFE3", "jmp     *%r11"));
+    insns.push((
+        i_JmpUnknown(ip_RM_M(ip_Addr_IRRS(321, rsi, rcx, 3))),
+        "FFA4CE41010000",
+        "jmp     *321(%rsi,%rcx,8)",
+    ));
+    insns.push((
+        i_JmpUnknown(ip_RM_M(ip_Addr_IRRS(321, r10, rdx, 2))),
+        "41FFA49241010000",
+        "jmp     *321(%r10,%rdx,4)",
+    ));
 
     // ========================================================
     // Actually run the tests!
