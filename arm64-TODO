@@ -12,6 +12,11 @@ TODO:
     - (sewardj 2020Feb16: let's discuss before implementing? I think
        dealing with I8/I16 ops directly in the isel is simple and gives
        good results)
+    - actually: handle I8, I16 directly. Emit I32 ops in most cases.
+      The invariant is that an I8 stored in an I32 (or I64) reg has
+      undefined bits 8..N. Add, mul, etc., all work correctly (because
+      the mod-2^8 ring is embedded in the mod-2^32 ring!), but right-shift
+      and divide must mask, as must any comparison op.
   - narrowing: I128
 
   - Document which opcodes should for sure not appear in legalized code.
@@ -30,14 +35,6 @@ TODO:
     - bit ops
     - multiply-add / multiply-subtract
     - address of global (with relos)
-
-- Function ABI:
-  - caller side
-    - Move args into place; set clobbers (defs of real regs) on Call inst; do
-      call; move retvals out
-
-- Binary emission
-  - Resolve relocations: GlobalValue, Function (multiple-insn seq for address?)
 
 - Calling conventions for non-SysV cases
   - Wasm: take implicit VMContext argument
