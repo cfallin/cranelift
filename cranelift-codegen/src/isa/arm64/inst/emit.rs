@@ -186,6 +186,10 @@ fn enc_ldst_imm19(op_31_24: u32, imm19: u32, rd: Reg) -> u32 {
     (op_31_24 << 24) | (imm19 << 5) | machreg_to_gpr(rd)
 }
 
+fn enc_extend(top22: u32, rd: Writable<Reg>, rn: Reg) -> u32 {
+    (top22 << 10) | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd.to_reg())
+}
+
 impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
     fn emit(&self, sink: &mut CS, consts: &mut CPS) {
         match self {
@@ -462,8 +466,44 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                 // Encoded as ORR rd, rm, zero.
                 sink.put4(enc_arith_rrr(0b10101010_000, 0b000_000, rd, zero_reg(), rm));
             }
+            &Inst::Mov32 { rd, rm } => {
+                // Encoded as ORR rd, rm, zero.
+                sink.put4(enc_arith_rrr(0b00101010_000, 0b000_000, rd, zero_reg(), rm));
+            }
             &Inst::MovZ { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVZ, rd, imm)),
             &Inst::MovN { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVN, rd, imm)),
+            &Inst::Extend {
+                rd,
+                rn,
+                signed,
+                from_bits,
+                to_bits,
+            } => {
+                let top22 = match (signed, from_bits, to_bits) {
+                    (false, 8, 32) => 0b010_100110_0_000000_000111, // UXTB (32)
+                    (false, 16, 32) => 0b010_100110_0_000000_001111, // UXTH (32)
+                    (true, 8, 32) => 0b000_100110_0_000000_000111,  // SXTB (32)
+                    (true, 16, 32) => 0b000_100110_0_000000_001111, // SXTH (32)
+                    // The 64-bit unsigned variants are the same as the 32-bit ones,
+                    // because writes to Wn zero out the top 32 bits of Xn
+                    (false, 8, 64) => 0b010_100110_0_000000_000111, // UXTB (64)
+                    (false, 16, 64) => 0b010_100110_0_000000_001111, // UXTH (64)
+                    (true, 8, 64) => 0b100_100110_1_000000_000111,  // SXTB (64)
+                    (true, 16, 64) => 0b100_100110_1_000000_001111, // SXTH (64)
+                    // 32-to-64: the unsigned case is a 'mov' (special-cased below).
+                    (false, 32, 64) => 0,                           // MOV
+                    (true, 32, 64) => 0b100_100110_1_000000_011111, // SXTW (64)
+                    _ => panic!(
+                        "Unsupported extend combination: signed = {}, from_bits = {}, to_bits = {}",
+                        signed, from_bits, to_bits
+                    ),
+                };
+                if top22 != 0 {
+                    sink.put4(enc_extend(top22, rd, rn));
+                } else {
+                    Inst::mov32(rd, rn).emit(sink, consts);
+                }
+            }
             &Inst::Jump { ref dest } => {
                 // TODO: differentiate between as_off26() returning `None` for
                 // out-of-range vs. not-yet-finalized. The latter happens when we
@@ -1257,6 +1297,14 @@ mod test {
             "E80309AA",
             "mov x8, x9",
         ));
+        insns.push((
+            Inst::Mov32 {
+                rd: writable_xreg(8),
+                rm: xreg(9),
+            },
+            "E803092A",
+            "mov w8, w9",
+        ));
 
         insns.push((
             Inst::MovZ {
@@ -1322,6 +1370,116 @@ mod test {
             },
             "E8FFFF92",
             "movn x8, #18446462598732840960",
+        ));
+        insns.push((
+            Inst::Extend {
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                signed: false,
+                from_bits: 8,
+                to_bits: 32,
+            },
+            "411C0053",
+            "uxtb w1, w2",
+        ));
+        insns.push((
+            Inst::Extend {
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                signed: true,
+                from_bits: 8,
+                to_bits: 32,
+            },
+            "411C0013",
+            "sxtb w1, w2",
+        ));
+        insns.push((
+            Inst::Extend {
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                signed: false,
+                from_bits: 16,
+                to_bits: 32,
+            },
+            "413C0053",
+            "uxth w1, w2",
+        ));
+        insns.push((
+            Inst::Extend {
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                signed: true,
+                from_bits: 16,
+                to_bits: 32,
+            },
+            "413C0013",
+            "sxth w1, w2",
+        ));
+        insns.push((
+            Inst::Extend {
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                signed: false,
+                from_bits: 8,
+                to_bits: 64,
+            },
+            "411C0053",
+            "uxtb x1, w2",
+        ));
+        insns.push((
+            Inst::Extend {
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                signed: true,
+                from_bits: 8,
+                to_bits: 64,
+            },
+            "411C4093",
+            "sxtb x1, w2",
+        ));
+        insns.push((
+            Inst::Extend {
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                signed: false,
+                from_bits: 16,
+                to_bits: 64,
+            },
+            "413C0053",
+            "uxth x1, w2",
+        ));
+        insns.push((
+            Inst::Extend {
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                signed: true,
+                from_bits: 16,
+                to_bits: 64,
+            },
+            "413C4093",
+            "sxth x1, w2",
+        ));
+        insns.push((
+            Inst::Extend {
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                signed: false,
+                from_bits: 32,
+                to_bits: 64,
+            },
+            "E103022A",
+            "mov w1, w2",
+        ));
+        insns.push((
+            Inst::Extend {
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                signed: true,
+                from_bits: 32,
+                to_bits: 64,
+            },
+            "417C4093",
+            "sxtw x1, w2",
         ));
 
         insns.push((

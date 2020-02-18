@@ -1,5 +1,16 @@
 TODO:
 
+- ISA completeness:
+  - ImmLogic: implement the algorithm to determine whether an immediate can be
+    encoded as a logical immediate.
+  - Add opcodes to lowering. Full integer/ALU instruction set.
+
+- Top-level pipeline:
+  - Better story to integrate with existing Cranelift users
+  - Wrap in a skeleton TargetIsa implementation?
+  - Make sure we invoke all optimization passes, legalization passes, etc.
+    (Function::compile is responsible for this?)
+
 - API and naming cleanups
   - Add a "get input insn if we are its only use" method to LowerCtx
     - "conservative" version that does not look past loads/stores
@@ -19,30 +30,9 @@ TODO:
   - see cranelift-codegen/meta/src/shared/legalize.rs
   - instructions: global_value, heap_addr, table_addr, trapz, trapnz, br_table,
                   select, fconst, stack_load, stack_store
-  - widening: I8, I16
-    - see signed-divide and bit ops for special cases
-    - (sewardj 2020Feb16: let's discuss before implementing? I think
-       dealing with I8/I16 ops directly in the isel is simple and gives
-       good results)
-    - actually: handle I8, I16 directly. Emit I32 ops in most cases.
-      The invariant is that an I8 stored in an I32 (or I64) reg has
-      undefined bits 8..N. Add, mul, etc., all work correctly (because
-      the mod-2^8 ring is embedded in the mod-2^32 ring!), but right-shift
-      and divide must mask, as must any comparison op.
   - narrowing: I128
 
   - Document which opcodes should for sure not appear in legalized code.
-
-- ISA completeness:
-  - ImmLogic: implement the algorithm to determine whether an immediate can be
-    encoded as a logical immediate.
-  - Add opcodes to lowering. Full integer/ALU instruction set.
-
-- Top-level pipeline:
-  - Better story to integrate with existing Cranelift users
-  - Wrap in a skeleton TargetIsa implementation?
-  - Make sure we invoke all optimization passes, legalization passes, etc.
-    (Function::compile is responsible for this?)
 
 - Lowering tests
   - Make sure all (non-vector) filetests can compile

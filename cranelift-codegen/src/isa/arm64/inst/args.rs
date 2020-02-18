@@ -227,6 +227,7 @@ impl Cond {
         }
     }
 
+    /// Return the machine encoding of this condition.
     pub fn bits(self) -> u32 {
         match self {
             Cond::Eq => 0,

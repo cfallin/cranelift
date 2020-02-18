@@ -157,6 +157,10 @@ pub enum Inst {
     /// and faster `is_move()` logic.
     Mov { rd: Writable<Reg>, rm: Reg },
 
+    /// A 32-bit MOV. Zeroes the top 32 bits of the destination. This is
+    /// effectively an alias for an unsigned 32-to-64-bit extension.
+    Mov32 { rd: Writable<Reg>, rm: Reg },
+
     /// A MOVZ with a 16-bit immediate.
     MovZ {
         rd: Writable<Reg>,
@@ -167,6 +171,15 @@ pub enum Inst {
     MovN {
         rd: Writable<Reg>,
         imm: MoveWideConst,
+    },
+
+    /// A sign- or zero-extend operation.
+    Extend {
+        rd: Writable<Reg>,
+        rn: Reg,
+        signed: bool,
+        from_bits: u8,
+        to_bits: u8,
     },
 
     /// A machine call instruction.
@@ -219,6 +232,14 @@ impl Inst {
     /// Create a move instruction.
     pub fn mov(to_reg: Writable<Reg>, from_reg: Reg) -> Inst {
         Inst::Mov {
+            rd: to_reg,
+            rm: from_reg,
+        }
+    }
+
+    /// Create a 32-bit move instruction.
+    pub fn mov32(to_reg: Writable<Reg>, from_reg: Reg) -> Inst {
+        Inst::Mov32 {
             rd: to_reg,
             rm: from_reg,
         }
@@ -334,8 +355,16 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.defined.insert(rd);
             iru.used.insert(rm);
         }
+        &Inst::Mov32 { rd, rm } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rm);
+        }
         &Inst::MovZ { rd, .. } | &Inst::MovN { rd, .. } => {
             iru.defined.insert(rd);
+        }
+        &Inst::Extend { rd, rn, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
         }
         &Inst::Jump { .. } | &Inst::Ret { .. } => {}
         &Inst::Call {
@@ -571,6 +600,10 @@ fn arm64_map_regs(
             rd: map_wr(d, rd),
             rm: map(u, rm),
         },
+        &mut Inst::Mov32 { rd, rm } => Inst::Mov32 {
+            rd: map_wr(d, rd),
+            rm: map(u, rm),
+        },
         &mut Inst::MovZ { rd, ref imm } => Inst::MovZ {
             rd: map_wr(d, rd),
             imm: imm.clone(),
@@ -578,6 +611,19 @@ fn arm64_map_regs(
         &mut Inst::MovN { rd, ref imm } => Inst::MovN {
             rd: map_wr(d, rd),
             imm: imm.clone(),
+        },
+        &mut Inst::Extend {
+            rd,
+            rn,
+            signed,
+            from_bits,
+            to_bits,
+        } => Inst::Extend {
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+            signed,
+            from_bits,
+            to_bits,
         },
         &mut Inst::Jump { dest } => Inst::Jump { dest },
         &mut Inst::Call {
@@ -1012,6 +1058,11 @@ impl Inst {
                 let rm = rm.show_rru(mb_rru);
                 format!("mov {}, {}", rd, rm)
             }
+            &Inst::Mov32 { rd, rm } => {
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, /* is32 = */ true);
+                let rm = show_ireg_sized(rm, mb_rru, /* is32 = */ true);
+                format!("mov {}, {}", rd, rm)
+            }
             &Inst::MovZ { rd, ref imm } => {
                 let rd = rd.to_reg().show_rru(mb_rru);
                 let imm = imm.show_rru(mb_rru);
@@ -1021,6 +1072,39 @@ impl Inst {
                 let rd = rd.to_reg().show_rru(mb_rru);
                 let imm = imm.show_rru(mb_rru);
                 format!("movn {}, {}", rd, imm)
+            }
+            &Inst::Extend {
+                rd,
+                rn,
+                signed,
+                from_bits,
+                to_bits,
+            } => {
+                // Is the destination a 32-bit register? Corresponds to whether
+                // extend-to width is <= 32 bits, *unless* we have an unsigned
+                // 32-to-64-bit extension, which is implemented with a "mov" to a
+                // 32-bit (W-reg) dest, because this zeroes the top 32 bits.
+                let dest_is32 = if !signed && from_bits == 32 && to_bits == 64 {
+                    true
+                } else {
+                    to_bits <= 32
+                };
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, dest_is32);
+                let rn = show_ireg_sized(rn, mb_rru, from_bits <= 32);
+                let op = match (signed, from_bits, to_bits) {
+                    (false, 8, 32) => "uxtb",
+                    (true, 8, 32) => "sxtb",
+                    (false, 16, 32) => "uxth",
+                    (true, 16, 32) => "sxth",
+                    (false, 8, 64) => "uxtb",
+                    (true, 8, 64) => "sxtb",
+                    (false, 16, 64) => "uxth",
+                    (true, 16, 64) => "sxth",
+                    (false, 32, 64) => "mov", // special case (see above).
+                    (true, 32, 64) => "sxtw",
+                    _ => panic!("Unsupported Extend case: {:?}", self),
+                };
+                format!("{} {}, {}", op, rd, rn)
             }
             &Inst::Call { dest: _, .. } => format!("bl 0"),
             &Inst::CallInd { rn, .. } => {
