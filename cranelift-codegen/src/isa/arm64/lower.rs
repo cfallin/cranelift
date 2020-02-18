@@ -458,6 +458,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
         Opcode::UaddSat | Opcode::SaddSat => {
             // TODO: open-code a sequence: adds, then branch-on-no-overflow
             // over a load of the saturated value.
+            // or .. can this be done on the SIMD side?
         }
 
         Opcode::UsubSat | Opcode::SsubSat => {
@@ -860,7 +861,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
         | Opcode::X86Pmaxu
         | Opcode::X86Pmins
         | Opcode::X86Pminu => {
-            panic!("x86-specific opcode in ARM64 backend!");
+            panic!("x86-specific opcode in supposedly arch-neutral IR!");
         }
     }
 }

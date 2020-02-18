@@ -1,4 +1,4 @@
-//! Lowering rules for ARM64.
+//! Lowering rules for X64.
 
 #![allow(dead_code)]
 #![allow(non_snake_case)]
@@ -51,11 +51,12 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
     };
 
     match op {
-        //zz         Opcode::Iconst | Opcode::Bconst | Opcode::F32const | Opcode::F64const => {
-        //zz             let value = output_to_const(ctx, outputs[0]).unwrap();
-        //zz             let rd = output_to_reg(ctx, outputs[0]);
-        //zz             lower_constant(ctx, rd, value);
-        //zz         }
+        Opcode::Iconst | Opcode::Bconst | Opcode::F32const | Opcode::F64const | Opcode::Null => {
+            //let value = output_to_const(ctx, outputs[0]).unwrap();
+            //let rd = output_to_reg(ctx, outputs[0]);
+            //lower_constant(ctx, rd, value);
+            unimplemented!()
+        }
         Opcode::Iadd => {
             let regD = ctx.get_output_writable_reg(iri, 0);
             let regL = ctx.get_input_reg(iri, 0);
@@ -65,89 +66,251 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             ctx.emit(i_Mov_R_R(true, regL, regD));
             ctx.emit(i_Alu_RMI_R(is64, RMI_R_Op::Add, ip_RMI_R(regR), regD));
         }
-        //zz         Opcode::Isub => {
-        //zz             let rd = output_to_reg(ctx, outputs[0]);
-        //zz             let rn = input_to_reg(ctx, inputs[0]);
-        //zz             let rm = input_to_rse_imm12(ctx, inputs[1]);
-        //zz             let ty = ty.unwrap();
-        //zz             let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
-        //zz             ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
-        //zz         }
-        //zz
-        //zz         Opcode::Load
-        //zz         | Opcode::Uload8
-        //zz         | Opcode::Sload8
-        //zz         | Opcode::Uload16
-        //zz         | Opcode::Sload16
-        //zz         | Opcode::Uload32
-        //zz         | Opcode::Sload32
-        //zz         | Opcode::LoadComplex
-        //zz         | Opcode::Uload8Complex
-        //zz         | Opcode::Sload8Complex
-        //zz         | Opcode::Uload16Complex
-        //zz         | Opcode::Sload16Complex
-        //zz         | Opcode::Uload32Complex
-        //zz         | Opcode::Sload32Complex => {
-        //zz             let off = ldst_offset(ctx.data(insn)).unwrap();
-        //zz             let elem_ty = match op {
-        //zz                 Opcode::Sload8 | Opcode::Uload8 | Opcode::Sload8Complex | Opcode::Uload8Complex => {
-        //zz                     I8
-        //zz                 }
-        //zz                 Opcode::Sload16
-        //zz                 | Opcode::Uload16
-        //zz                 | Opcode::Sload16Complex
-        //zz                 | Opcode::Uload16Complex => I16,
-        //zz                 Opcode::Sload32
-        //zz                 | Opcode::Uload32
-        //zz                 | Opcode::Sload32Complex
-        //zz                 | Opcode::Uload32Complex => I32,
-        //zz                 Opcode::Load | Opcode::LoadComplex => I64,
-        //zz                 _ => unreachable!(),
-        //zz             };
-        //zz
-        //zz             let mem = lower_address(ctx, elem_ty, &inputs[..], off);
-        //zz             let rd = output_to_reg(ctx, outputs[0]);
-        //zz
-        //zz             ctx.emit(match op {
-        //zz                 Opcode::Uload8 | Opcode::Uload8Complex => Inst::ULoad8 { rd, mem },
-        //zz                 Opcode::Sload8 | Opcode::Sload8Complex => Inst::SLoad8 { rd, mem },
-        //zz                 Opcode::Uload16 | Opcode::Uload16Complex => Inst::ULoad16 { rd, mem },
-        //zz                 Opcode::Sload16 | Opcode::Sload16Complex => Inst::SLoad16 { rd, mem },
-        //zz                 Opcode::Uload32 | Opcode::Uload32Complex => Inst::ULoad32 { rd, mem },
-        //zz                 Opcode::Sload32 | Opcode::Sload32Complex => Inst::SLoad32 { rd, mem },
-        //zz                 Opcode::Load | Opcode::LoadComplex => Inst::ULoad64 { rd, mem },
-        //zz                 _ => unreachable!(),
-        //zz             });
-        //zz         }
-        //zz
-        //zz         Opcode::Store
-        //zz         | Opcode::Istore8
-        //zz         | Opcode::Istore16
-        //zz         | Opcode::Istore32
-        //zz         | Opcode::StoreComplex
-        //zz         | Opcode::Istore8Complex
-        //zz         | Opcode::Istore16Complex
-        //zz         | Opcode::Istore32Complex => {
-        //zz             let off = ldst_offset(ctx.data(insn)).unwrap();
-        //zz             let elem_ty = match op {
-        //zz                 Opcode::Istore8 | Opcode::Istore8Complex => I8,
-        //zz                 Opcode::Istore16 | Opcode::Istore16Complex => I16,
-        //zz                 Opcode::Istore32 | Opcode::Istore32Complex => I32,
-        //zz                 Opcode::Store | Opcode::StoreComplex => I64,
-        //zz                 _ => unreachable!(),
-        //zz             };
-        //zz
-        //zz             let mem = lower_address(ctx, elem_ty, &inputs[1..], off);
-        //zz             let rd = input_to_reg(ctx, inputs[0]);
-        //zz
-        //zz             ctx.emit(match op {
-        //zz                 Opcode::Istore8 | Opcode::Istore8Complex => Inst::Store8 { rd, mem },
-        //zz                 Opcode::Istore16 | Opcode::Istore16Complex => Inst::Store16 { rd, mem },
-        //zz                 Opcode::Istore32 | Opcode::Istore32Complex => Inst::Store32 { rd, mem },
-        //zz                 Opcode::Store | Opcode::StoreComplex => Inst::Store64 { rd, mem },
-        //zz                 _ => unreachable!(),
-        //zz             });
-        //zz         }
+        Opcode::Isub => {
+            //let rd = output_to_reg(ctx, outputs[0]);
+            //let rn = input_to_reg(ctx, inputs[0]);
+            //let rm = input_to_rse_imm12(ctx, inputs[1]);
+            //let ty = ty.unwrap();
+            //let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
+            //ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
+            unimplemented!()
+        }
+
+        Opcode::UaddSat | Opcode::SaddSat => {
+            // TODO: open-code a sequence: adds, then branch-on-no-overflow
+            // over a load of the saturated value.
+            unimplemented!()
+        }
+
+        Opcode::UsubSat | Opcode::SsubSat => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Ineg => {
+            //let rd = output_to_reg(ctx, outputs[0]);
+            //let rn = zero_reg();
+            //let rm = input_to_reg(ctx, inputs[0]);
+            //let ty = ty.unwrap();
+            //let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
+            //ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
+            unimplemented!()
+        }
+
+        Opcode::Imul => {
+            //let rd = output_to_reg(ctx, outputs[0]);
+            //let rn = input_to_reg(ctx, inputs[0]);
+            //let rm = input_to_reg(ctx, inputs[1]);
+            //let ty = ty.unwrap();
+            //let alu_op = choose_32_64(ty, ALUOp::MAdd32, ALUOp::MAdd64);
+            //ctx.emit(Inst::AluRRRR {
+            //    alu_op,
+            //    rd,
+            //    rn,
+            //    rm,
+            //    ra: zero_reg(),
+            //});
+            unimplemented!()
+        }
+
+        Opcode::Umulhi | Opcode::Smulhi => {
+            //let _ty = ty.unwrap();
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Udiv | Opcode::Sdiv | Opcode::Urem | Opcode::Srem => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Band
+        | Opcode::Bor
+        | Opcode::Bxor
+        | Opcode::Bnot
+        | Opcode::BandNot
+        | Opcode::BorNot
+        | Opcode::BxorNot => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Rotl | Opcode::Rotr => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Ishl | Opcode::Ushr | Opcode::Sshr => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Bitrev => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Clz | Opcode::Cls | Opcode::Ctz | Opcode::Popcnt => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Load
+        | Opcode::Uload8
+        | Opcode::Sload8
+        | Opcode::Uload16
+        | Opcode::Sload16
+        | Opcode::Uload32
+        | Opcode::Sload32
+        | Opcode::LoadComplex
+        | Opcode::Uload8Complex
+        | Opcode::Sload8Complex
+        | Opcode::Uload16Complex
+        | Opcode::Sload16Complex
+        | Opcode::Uload32Complex
+        | Opcode::Sload32Complex => {
+            //let off = ldst_offset(ctx.data(insn)).unwrap();
+            //let elem_ty = match op {
+            //    Opcode::Sload8 | Opcode::Uload8 | Opcode::Sload8Complex | Opcode::Uload8Com//plex => {
+            //        I8
+            //    }
+            //    Opcode::Sload16
+            //    | Opcode::Uload16
+            //    | Opcode::Sload16Complex
+            //    | Opcode::Uload16Complex => I16,
+            //    Opcode::Sload32
+            //    | Opcode::Uload32
+            //    | Opcode::Sload32Complex
+            //    | Opcode::Uload32Complex => I32,
+            //    Opcode::Load | Opcode::LoadComplex => I64,
+            //    _ => unreachable!(),
+            //};
+
+            //let mem = lower_address(ctx, elem_ty, &inputs[..], off);
+            //let rd = output_to_reg(ctx, outputs[0]);
+
+            //ctx.emit(match op {
+            //    Opcode::Uload8 | Opcode::Uload8Complex => Inst::ULoad8 { rd, mem },
+            //    Opcode::Sload8 | Opcode::Sload8Complex => Inst::SLoad8 { rd, mem },
+            //    Opcode::Uload16 | Opcode::Uload16Complex => Inst::ULoad16 { rd, mem },
+            //    Opcode::Sload16 | Opcode::Sload16Complex => Inst::SLoad16 { rd, mem },
+            //    Opcode::Uload32 | Opcode::Uload32Complex => Inst::ULoad32 { rd, mem },
+            //    Opcode::Sload32 | Opcode::Sload32Complex => Inst::SLoad32 { rd, mem },
+            //    Opcode::Load | Opcode::LoadComplex => Inst::ULoad64 { rd, mem },
+            //    _ => unreachable!(),
+            //});
+            unimplemented!()
+        }
+
+        Opcode::Store
+        | Opcode::Istore8
+        | Opcode::Istore16
+        | Opcode::Istore32
+        | Opcode::StoreComplex
+        | Opcode::Istore8Complex
+        | Opcode::Istore16Complex
+        | Opcode::Istore32Complex => {
+            //let off = ldst_offset(ctx.data(insn)).unwrap();
+            //let elem_ty = match op {
+            //    Opcode::Istore8 | Opcode::Istore8Complex => I8,
+            //    Opcode::Istore16 | Opcode::Istore16Complex => I16,
+            //    Opcode::Istore32 | Opcode::Istore32Complex => I32,
+            //    Opcode::Store | Opcode::StoreComplex => I64,
+            //    _ => unreachable!(),
+            //};
+
+            //let mem = lower_address(ctx, elem_ty, &inputs[1..], off);
+            //let rd = input_to_reg(ctx, inputs[0]);
+
+            //ctx.emit(match op {
+            //    Opcode::Istore8 | Opcode::Istore8Complex => Inst::Store8 { rd, mem },
+            //    Opcode::Istore16 | Opcode::Istore16Complex => Inst::Store16 { rd, mem },
+            //    Opcode::Istore32 | Opcode::Istore32Complex => Inst::Store32 { rd, mem },
+            //    Opcode::Store | Opcode::StoreComplex => Inst::Store64 { rd, mem },
+            //    _ => unreachable!(),
+            //});
+            unimplemented!()
+        }
+
+        Opcode::StackLoad => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::StackStore => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::StackAddr => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::GlobalValue => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::SymbolValue => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::HeapAddr => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::TableAddr => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Nop => {
+            // Nothing.
+            unimplemented!()
+        }
+
+        Opcode::Select | Opcode::Selectif => {
+            // TODO.
+            unimplemented!()
+        }
+
+        Opcode::Bitselect => {
+            // TODO.
+            unimplemented!()
+        }
+
+        Opcode::IsNull | Opcode::IsInvalid | Opcode::Trueif | Opcode::Trueff => {
+            // TODO.
+            unimplemented!()
+        }
+
+        Opcode::Copy => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Breduce | Opcode::Bextend | Opcode::Bint | Opcode::Bmask => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Ireduce | Opcode::Uextend | Opcode::Sextend | Opcode::Isplit | Opcode::Iconcat => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::FallthroughReturn => {
+            // What is this? The definition says it's a "special
+            // instruction" meant to allow falling through into an
+            // epilogue that will then return; that just sounds like a
+            // normal fallthrough. TODO: Do we need to handle this
+            // differently?
+            unimplemented!();
+        }
+
         Opcode::Return => {
             for i in 0..ctx.num_inputs(iri) {
                 let src_reg = ctx.get_input_reg(iri, i);
@@ -159,9 +322,210 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             // job for the ABI machinery.
         }
 
-        _ => {
-            println!("Unimplemented opcode: {:?}", op);
+        Opcode::Icmp | Opcode::IcmpImm | Opcode::Ifcmp | Opcode::IfcmpImm => {
+            // TODO
             unimplemented!()
+        }
+
+        Opcode::JumpTableEntry => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::JumpTableBase => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Debugtrap => {
+            unimplemented!()
+        }
+
+        Opcode::Trap => {
+            unimplemented!()
+        }
+
+        Opcode::Trapz | Opcode::Trapnz | Opcode::Trapif | Opcode::Trapff => {
+            unimplemented!()
+        }
+
+        Opcode::ResumableTrap => {
+            unimplemented!()
+        }
+
+        Opcode::Safepoint => {
+            unimplemented!()
+        }
+
+        Opcode::FuncAddr => {
+            // TODO
+            unimplemented!()
+        }
+
+        Opcode::Call | Opcode::CallIndirect => {
+            //let (abi, inputs) = match op {
+            //    Opcode::Call => {
+            //        let extname = ctx.call_target(insn).unwrap();
+            //        let sig = ctx.call_sig(insn).unwrap();
+            //        assert!(inputs.len() == sig.params.len());
+            //        assert!(outputs.len() == sig.returns.len());
+            //        (ARM64ABICall::from_func(sig, extname), &inputs[..])
+            //    }
+            //    Opcode::CallIndirect => {
+            //        let ptr = input_to_reg(ctx, inputs[0]);
+            //        let sig = ctx.call_sig(insn).unwrap();
+            //        assert!(inputs.len() - 1 == sig.params.len());
+            //        assert!(outputs.len() == sig.returns.len());
+            //        (ARM64ABICall::from_ptr(sig, ptr), &inputs[1..])
+            //    }
+            //    _ => unreachable!(),
+            //};
+            //for (i, input) in inputs.iter().enumerate() {
+            //    let arg_reg = input_to_reg(ctx, *input);
+            //    ctx.emit(abi.gen_copy_reg_to_arg(i, arg_reg));
+            //}
+            //ctx.emit(abi.gen_call());
+            //for (i, output) in outputs.iter().enumerate() {
+            //    let retval_reg = output_to_reg(ctx, *output);
+            //    ctx.emit(abi.gen_copy_retval_to_reg(i, retval_reg));
+            //}
+            unimplemented!()
+        }
+
+        Opcode::GetPinnedReg
+        | Opcode::SetPinnedReg
+        | Opcode::Spill
+        | Opcode::Fill
+        | Opcode::FillNop
+        | Opcode::Regmove
+        | Opcode::CopySpecial
+        | Opcode::CopyToSsa
+        | Opcode::CopyNop
+        | Opcode::AdjustSpDown
+        | Opcode::AdjustSpUpImm
+        | Opcode::AdjustSpDownImm
+        | Opcode::IfcmpSp
+        | Opcode::Regspill
+        | Opcode::Regfill => {
+            panic!("Unused opcode should not be encountered.");
+        }
+
+        // TODO: cmp
+        // TODO: more alu ops
+        Opcode::Jump
+        | Opcode::Fallthrough
+        | Opcode::Brz
+        | Opcode::Brnz
+        | Opcode::BrIcmp
+        | Opcode::Brif
+        | Opcode::Brff
+        | Opcode::IndirectJumpTableBr
+        | Opcode::BrTable => {
+            panic!("Branch opcode reached non-branch lowering logic!");
+        }
+
+        Opcode::Vconst
+        | Opcode::Shuffle
+        | Opcode::Vsplit
+        | Opcode::Vconcat
+        | Opcode::Vselect
+        | Opcode::VanyTrue
+        | Opcode::VallTrue
+        | Opcode::Splat
+        | Opcode::Insertlane
+        | Opcode::Extractlane
+        | Opcode::Bitcast
+        | Opcode::RawBitcast
+        | Opcode::ScalarToVector => {
+            // TODO
+            panic!("Vector ops not implemented.");
+        }
+
+        Opcode::Fcmp
+        | Opcode::Ffcmp
+        | Opcode::Fadd
+        | Opcode::Fsub
+        | Opcode::Fmul
+        | Opcode::Fdiv
+        | Opcode::Sqrt
+        | Opcode::Fma
+        | Opcode::Fneg
+        | Opcode::Fabs
+        | Opcode::Fcopysign
+        | Opcode::Fmin
+        | Opcode::Fmax
+        | Opcode::Ceil
+        | Opcode::Floor
+        | Opcode::Trunc
+        | Opcode::Nearest
+        | Opcode::Fpromote
+        | Opcode::Fdemote
+        | Opcode::FcvtToUint
+        | Opcode::FcvtToUintSat
+        | Opcode::FcvtToSint
+        | Opcode::FcvtToSintSat
+        | Opcode::FcvtFromUint
+        | Opcode::FcvtFromSint => {
+            panic!("Floating point ops not implemented.");
+        }
+
+        Opcode::IaddImm
+        | Opcode::ImulImm
+        | Opcode::UdivImm
+        | Opcode::SdivImm
+        | Opcode::UremImm
+        | Opcode::SremImm
+        | Opcode::IrsubImm
+        | Opcode::IaddCin
+        | Opcode::IaddIfcin
+        | Opcode::IaddCout
+        | Opcode::IaddIfcout
+        | Opcode::IaddCarry
+        | Opcode::IaddIfcarry
+        | Opcode::IsubBin
+        | Opcode::IsubIfbin
+        | Opcode::IsubBout
+        | Opcode::IsubIfbout
+        | Opcode::IsubBorrow
+        | Opcode::IsubIfborrow
+        | Opcode::BandImm
+        | Opcode::BorImm
+        | Opcode::BxorImm
+        | Opcode::RotlImm
+        | Opcode::RotrImm
+        | Opcode::IshlImm
+        | Opcode::UshrImm
+        | Opcode::SshrImm => {
+            panic!("ALU+imm and ALU+carry ops should not appear here!");
+        }
+
+        Opcode::X86Udivmodx
+        | Opcode::X86Sdivmodx
+        | Opcode::X86Umulx
+        | Opcode::X86Smulx
+        | Opcode::X86Cvtt2si
+        | Opcode::X86Fmin
+        | Opcode::X86Fmax
+        | Opcode::X86Push
+        | Opcode::X86Pop
+        | Opcode::X86Bsr
+        | Opcode::X86Bsf
+        | Opcode::X86Pshufd
+        | Opcode::X86Pshufb
+        | Opcode::X86Pextr
+        | Opcode::X86Pinsr
+        | Opcode::X86Insertps
+        | Opcode::X86Movsd
+        | Opcode::X86Movlhps
+        | Opcode::X86Psll
+        | Opcode::X86Psrl
+        | Opcode::X86Psra
+        | Opcode::X86Ptest
+        | Opcode::X86Pmaxs
+        | Opcode::X86Pmaxu
+        | Opcode::X86Pmins
+        | Opcode::X86Pminu => {
+            panic!("x86-specific opcode in supposedly arch-neutral IR!");
         }
     }
 }
