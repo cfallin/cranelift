@@ -610,20 +610,74 @@ impl fmt::Debug for ShiftKind {
 // are useful in compiler-generated code.
 #[derive(Copy, Clone)]
 pub enum CC {
-    Z,
-    NZ,
-} // add more as needed
+    O,   //  0   overflow
+    NO,  //  1   no overflow
+    B,   //  2   <u
+    NB,  //  3   >=u
+    Z,   //  4   zero
+    NZ,  //  5   not zero
+    BE,  //  6   <=u
+    NBE, //  7   >u
+    S,   //  8   negative
+    NS,  //  9   not negative
+    L,   //  12  <s
+    NL,  //  13  >=s
+    LE,  //  14  <=s
+    NLE, //  15  >s
+}
 impl CC {
     fn to_string(&self) -> String {
         match self {
+            CC::O => "o".to_string(),
+            CC::NO => "no".to_string(),
+            CC::B => "b".to_string(),
+            CC::NB => "nb".to_string(),
             CC::Z => "z".to_string(),
             CC::NZ => "nz".to_string(),
+            CC::BE => "be".to_string(),
+            CC::NBE => "nbe".to_string(),
+            CC::S => "s".to_string(),
+            CC::NS => "ns".to_string(),
+            CC::L => "l".to_string(),
+            CC::NL => "nl".to_string(),
+            CC::LE => "le".to_string(),
+            CC::NLE => "nle".to_string(),
         }
     }
     fn invert(&self) -> CC {
         match self {
+            CC::O => CC::NO,
+            CC::NO => CC::O,
+            CC::B => CC::NB,
+            CC::NB => CC::B,
             CC::Z => CC::NZ,
             CC::NZ => CC::Z,
+            CC::BE => CC::NBE,
+            CC::NBE => CC::BE,
+            CC::S => CC::NS,
+            CC::NS => CC::S,
+            CC::L => CC::NL,
+            CC::NL => CC::L,
+            CC::LE => CC::NLE,
+            CC::NLE => CC::LE,
+        }
+    }
+    fn get_enc(&self) -> u8 {
+        match self {
+            CC::O => 0,
+            CC::NO => 1,
+            CC::B => 2,
+            CC::NB => 3,
+            CC::Z => 4,
+            CC::NZ => 5,
+            CC::BE => 6,
+            CC::NBE => 7,
+            CC::S => 8,
+            CC::NS => 9,
+            CC::L => 12,
+            CC::NL => 13,
+            CC::LE => 14,
+            CC::NLE => 15,
         }
     }
 }
@@ -638,7 +692,7 @@ impl fmt::Debug for CC {
 
 /// A branch target. Either unresolved (basic-block index) or resolved (offset
 /// from end of current instruction).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub enum BranchTarget {
     /// An unresolved reference to a BlockIndex, as passed into
     /// `lower_branch_group()`.
@@ -646,6 +700,15 @@ pub enum BranchTarget {
     /// A resolved reference to another instruction, after
     /// `Inst::with_block_offsets()`.  This offset is in bytes.
     ResolvedOffset(BlockIndex, isize),
+}
+impl ShowWithRRU for BranchTarget {
+    // The RRU is totally irrelevant here :-/
+    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
+        match self {
+            BranchTarget::Block(bix) => format!("(Block {})", bix),
+            BranchTarget::ResolvedOffset(bix, offs) => format!("(Block {}, offset {})", bix, offs),
+        }
+    }
 }
 
 impl BranchTarget {
@@ -965,21 +1028,29 @@ pub fn i_Ret() -> Inst {
     Inst::Ret {}
 }
 
-//pub fn i_JmpKnown(simm32: u32) -> Inst {
-//    Inst::JmpKnown { simm32 }
-//}
-//
-//pub fn i_JmpCondSymm(cc: CC, tsimm32: u32, fsimm32: u32) -> Inst {
-//    Inst::JmpCondSymm {
-//        cc,
-//        tsimm32,
-//        fsimm32,
-//    }
-//}
-//
-// ** JmpCond
-//
-// ** JmpCondCompound
+pub fn i_JmpKnown(dest: BranchTarget) -> Inst {
+    Inst::JmpKnown { dest }
+}
+
+pub fn i_JmpCondSymm(cc: CC, taken: BranchTarget, not_taken: BranchTarget) -> Inst {
+    Inst::JmpCondSymm {
+        cc,
+        taken,
+        not_taken,
+    }
+}
+
+pub fn i_JmpCond(cc: CC, target: BranchTarget) -> Inst {
+    Inst::JmpCond { cc, target }
+}
+
+pub fn i_JmpCondCompound(cc: CC, taken: BranchTarget, not_taken: BranchTarget) -> Inst {
+    Inst::JmpCondCompound {
+        cc,
+        taken,
+        not_taken,
+    }
+}
 
 pub fn i_JmpUnknown(target: RM) -> Inst {
     Inst::JmpUnknown { target }
@@ -1138,17 +1209,18 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
             dest.show_rru(mb_rru)
         ),
         Inst::Ret {} => "ret".to_string(),
-        //Inst::JmpKnown { simm32 } => format!("{} simm32={}", ljustify("jmp".to_string()), *simm32),
-        Inst::JmpKnown { .. } => "**JmpKnown**".to_string(),
+        Inst::JmpKnown { dest } => {
+            format!("{} {}", ljustify("jmp".to_string()), dest.show_rru(mb_rru))
+        }
         Inst::JmpCondSymm {
             cc,
-            taken: _,
-            not_taken: _,
+            taken,
+            not_taken,
         } => format!(
-            "{} tsimm32={} fsimm32={}",
+            "{} taken={} not_taken={}",
             ljustify2("j".to_string(), cc.to_string()),
-            "**taken**".to_string(),     //*tsimm32,
-            "**not_taken**".to_string()  //*fsimm32
+            taken.show_rru(mb_rru),
+            not_taken.show_rru(mb_rru)
         ),
         //
         Inst::JmpCond { .. } => "**JmpCond**".to_string(),
@@ -2239,7 +2311,21 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
         //
         // ** Inst::JmpCondSymm   XXXX should never happen
         //
-        // ** Inst::JmpCond
+        Inst::JmpCond {
+            cc,
+            target: BranchTarget::ResolvedOffset(bix, offset),
+        } if *offset >= -0x7FFF_FF00 && *offset <= 0x7FFF_FF00 => {
+            // This insn is 6 bytes long.  Currently |offset| is relative to
+            // the start of this insn, but the Intel encoding requires it to
+            // be relative to the start of the next instruction.  Hence the
+            // adjustment.
+            let mut offs_i32 = *offset as i32;
+            offs_i32 -= 6;
+            let offs_u32 = offs_i32 as u32;
+            sink.put1(0x0F);
+            sink.put1(0x80 + cc.get_enc());
+            sink.put4(offs_u32);
+        }
         //
         // ** Inst::JmpCondCompound   XXXX should never happen
         //
@@ -2268,7 +2354,7 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
                 }
             }
         }
-        _ => panic!("x64_emit"),
+        _ => panic!("x64_emit: unhandled: {}", inst.show_rru(None)),
     }
 }
 
@@ -2301,33 +2387,34 @@ impl MachInst for Inst {
 
     fn is_term(&self) -> MachTerminator {
         match self {
-            // Boring cases
-            // Nop
-            &Inst::Alu_RMI_R { .. } |
-            &Inst::Imm_R { .. } |
-            &Inst::Mov_R_R { .. } |
-            // MovZX_M_R
-            // Mov64_M_R
-            // MovSX_M_R
-            // Mov_R_M
-            &Inst::Shift_R { .. }
-            // Cmp_RMI_R
-            // Push64
-            // Pop64
-            // CallKnown
-            // CallUnknown
-            => MachTerminator::None,
-            // Interesting cases
+            // Interesting cases.
             &Inst::Ret {} => MachTerminator::Ret,
-            _ => {
-                println!("QQQQ {}", self.show_rru(None));
-                unimplemented!()
+            &Inst::JmpKnown { dest } => MachTerminator::Uncond(dest.as_block_index().unwrap()),
+            &Inst::JmpCondSymm {
+                cc: _,
+                taken,
+                not_taken,
+            } => MachTerminator::Cond(
+                taken.as_block_index().unwrap(),
+                not_taken.as_block_index().unwrap(),
+            ),
+            &Inst::JmpCond { .. } | &Inst::JmpCondCompound { .. } => {
+                panic!("is_term() called after lowering branches");
             }
+            // All other cases are boring.
+            _ => MachTerminator::None,
         }
     }
 
-    fn gen_move(_to_reg: Writable<Reg>, _from_reg: Reg) -> Inst {
-        unimplemented!()
+    fn gen_move(dst_reg: Writable<Reg>, src_reg: Reg) -> Inst {
+        let rcD = dst_reg.to_reg().get_class();
+        let rcS = src_reg.get_class();
+        // If this isn't true, we have gone way off the rails
+        assert!(rcD == rcS);
+        match rcD {
+            RegClass::I64 => i_Mov_R_R(true, src_reg, dst_reg),
+            _ => panic!("gen_move(x64): unhandled regclass"),
+        }
     }
 
     fn gen_nop(_preferred_size: usize) -> Inst {
@@ -2347,8 +2434,8 @@ impl MachInst for Inst {
         }
     }
 
-    fn gen_jump(_blockindex: BlockIndex) -> Inst {
-        unimplemented!()
+    fn gen_jump(blockindex: BlockIndex) -> Inst {
+        i_JmpKnown(BranchTarget::Block(blockindex))
     }
 
     fn with_block_rewrites(&mut self, block_target_map: &[BlockIndex]) {
@@ -2381,22 +2468,12 @@ impl MachInst for Inst {
                 not_taken,
             } => {
                 if taken.as_block_index() == fallthrough {
-                    *self = Inst::JmpCond {
-                        cc: cc.invert(),
-                        target: not_taken,
-                    };
+                    *self = i_JmpCond(cc, not_taken);
                 } else if not_taken.as_block_index() == fallthrough {
-                    *self = Inst::JmpCond {
-                        cc: cc,
-                        target: taken,
-                    };
+                    *self = i_JmpCond(cc, taken);
                 } else {
                     // We need a compound sequence (condbr / uncond-br).
-                    *self = Inst::JmpCondCompound {
-                        cc,
-                        taken,
-                        not_taken,
-                    };
+                    *self = i_JmpCondCompound(cc, taken, not_taken);
                 }
             }
             &mut Inst::JmpKnown { dest } => {

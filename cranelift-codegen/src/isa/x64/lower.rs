@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 
-//zz use crate::ir::condcodes::IntCC;
+use crate::ir::condcodes::IntCC;
 //zz use crate::ir::types::*;
 use crate::ir::Inst as IRInst;
 use crate::ir::{Block, InstructionData, Opcode, Type};
@@ -30,11 +30,28 @@ type Ctx<'a> = &'a mut dyn LowerCtx<Inst>;
 //=============================================================================
 // Helpers for instruction lowering.
 
-fn to_is64(ty: Type) -> bool {
+fn is_int_ty(ty: Type) -> bool {
+    match ty {
+        types::I8 | types::I16 | types::I32 | types::I64 => true,
+        _ => false,
+    }
+}
+
+fn int_ty_to_is64(ty: Type) -> bool {
     match ty {
         types::I8 | types::I16 | types::I32 => false,
         types::I64 => true,
         _ => panic!("type {} is none of I8, I16, I32 or I64", ty),
+    }
+}
+
+fn int_ty_to_sizeB(ty: Type) -> u8 {
+    match ty {
+        types::I8 => 1,
+        types::I16 => 2,
+        types::I32 => 4,
+        types::I64 => 8,
+        _ => panic!("ity_to_sizeB"),
     }
 }
 
@@ -51,6 +68,37 @@ fn iri_to_u64_immediate<'a>(ctx: Ctx<'a>, iri: IRInst) -> Option<u64> {
             }
             _ => None,
         }
+    }
+}
+
+// Clone of arm64 version.  TODO: de-clone, re-name?
+fn inst_condcode(data: &InstructionData) -> IntCC {
+    match data {
+        &InstructionData::IntCond { cond, .. }
+        | &InstructionData::BranchIcmp { cond, .. }
+        | &InstructionData::IntCompare { cond, .. }
+        | &InstructionData::IntCondTrap { cond, .. }
+        | &InstructionData::BranchInt { cond, .. }
+        | &InstructionData::IntSelect { cond, .. }
+        | &InstructionData::IntCompareImm { cond, .. } => cond,
+        _ => panic!("inst_condcode(x64): unhandled: {:?}", data),
+    }
+}
+
+fn intCC_to_x64_CC(cc: IntCC) -> CC {
+    match cc {
+        IntCC::Equal => CC::Z,
+        IntCC::NotEqual => CC::NZ,
+        IntCC::SignedGreaterThanOrEqual => CC::NL,
+        IntCC::SignedGreaterThan => CC::NLE,
+        IntCC::SignedLessThanOrEqual => CC::LE,
+        IntCC::SignedLessThan => CC::L,
+        IntCC::UnsignedGreaterThanOrEqual => CC::NB,
+        IntCC::UnsignedGreaterThan => CC::NBE,
+        IntCC::UnsignedLessThanOrEqual => CC::BE,
+        IntCC::UnsignedLessThan => CC::B,
+        IntCC::Overflow => CC::O,
+        IntCC::NotOverflow => CC::NO,
     }
 }
 
@@ -88,23 +136,18 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             //lower_constant(ctx, rd, value);
             unimplemented = true;
         }
-        Opcode::Iadd => {
+        Opcode::Iadd | Opcode::Isub => {
             let regD = ctx.output(iri, 0);
             let regL = ctx.input(iri, 0);
             let regR = ctx.input(iri, 1);
-            let is64 = to_is64(ty.unwrap());
-            // ** Earth to Move Coalescer: do you copy? **
+            let is64 = int_ty_to_is64(ty.unwrap());
+            let how = if op == Opcode::Iadd {
+                RMI_R_Op::Add
+            } else {
+                RMI_R_Op::Sub
+            };
             ctx.emit(i_Mov_R_R(true, regL, regD));
-            ctx.emit(i_Alu_RMI_R(is64, RMI_R_Op::Add, ip_RMI_R(regR), regD));
-        }
-        Opcode::Isub => {
-            //let rd = output_to_reg(ctx, outputs[0]);
-            //let rn = input_to_reg(ctx, inputs[0]);
-            //let rm = input_to_rse_imm12(ctx, inputs[1]);
-            //let ty = ty.unwrap();
-            //let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
-            //ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
-            unimplemented = true;
+            ctx.emit(i_Alu_RMI_R(is64, how, ip_RMI_R(regR), regD));
         }
 
         Opcode::UaddSat | Opcode::SaddSat => {
@@ -619,112 +662,95 @@ impl LowerBackend for X64Backend {
 
     fn lower_branch_group<C: LowerCtx<Inst>>(
         &self,
-        _ctx: &mut C,
-        _branches: &[IRInst],
-        _targets: &[BlockIndex],
-        _fallthrough: Option<BlockIndex>,
+        ctx: &mut C,
+        branches: &[IRInst],
+        targets: &[BlockIndex],
+        fallthrough: Option<BlockIndex>,
     ) {
-        unimplemented!()
-        //zz         // A block should end with at most two branches. The first may be a
-        //zz         // conditional branch; a conditional branch can be followed only by an
-        //zz         // unconditional branch or fallthrough. Otherwise, if only one branch,
-        //zz         // it may be an unconditional branch, a fallthrough, a return, or a
-        //zz         // trap. These conditions are verified by `is_ebb_basic()` during the
-        //zz         // verifier pass.
-        //zz         assert!(branches.len() <= 2);
-        //zz
-        //zz         if branches.len() == 2 {
-        //zz             // Must be a conditional branch followed by an unconditional branch.
-        //zz             let op1 = ctx.data(branches[0]).opcode();
-        //zz             let op2 = ctx.data(branches[1]).opcode();
-        //zz
-        //zz             assert!(op2 == Opcode::Jump || op2 == Opcode::Fallthrough);
-        //zz             let taken = BranchTarget::Block(targets[0]);
-        //zz             let not_taken = match op2 {
-        //zz                 Opcode::Jump => BranchTarget::Block(targets[1]),
-        //zz                 Opcode::Fallthrough => BranchTarget::Block(fallthrough.unwrap()),
-        //zz                 _ => unreachable!(), // assert above.
-        //zz             };
-        //zz             match op1 {
-        //zz                 Opcode::Brz | Opcode::Brnz => {
-        //zz                     let rt = input_to_reg(
-        //zz                         ctx,
-        //zz                         InsnInput {
-        //zz                             insn: branches[0],
-        //zz                             input: 0,
-        //zz                         },
-        //zz                     );
-        //zz                     let kind = match op1 {
-        //zz                         Opcode::Brz => CondBrKind::Zero(rt),
-        //zz                         Opcode::Brnz => CondBrKind::NotZero(rt),
-        //zz                         _ => unreachable!(),
-        //zz                     };
-        //zz                     ctx.emit(Inst::CondBr {
-        //zz                         taken,
-        //zz                         not_taken,
-        //zz                         kind,
-        //zz                     });
-        //zz                 }
-        //zz                 Opcode::BrIcmp => {
-        //zz                     let rn = input_to_reg(
-        //zz                         ctx,
-        //zz                         InsnInput {
-        //zz                             insn: branches[0],
-        //zz                             input: 0,
-        //zz                         },
-        //zz                     );
-        //zz                     let rm = input_to_reg(
-        //zz                         ctx,
-        //zz                         InsnInput {
-        //zz                             insn: branches[0],
-        //zz                             input: 1,
-        //zz                         },
-        //zz                     );
-        //zz                     let ty = ctx.input_ty(branches[0], 0);
-        //zz                     let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
-        //zz                     let rd = zero_reg();
-        //zz                     ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
-        //zz                     let cond = lower_condcode(inst_condcode(ctx.data(branches[0])).unwrap());
-        //zz                     ctx.emit(Inst::CondBr {
-        //zz                         taken,
-        //zz                         not_taken,
-        //zz                         kind: CondBrKind::Cond(cond),
-        //zz                     });
-        //zz                 }
-        //zz
-        //zz                 // TODO: Brif/icmp, Brff/icmp, jump tables, call, ret
-        //zz                 _ => unimplemented!(),
-        //zz             }
-        //zz         } else {
-        //zz             assert!(branches.len() == 1);
-        //zz
-        //zz             // Must be an unconditional branch, fallthrough, return, or trap.
-        //zz             let op = ctx.data(branches[0]).opcode();
-        //zz             match op {
-        //zz                 Opcode::Jump => {
-        //zz                     ctx.emit(Inst::Jump {
-        //zz                         dest: BranchTarget::Block(targets[0]),
-        //zz                     });
-        //zz                 }
-        //zz                 Opcode::Fallthrough => {
-        //zz                     ctx.emit(Inst::Jump {
-        //zz                         dest: BranchTarget::Block(targets[0]),
-        //zz                     });
-        //zz                 }
-        //zz
-        //zz                 Opcode::FallthroughReturn => {
-        //zz                     // What is this? The definition says it's a "special
-        //zz                     // instruction" meant to allow falling through into an
-        //zz                     // epilogue that will then return; that just sounds like a
-        //zz                     // normal fallthrough. TODO: Do we need to handle this
-        //zz                     // differently?
-        //zz                     unimplemented!();
-        //zz                 }
-        //zz
-        //zz                 Opcode::Trap => unimplemented!(),
-        //zz
-        //zz                 _ => panic!("Unknown branch type!"),
-        //zz             }
-        //zz         }
+        // A block should end with at most two branches. The first may be a
+        // conditional branch; a conditional branch can be followed only by an
+        // unconditional branch or fallthrough. Otherwise, if only one branch,
+        // it may be an unconditional branch, a fallthrough, a return, or a
+        // trap. These conditions are verified by `is_ebb_basic()` during the
+        // verifier pass.
+        assert!(branches.len() <= 2);
+
+        let mut unimplemented = false;
+
+        if branches.len() == 2 {
+            // Must be a conditional branch followed by an unconditional branch.
+            let op0 = ctx.data(branches[0]).opcode();
+            let op1 = ctx.data(branches[1]).opcode();
+
+            println!(
+                "QQQQ lowering two-branch group: opcodes are {:?} and {:?}",
+                op0, op1
+            );
+
+            assert!(op1 == Opcode::Jump || op1 == Opcode::Fallthrough);
+            let taken = BranchTarget::Block(targets[0]);
+            let not_taken = match op1 {
+                Opcode::Jump => BranchTarget::Block(targets[1]),
+                Opcode::Fallthrough => BranchTarget::Block(fallthrough.unwrap()),
+                _ => unreachable!(), // assert above.
+            };
+            match op0 {
+                Opcode::Brz | Opcode::Brnz => {
+                    let tyS = ctx.input_ty(branches[0], 0);
+                    if is_int_ty(tyS) {
+                        let rS = ctx.input(branches[0], 0);
+                        let cc = match op0 {
+                            Opcode::Brz => CC::Z,
+                            Opcode::Brnz => CC::NZ,
+                            _ => unreachable!(),
+                        };
+                        let sizeB = int_ty_to_sizeB(tyS);
+                        ctx.emit(i_Cmp_RMI_R(sizeB, ip_RMI_I(0), rS));
+                        ctx.emit(i_JmpCondSymm(cc, taken, not_taken));
+                    } else {
+                        unimplemented = true;
+                    }
+                }
+                Opcode::BrIcmp => {
+                    let tyS = ctx.input_ty(branches[0], 0);
+                    if is_int_ty(tyS) {
+                        let rSL = ctx.input(branches[0], 0);
+                        let rSR = ctx.input(branches[0], 1);
+                        let cc = intCC_to_x64_CC(inst_condcode(ctx.data(branches[0])));
+                        let sizeB = int_ty_to_sizeB(tyS);
+                        // FIXME verify rSR vs rSL ordering
+                        ctx.emit(i_Cmp_RMI_R(sizeB, ip_RMI_R(rSR), rSL));
+                        ctx.emit(i_JmpCondSymm(cc, taken, not_taken));
+                    } else {
+                        unimplemented = true;
+                    }
+                }
+                // TODO: Brif/icmp, Brff/icmp, jump tables
+                _ => {
+                    unimplemented = true;
+                }
+            }
+        } else {
+            assert!(branches.len() == 1);
+
+            // Must be an unconditional branch or trap.
+            let op = ctx.data(branches[0]).opcode();
+            match op {
+                Opcode::Jump => {
+                    ctx.emit(i_JmpKnown(BranchTarget::Block(targets[0])));
+                }
+                Opcode::Fallthrough => {
+                    ctx.emit(i_JmpKnown(BranchTarget::Block(targets[0])));
+                }
+                Opcode::Trap => {
+                    unimplemented = true;
+                }
+                _ => panic!("Unknown branch type!"),
+            }
+        }
+
+        if unimplemented {
+            panic!("lower_branch_group(x64): can't handle: {:?}", branches);
+        }
     }
 }
