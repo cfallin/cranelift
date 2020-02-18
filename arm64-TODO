@@ -1,6 +1,18 @@
 TODO:
 
-- Debugging and misc fixups
+- API and naming cleanups
+  - Add a "get input insn if we are its only use" method to LowerCtx
+    - "conservative" version that does not look past loads/stores
+  - rename conditional branch forms in arm64 akin to x64's revised naming
+  - remove "inverted" flag in CondBrLowered in arm64
+  - remove "CondBrLoweredCompound" entirely?
+    - one-target form is just an optimization once we know block order, but
+      two-target form can also be converted directly to machine code!
+  - with_block_rewrites -> map_blocks
+  - with_fallthrough_block -> set_fallthrough_block
+  - with_block_offsets -> map_blocks_to_offsets
+
+- misc fixups
   - Ensure that clobbered reg saves in ARM64 ABI consider register class
 
 - Legalization
