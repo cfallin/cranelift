@@ -68,6 +68,8 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
 
     // This is all outstandingly feeble.  TODO: much better!
 
+    let mut unimplemented = false;
+
     match op {
         Opcode::Iconst => {
             if let Some(w64) = iri_to_u64_immediate(ctx, iri) {
@@ -77,14 +79,14 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
                 let regD = ctx.output(iri, 0);
                 ctx.emit(i_Imm_R(dstIs64, w64, regD));
             } else {
-                unimplemented!()
+                unimplemented = true;
             }
         }
         Opcode::Bconst | Opcode::F32const | Opcode::F64const | Opcode::Null => {
             //let value = output_to_const(ctx, outputs[0]).unwrap();
             //let rd = output_to_reg(ctx, outputs[0]);
             //lower_constant(ctx, rd, value);
-            unimplemented!()
+            unimplemented = true;
         }
         Opcode::Iadd => {
             let regD = ctx.output(iri, 0);
@@ -102,18 +104,18 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             //let ty = ty.unwrap();
             //let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
             //ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::UaddSat | Opcode::SaddSat => {
             // TODO: open-code a sequence: adds, then branch-on-no-overflow
             // over a load of the saturated value.
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::UsubSat | Opcode::SsubSat => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Ineg => {
@@ -123,7 +125,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             //let ty = ty.unwrap();
             //let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
             //ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Imul => {
@@ -139,18 +141,18 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             //    rm,
             //    ra: zero_reg(),
             //});
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Umulhi | Opcode::Smulhi => {
             //let _ty = ty.unwrap();
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Udiv | Opcode::Sdiv | Opcode::Urem | Opcode::Srem => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Band
@@ -161,27 +163,27 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
         | Opcode::BorNot
         | Opcode::BxorNot => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Rotl | Opcode::Rotr => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Ishl | Opcode::Ushr | Opcode::Sshr => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Bitrev => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Clz | Opcode::Cls | Opcode::Ctz | Opcode::Popcnt => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Load
@@ -228,7 +230,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             //    Opcode::Load | Opcode::LoadComplex => Inst::ULoad64 { rd, mem },
             //    _ => unreachable!(),
             //});
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Store
@@ -258,72 +260,72 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             //    Opcode::Store | Opcode::StoreComplex => Inst::Store64 { rd, mem },
             //    _ => unreachable!(),
             //});
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::StackLoad => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::StackStore => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::StackAddr => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::GlobalValue => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::SymbolValue => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::HeapAddr => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::TableAddr => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Nop => {
             // Nothing.
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Select | Opcode::Selectif => {
             // TODO.
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Bitselect => {
             // TODO.
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::IsNull | Opcode::IsInvalid | Opcode::Trueif | Opcode::Trueff => {
             // TODO.
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Copy => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Breduce | Opcode::Bextend | Opcode::Bint | Opcode::Bmask => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Uextend | Opcode::Sextend => {
@@ -342,13 +344,15 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
                     ctx.emit(i_Shift_R(true, ShiftKind::Left, 56, regD));
                     ctx.emit(i_Shift_R(true, ShiftKind::RightS, 56, regD));
                 }
-                _ => unimplemented!()
+                _ => {
+                    unimplemented = true;
+                }
             }
         }
 
         Opcode::Ireduce | Opcode::Isplit | Opcode::Iconcat => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::FallthroughReturn => {
@@ -357,7 +361,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             // epilogue that will then return; that just sounds like a
             // normal fallthrough. TODO: Do we need to handle this
             // differently?
-            unimplemented!();
+            unimplemented = true;
         }
 
         Opcode::Return => {
@@ -373,42 +377,42 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
 
         Opcode::Icmp | Opcode::IcmpImm | Opcode::Ifcmp | Opcode::IfcmpImm => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::JumpTableEntry => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::JumpTableBase => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Debugtrap => {
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Trap => {
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Trapz | Opcode::Trapnz | Opcode::Trapif | Opcode::Trapff => {
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::ResumableTrap => {
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Safepoint => {
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::FuncAddr => {
             // TODO
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::Call | Opcode::CallIndirect => {
@@ -438,7 +442,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             //    let retval_reg = output_to_reg(ctx, *output);
             //    ctx.emit(abi.gen_copy_retval_to_reg(i, retval_reg));
             //}
-            unimplemented!()
+            unimplemented = true;
         }
 
         Opcode::GetPinnedReg
@@ -576,6 +580,10 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
         | Opcode::X86Pminu => {
             panic!("x86-specific opcode in supposedly arch-neutral IR!");
         }
+    }
+
+    if unimplemented {
+        panic!("lower_insn_to_regs(x64): can't reduce: {:?}", ctx.data(iri));
     }
 }
 
