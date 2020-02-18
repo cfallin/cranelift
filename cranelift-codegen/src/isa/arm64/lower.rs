@@ -946,22 +946,22 @@ impl LowerBackend for Arm64Backend {
 
         if branches.len() == 2 {
             // Must be a conditional branch followed by an unconditional branch.
-            let op1 = ctx.data(branches[0]).opcode();
-            let op2 = ctx.data(branches[1]).opcode();
+            let op0 = ctx.data(branches[0]).opcode();
+            let op1 = ctx.data(branches[1]).opcode();
 
             //println!(
             //    "lowering two-branch group: opcodes are {:?} and {:?}",
-            //    op1, op2
+            //    op0, op1
             //);
 
-            assert!(op2 == Opcode::Jump || op2 == Opcode::Fallthrough);
+            assert!(op1 == Opcode::Jump || op1 == Opcode::Fallthrough);
             let taken = BranchTarget::Block(targets[0]);
-            let not_taken = match op2 {
+            let not_taken = match op1 {
                 Opcode::Jump => BranchTarget::Block(targets[1]),
                 Opcode::Fallthrough => BranchTarget::Block(fallthrough.unwrap()),
                 _ => unreachable!(), // assert above.
             };
-            match op1 {
+            match op0 {
                 Opcode::Brz | Opcode::Brnz => {
                     let rt = input_to_reg(
                         ctx,
@@ -970,7 +970,7 @@ impl LowerBackend for Arm64Backend {
                             input: 0,
                         },
                     );
-                    let kind = match op1 {
+                    let kind = match op0 {
                         Opcode::Brz => CondBrKind::Zero(rt),
                         Opcode::Brnz => CondBrKind::NotZero(rt),
                         _ => unreachable!(),
