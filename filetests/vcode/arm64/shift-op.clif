@@ -8,8 +8,7 @@ block0(v0: i64):
   return v3
 }
 
-; check: block0:
-; nextln: stp fp, lr, [sp, #-16]!
+; check: stp fp, lr, [sp, #-16]!
 ; nextln: mov fp, sp
 ; nextln: add x0, x0, x0, LSL 3
 ; nextln: mov sp, fp

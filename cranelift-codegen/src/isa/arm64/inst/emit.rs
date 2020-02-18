@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 
-use crate::binemit::{CodeOffset, CodeSink, ConstantPoolSink, NullConstantPoolSink};
+use crate::binemit::{CodeOffset, CodeSink, ConstantPoolSink, NullConstantPoolSink, Reloc};
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::*;
 use crate::ir::Type;
@@ -473,8 +473,13 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
             &Inst::Ret {} => {
                 sink.put4(0xd65f03c0);
             }
-            &Inst::Call { .. } => unimplemented!(),
-            &Inst::CallInd { rn: _, .. } => unimplemented!(),
+            &Inst::Call { ref dest, .. } => {
+                sink.reloc_external(Reloc::Arm64Call, dest, 0);
+                sink.put4(enc_jump26(0b100101, 0));
+            }
+            &Inst::CallInd { rn, .. } => {
+                sink.put4(0b1101011_0001_11111_000000_00000_00000 | (machreg_to_gpr(rn) << 5));
+            }
             &Inst::CondBr { .. } => panic!("Unlowered CondBr during binemit!"),
             &Inst::CondBrLowered {
                 target,
@@ -1526,6 +1531,26 @@ mod test {
             },
             "0D02005420000014",
             "b.le block0 ; b block1",
+        ));
+
+        insns.push((
+                Inst::Call {
+                    dest: ExternalName::testcase("test0"),
+                    uses: Set::empty(),
+                    defs: Set::empty(),
+                },
+                "00000094",
+                "bl 0",
+        ));
+
+        insns.push((
+                Inst::CallInd {
+                    rn: xreg(10),
+                    uses: Set::empty(),
+                    defs: Set::empty(),
+                },
+                "40013FD6",
+                "blr x10",
         ));
 
         let rru = create_reg_universe();

@@ -11,6 +11,7 @@ use crate::machinst::*;
 
 use crate::isa::arm64::inst::*;
 use crate::isa::arm64::Arm64Backend;
+use crate::isa::arm64::abi::*;
 
 use regalloc::{RealReg, Reg, RegClass, VirtualReg, Writable};
 
@@ -698,7 +699,32 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, insn: IRInst) {
         }
 
         Opcode::Call | Opcode::CallIndirect => {
-            // TODO
+            let (abi, inputs) = match op {
+                Opcode::Call => {
+                    let extname = ctx.call_target(insn).unwrap();
+                    let sig = ctx.call_sig(insn).unwrap();
+                    assert!(inputs.len() == sig.params.len());
+                    assert!(outputs.len() == sig.returns.len());
+                    (ARM64ABICall::from_func(sig, extname), &inputs[..])
+                }
+                Opcode::CallIndirect => {
+                    let ptr = input_to_reg(ctx, inputs[0]);
+                    let sig = ctx.call_sig(insn).unwrap();
+                    assert!(inputs.len() - 1 == sig.params.len());
+                    assert!(outputs.len() == sig.returns.len());
+                    (ARM64ABICall::from_ptr(sig, ptr), &inputs[1..])
+                }
+                _ => unreachable!(),
+            };
+            for (i, input) in inputs.iter().enumerate() {
+                let arg_reg = input_to_reg(ctx, *input);
+                ctx.emit(abi.gen_copy_reg_to_arg(i, arg_reg));
+            }
+            ctx.emit(abi.gen_call());
+            for (i, output) in outputs.iter().enumerate() {
+                let retval_reg = output_to_reg(ctx, *output);
+                ctx.emit(abi.gen_copy_retval_to_reg(i, retval_reg));
+            }
         }
 
         Opcode::GetPinnedReg

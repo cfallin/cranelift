@@ -185,7 +185,7 @@ fn get_callee_saves(regs: Vec<Writable<RealReg>>) -> Vec<Writable<RealReg>> {
 
 fn get_caller_saves_set() -> Set<Writable<Reg>> {
     let mut set = Set::empty();
-    for i in 0..32 {
+    for i in 0..28 {
         let x = writable_xreg(i);
         if is_caller_save(x.to_reg().to_real_reg()) {
             set.insert(x);
@@ -486,14 +486,14 @@ fn abisig_to_uses_and_defs(sig: &ABISig) -> (Set<Reg>, Set<Writable<Reg>>) {
 impl ARM64ABICall {
     /// Create a callsite ABI object for a call directly to the
     /// specified function.
-    pub fn from_func(f: &ir::Function) -> ARM64ABICall {
-        let sig = ABISig::from_func_sig(&f.signature);
+    pub fn from_func(sig: &ir::Signature, extname: &ir::ExternalName) -> ARM64ABICall {
+        let sig = ABISig::from_func_sig(sig);
         let (uses, defs) = abisig_to_uses_and_defs(&sig);
         ARM64ABICall {
             sig,
             uses,
             defs,
-            dest: CallDest::ExtName(f.name.clone()),
+            dest: CallDest::ExtName(extname.clone()),
         }
     }
 

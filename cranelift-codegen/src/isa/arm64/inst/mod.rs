@@ -1022,13 +1022,10 @@ impl Inst {
                 let imm = imm.show_rru(mb_rru);
                 format!("movn {}, {}", rd, imm)
             }
-            &Inst::Call { dest: _, .. } => {
-                let dest = "!!".to_string(); // TODO
-                format!("bl {}", dest)
-            }
+            &Inst::Call { dest: _, .. } => format!("bl 0"),
             &Inst::CallInd { rn, .. } => {
                 let rn = rn.show_rru(mb_rru);
-                format!("bl {}", rn)
+                format!("blr {}", rn)
             }
             &Inst::Ret {} => "ret".to_string(),
             &Inst::Jump { ref dest } => {

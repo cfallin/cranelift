@@ -5,7 +5,9 @@
 use crate::binemit::CodeSink;
 use crate::dce::has_side_effect;
 use crate::entity::SecondaryMap;
-use crate::ir::{Block, Function, Inst, InstructionData, Opcode, Type, Value, ValueDef};
+use crate::ir::{
+    Block, ExternalName, Function, Inst, InstructionData, Opcode, Signature, Type, Value, ValueDef,
+};
 use crate::isa::registers::RegUnit;
 use crate::machinst::{
     ABIBody, BlockIndex, MachInst, MachInstEmit, VCode, VCodeBuilder, VCodeInst,
@@ -67,6 +69,10 @@ pub trait LowerCtx<I> {
     fn bb_param(&self, bb: Block, idx: usize) -> Reg;
     /// Get the register for a return value.
     fn retval(&self, idx: usize) -> Writable<Reg>;
+    /// Get the target for a call instruction, as an `ExternalName`.
+    fn call_target<'b>(&'b self, ir_inst: Inst) -> Option<&'b ExternalName>;
+    /// Get the signature for a call or call-indirect instruction.
+    fn call_sig<'b>(&'b self, ir_inst: Inst) -> Option<&'b Signature>;
 }
 
 /// A machine backend.
@@ -540,6 +546,28 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     /// Get the register for a return value.
     fn retval(&self, idx: usize) -> Writable<Reg> {
         Writable::from_reg(self.retval_regs[idx])
+    }
+
+    /// Get the target for a call instruction, as an `ExternalName`.
+    fn call_target<'b>(&'b self, ir_inst: Inst) -> Option<&'b ExternalName> {
+        match &self.f.dfg[ir_inst] {
+            &InstructionData::Call { func_ref, .. } => {
+                let funcdata = &self.f.dfg.ext_funcs[func_ref];
+                Some(&funcdata.name)
+            }
+            _ => None,
+        }
+    }
+    /// Get the signature for a call or call-indirect instruction.
+    fn call_sig<'b>(&'b self, ir_inst: Inst) -> Option<&'b Signature> {
+        match &self.f.dfg[ir_inst] {
+            &InstructionData::Call { func_ref, .. } => {
+                let funcdata = &self.f.dfg.ext_funcs[func_ref];
+                Some(&self.f.dfg.signatures[funcdata.signature])
+            }
+            &InstructionData::CallIndirect { sig_ref, .. } => Some(&self.f.dfg.signatures[sig_ref]),
+            _ => None,
+        }
     }
 }
 
