@@ -87,9 +87,9 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             unimplemented!()
         }
         Opcode::Iadd => {
-            let regD = ctx.get_output_writable_reg(iri, 0);
-            let regL = ctx.get_input_reg(iri, 0);
-            let regR = ctx.get_input_reg(iri, 1);
+            let regD = ctx.output(iri, 0);
+            let regL = ctx.input(iri, 0);
+            let regR = ctx.input(iri, 1);
             let is64 = to_is64(ty.unwrap());
             // ** Earth to Move Coalescer: do you copy? **
             ctx.emit(i_Mov_R_R(true, regL, regD));
@@ -362,7 +362,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
 
         Opcode::Return => {
             for i in 0..ctx.num_inputs(iri) {
-                let src_reg = ctx.get_input_reg(iri, i);
+                let src_reg = ctx.input(iri, i);
                 let retval_reg = ctx.retval(i);
                 ctx.emit(i_Mov_R_R(/*is64=*/ true, src_reg, retval_reg));
             }
