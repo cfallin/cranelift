@@ -649,6 +649,24 @@ impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
         use crate::alloc::string::ToString;
         use std::fmt::Write;
 
+        // Calculate an order in which to display the blocks.  This is the same
+        // as final_block_order, but also includes blocks which are in the
+        // representation but not in final_block_order.
+        let mut display_order = Vec::<usize>::new();
+        // First display blocks in |final_block_order|
+        for bix in &self.final_block_order {
+            assert!((*bix as usize) < self.num_blocks());
+            display_order.push(*bix as usize);
+        }
+        // Now also take care of those not listed in |final_block_order|.
+        // This is quadratic, but it's also debug-only code.
+        for bix in 0..self.num_blocks() {
+            if display_order.contains(&bix) {
+                continue;
+            }
+            display_order.push(bix);
+        }
+
         let mut s = String::new();
         s = s + &format!("VCode_ShowWithRRU {{{{");
         s = s + &"\n".to_string();
@@ -657,8 +675,18 @@ impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
         s = s + &format!("  Final block order: {:?}", self.final_block_order);
         s = s + &"\n".to_string();
 
-        for block in 0..self.num_blocks() {
-            s = s + &format!("Block {}:", block);
+        for i in 0..self.num_blocks() {
+            let block = display_order[i];
+
+            let omitted =
+                (if !self.final_block_order.is_empty() && i >= self.final_block_order.len() {
+                    "** OMITTED **"
+                } else {
+                    ""
+                })
+                .to_string();
+
+            s = s + &format!("Block {}: {}", block, omitted);
             s = s + &"\n".to_string();
             for succ in self.succs(block as BlockIndex) {
                 s = s + &format!("  (successor: Block {})", succ);
