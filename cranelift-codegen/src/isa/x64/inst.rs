@@ -1223,9 +1223,11 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
             not_taken.show_rru(mb_rru)
         ),
         //
-        Inst::JmpCond { cc, ref target } => {
-            format!("JmpCond(cc = {:?}, target = {:?})", cc, target)
-        }
+        Inst::JmpCond { cc, ref target } => format!(
+            "{} {}",
+            ljustify2("j".to_string(), cc.to_string()),
+            target.show_rru(None)
+        ),
         //
         Inst::JmpCondCompound { .. } => "**JmpCondCompound**".to_string(),
         Inst::JmpUnknown { target } => format!(
@@ -1901,7 +1903,7 @@ fn emit_simm<CS: CodeSink>(sink: &mut CS, size: u8, simm32: u32) {
 
 fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
     match inst {
-        // ** Nop
+        Inst::Nop { len: 0 } => {}
         Inst::Alu_RMI_R {
             is64,
             op,
@@ -2308,13 +2310,29 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
             }
         }
         Inst::Ret {} => sink.put1(0xC3),
-        //
-        // ** Inst::JmpKnown
+
+        Inst::JmpKnown {
+            dest: BranchTarget::Block(..),
+        } => {
+            // Computation of block offsets/sizes.
+            sink.put1(0);
+            sink.put4(0);
+        }
+        Inst::JmpKnown {
+            dest: BranchTarget::ResolvedOffset(_bix, offset),
+        } if *offset >= -0x7FFF_FF00 && *offset <= 0x7FFF_FF00 => {
+            // And now for real
+            let mut offs_i32 = *offset as i32;
+            offs_i32 -= 5;
+            let offs_u32 = offs_i32 as u32;
+            sink.put1(0xE9);
+            sink.put4(offs_u32);
+        }
         //
         // ** Inst::JmpCondSymm   XXXX should never happen
         //
         Inst::JmpCond {
-            cc,
+            cc: _,
             target: BranchTarget::Block(..),
         } => {
             // This case occurs when we are computing block offsets / sizes,
@@ -2324,10 +2342,9 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
             sink.put1(0);
             sink.put4(0);
         }
-
         Inst::JmpCond {
             cc,
-            target: BranchTarget::ResolvedOffset(bix, offset),
+            target: BranchTarget::ResolvedOffset(_bix, offset),
         } if *offset >= -0x7FFF_FF00 && *offset <= 0x7FFF_FF00 => {
             // This insn is 6 bytes long.  Currently |offset| is relative to
             // the start of this insn, but the Intel encoding requires it to
@@ -2368,9 +2385,8 @@ fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
                 }
             }
         }
-        Inst::Nop { .. } => {}
 
-        _ => panic!("x64_emit: unhandled: {} ({:?})", inst.show_rru(None), inst),
+        _ => panic!("x64_emit: unhandled: {} ", inst.show_rru(None)),
     }
 }
 
