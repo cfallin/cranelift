@@ -126,6 +126,7 @@ fn get_stack_addr(fp_offset: i64) -> MemArg {
 }
 
 fn load_stack(fp_offset: i64, into_reg: Writable<Reg>, ty: Type) -> Inst {
+    assert!(into_reg.to_reg().get_class() == RegClass::I64);
     let mem = get_stack_addr(fp_offset);
 
     match ty {
@@ -138,6 +139,7 @@ fn load_stack(fp_offset: i64, into_reg: Writable<Reg>, ty: Type) -> Inst {
 }
 
 fn store_stack(fp_offset: i64, from_reg: Reg, ty: Type) -> Inst {
+    assert!(from_reg.get_class() == RegClass::I64);
     let mem = get_stack_addr(fp_offset);
 
     match ty {
@@ -366,6 +368,9 @@ impl ABIBody<Inst> for ARM64ABIBody {
             } else {
                 (reg_pair[0].to_reg().to_reg(), zero_reg())
             };
+            assert!(r1.get_class() == RegClass::I64);
+            assert!(r2.get_class() == RegClass::I64);
+
             // stp r1, r2, [sp, #-16]!
             insts.push(Inst::StoreP64 {
                 rt: r1,
@@ -394,6 +399,10 @@ impl ABIBody<Inst> for ARM64ABIBody {
             } else {
                 (reg_pair[0].map(|r| r.to_reg()), writable_zero_reg())
             };
+
+            assert!(r1.to_reg().get_class() == RegClass::I64);
+            assert!(r2.to_reg().get_class() == RegClass::I64);
+
             // ldp r1, r2, [sp], #16
             insts.push(Inst::LoadP64 {
                 rt: r1,

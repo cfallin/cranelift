@@ -90,6 +90,13 @@ pub fn u64_constant(bits: u64) -> ConstantData {
 // Instructions and subcomponents: emission
 
 fn machreg_to_gpr(m: Reg) -> u32 {
+    assert!(m.get_class() == RegClass::I64);
+    assert!(m.is_real());
+    m.to_real_reg().get_hw_encoding() as u32
+}
+
+fn machreg_to_vec(m: Reg) -> u32 {
+    assert!(m.get_class() == RegClass::V128);
     assert!(m.is_real());
     m.to_real_reg().get_hw_encoding() as u32
 }
@@ -188,6 +195,14 @@ fn enc_ldst_imm19(op_31_24: u32, imm19: u32, rd: Reg) -> u32 {
 
 fn enc_extend(top22: u32, rd: Writable<Reg>, rn: Reg) -> u32 {
     (top22 << 10) | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd.to_reg())
+}
+
+fn enc_vec_rrr(top11: u32, rm: Reg, bit15_10: u32, rn: Reg, rd: Writable<Reg>) -> u32 {
+    (top11 << 21)
+        | (machreg_to_vec(rm) << 16)
+        | (bit15_10 << 10)
+        | (machreg_to_vec(rn) << 5)
+        | machreg_to_vec(rd.to_reg())
 }
 
 impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
@@ -472,6 +487,29 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
             }
             &Inst::MovZ { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVZ, rd, imm)),
             &Inst::MovN { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVN, rd, imm)),
+            &Inst::MovToVec64 { rd, rn } => {
+                sink.put4(
+                    0b010_01110000_01000_0_0011_1_00000_00000
+                        | (machreg_to_gpr(rn) << 5)
+                        | machreg_to_vec(rd.to_reg()),
+                );
+            }
+            &Inst::MovFromVec64 { rd, rn } => {
+                sink.put4(
+                    0b010_01110000_01000_0_0111_1_00000_00000
+                        | (machreg_to_vec(rn) << 5)
+                        | machreg_to_gpr(rd.to_reg()),
+                );
+            }
+            &Inst::VecRRR { rd, rn, rm, alu_op } => {
+                let (top11, bit15_10) = match alu_op {
+                    VecALUOp::SQAddScalar => (0b010_11110_11_1, 0b000011),
+                    VecALUOp::SQSubScalar => (0b010_11110_11_1, 0b001011),
+                    VecALUOp::UQAddScalar => (0b011_11110_11_1, 0b000011),
+                    VecALUOp::UQSubScalar => (0b011_11110_11_1, 0b001011),
+                };
+                sink.put4(enc_vec_rrr(top11, rm, bit15_10, rn, rd));
+            }
             &Inst::Extend {
                 rd,
                 rn,
@@ -1370,6 +1408,62 @@ mod test {
             },
             "E8FFFF92",
             "movn x8, #18446462598732840960",
+        ));
+        insns.push((
+            Inst::MovToVec64 {
+                rd: writable_vreg(20),
+                rn: xreg(21),
+            },
+            "B41E084E",
+            "mov v20.d[0], x21",
+        ));
+        insns.push((
+            Inst::MovFromVec64 {
+                rd: writable_xreg(21),
+                rn: vreg(20),
+            },
+            "953E084E",
+            "mov x21, v20.d[0]",
+        ));
+        insns.push((
+            Inst::VecRRR {
+                rd: writable_vreg(21),
+                rn: vreg(22),
+                rm: vreg(23),
+                alu_op: VecALUOp::UQAddScalar,
+            },
+            "D50EF77E",
+            "uqadd d21, d22, d23",
+        ));
+        insns.push((
+            Inst::VecRRR {
+                rd: writable_vreg(21),
+                rn: vreg(22),
+                rm: vreg(23),
+                alu_op: VecALUOp::SQAddScalar,
+            },
+            "D50EF75E",
+            "sqadd d21, d22, d23",
+        ));
+        insns.push((
+            Inst::VecRRR {
+                rd: writable_vreg(21),
+                rn: vreg(22),
+                rm: vreg(23),
+                alu_op: VecALUOp::UQSubScalar,
+            },
+            "D52EF77E",
+            "uqsub d21, d22, d23",
+        ));
+        insns.push((
+            Inst::VecRRR {
+                rd: writable_vreg(21),
+                rn: vreg(22),
+                rm: vreg(23),
+                alu_op: VecALUOp::SQSubScalar,
+            },
+            "D52EF75E",
+            "sqsub d21, d22, d23",
         ));
         insns.push((
             Inst::Extend {

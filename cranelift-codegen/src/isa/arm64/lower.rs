@@ -552,13 +552,35 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
         }
 
         Opcode::UaddSat | Opcode::SaddSat => {
-            // TODO: open-code a sequence: adds, then branch-on-no-overflow
-            // over a load of the saturated value.
-            // or .. can this be done on the SIMD side?
+          // We use the vector instruction set's saturating adds (UQADD /
+          // SQADD), which require vector registers.
+          let is_signed = op == Opcode::SaddSat;
+          let narrow_mode = if is_signed { NarrowValueMode::SignExtend } else { NarrowValueMode::ZeroExtend };
+          let alu_op = if is_signed { VecALUOp::SQAddScalar } else { VecALUOp::UQAddScalar };
+          let va = ctx.tmp(RegClass::V128, I128);
+          let vb = ctx.tmp(RegClass::V128, I128);
+          let ra = input_to_reg(ctx, inputs[0], narrow_mode);
+          let rb = input_to_reg(ctx, inputs[1], narrow_mode);
+          let rd = output_to_reg(ctx, outputs[0]);
+          ctx.emit(Inst::MovToVec64 { rd: va, rn: ra });
+          ctx.emit(Inst::MovToVec64 { rd: vb, rn: rb });
+          ctx.emit(Inst::VecRRR { rd: va, rn: va.to_reg(), rm: vb.to_reg(), alu_op });
+          ctx.emit(Inst::MovFromVec64 { rd, rn: va.to_reg() });
         }
 
         Opcode::UsubSat | Opcode::SsubSat => {
-            // TODO
+          let is_signed = op == Opcode::SsubSat;
+          let narrow_mode = if is_signed { NarrowValueMode::SignExtend } else { NarrowValueMode::ZeroExtend };
+          let alu_op = if is_signed { VecALUOp::SQSubScalar } else { VecALUOp::UQSubScalar };
+          let va = ctx.tmp(RegClass::V128, I128);
+          let vb = ctx.tmp(RegClass::V128, I128);
+          let ra = input_to_reg(ctx, inputs[0], narrow_mode);
+          let rb = input_to_reg(ctx, inputs[1], narrow_mode);
+          let rd = output_to_reg(ctx, outputs[0]);
+          ctx.emit(Inst::MovToVec64 { rd: va, rn: ra });
+          ctx.emit(Inst::MovToVec64 { rd: vb, rn: rb });
+          ctx.emit(Inst::VecRRR { rd: va, rn: va.to_reg(), rm: vb.to_reg(), alu_op });
+          ctx.emit(Inst::MovFromVec64 { rd, rn: va.to_reg() });
         }
 
         Opcode::Ineg => {
@@ -869,8 +891,6 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
             panic!("Unused opcode should not be encountered.");
         }
 
-        // TODO: cmp
-        // TODO: more alu ops
         Opcode::Jump
         | Opcode::Fallthrough
         | Opcode::Brz

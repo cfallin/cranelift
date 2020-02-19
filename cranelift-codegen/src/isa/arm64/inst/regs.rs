@@ -239,3 +239,25 @@ pub fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, is32: bool) -
     }
     s
 }
+
+/// Show a vector register used in a scalar context.
+pub fn show_vreg_scalar(reg: Reg, mb_rru: Option<&RealRegUniverse>) -> String {
+    let mut s = reg.show_rru(mb_rru);
+    if reg.get_class() != RegClass::V128 {
+        // We can't do any better.
+        return s;
+    }
+
+    if reg.is_real() {
+        // Change (eg) "v0" into "d0".
+        if reg.get_class() == RegClass::V128 && s.starts_with("v") {
+            s = "d".to_string() + &s[1..];
+        }
+    } else {
+        // Add a "d" suffix to RegClass::V128 vregs.
+        if reg.get_class() == RegClass::V128 {
+            s = s + &"d";
+        }
+    }
+    s
+}

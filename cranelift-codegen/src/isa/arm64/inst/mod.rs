@@ -55,6 +55,15 @@ pub enum ALUOp {
     MAdd64,
 }
 
+/// A vector ALU operation.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum VecALUOp {
+    SQAddScalar, // signed saturating add
+    UQAddScalar, // unsigned saturating add
+    SQSubScalar, // signed saturating subtract
+    UQSubScalar, // unsigned saturating subtract
+}
+
 /// Instruction formats.
 #[derive(Clone, Debug)]
 pub enum Inst {
@@ -180,6 +189,20 @@ pub enum Inst {
         signed: bool,
         from_bits: u8,
         to_bits: u8,
+    },
+
+    /// Move to a vector register from a GPR.
+    MovToVec64 { rd: Writable<Reg>, rn: Reg },
+
+    /// Move to a GPR from a vector register.
+    MovFromVec64 { rd: Writable<Reg>, rn: Reg },
+
+    /// A vector ALU op.
+    VecRRR {
+        alu_op: VecALUOp,
+        rd: Writable<Reg>,
+        rn: Reg,
+        rm: Reg,
     },
 
     /// A machine call instruction.
@@ -361,6 +384,19 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
         }
         &Inst::MovZ { rd, .. } | &Inst::MovN { rd, .. } => {
             iru.defined.insert(rd);
+        }
+        &Inst::MovToVec64 { rd, rn } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+        }
+        &Inst::MovFromVec64 { rd, rn } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+        }
+        &Inst::VecRRR { rd, rn, rm, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+            iru.used.insert(rm);
         }
         &Inst::Extend { rd, rn, .. } => {
             iru.defined.insert(rd);
@@ -611,6 +647,20 @@ fn arm64_map_regs(
         &mut Inst::MovN { rd, ref imm } => Inst::MovN {
             rd: map_wr(d, rd),
             imm: imm.clone(),
+        },
+        &mut Inst::MovToVec64 { rd, rn } => Inst::MovToVec64 {
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+        },
+        &mut Inst::MovFromVec64 { rd, rn } => Inst::MovFromVec64 {
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+        },
+        &mut Inst::VecRRR { rd, rn, rm, alu_op } => Inst::VecRRR {
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+            rm: map(u, rm),
+            alu_op,
         },
         &mut Inst::Extend {
             rd,
@@ -1072,6 +1122,28 @@ impl Inst {
                 let rd = rd.to_reg().show_rru(mb_rru);
                 let imm = imm.show_rru(mb_rru);
                 format!("movn {}, {}", rd, imm)
+            }
+            &Inst::MovToVec64 { rd, rn } => {
+                let rd = rd.to_reg().show_rru(mb_rru);
+                let rn = rn.show_rru(mb_rru);
+                format!("mov {}.d[0], {}", rd, rn)
+            }
+            &Inst::MovFromVec64 { rd, rn } => {
+                let rd = rd.to_reg().show_rru(mb_rru);
+                let rn = rn.show_rru(mb_rru);
+                format!("mov {}, {}.d[0]", rd, rn)
+            }
+            &Inst::VecRRR { rd, rn, rm, alu_op } => {
+                let op = match alu_op {
+                    VecALUOp::SQAddScalar => "sqadd",
+                    VecALUOp::UQAddScalar => "uqadd",
+                    VecALUOp::SQSubScalar => "sqsub",
+                    VecALUOp::UQSubScalar => "uqsub",
+                };
+                let rd = show_vreg_scalar(rd.to_reg(), mb_rru);
+                let rn = show_vreg_scalar(rn, mb_rru);
+                let rm = show_vreg_scalar(rm, mb_rru);
+                format!("{} {}, {}, {}", op, rd, rn, rm)
             }
             &Inst::Extend {
                 rd,
