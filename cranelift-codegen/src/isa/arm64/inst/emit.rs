@@ -227,12 +227,23 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     ALUOp::Orr64 => 0b10101010_000,
                     ALUOp::And32 => 0b00001010_000,
                     ALUOp::And64 => 0b10001010_000,
+                    ALUOp::Eor32 => 0b01001010_000,
+                    ALUOp::Eor64 => 0b11001010_000,
+                    ALUOp::OrrNot32 => 0b00101010_001,
+                    ALUOp::OrrNot64 => 0b10101010_001,
+                    ALUOp::AndNot32 => 0b00001010_001,
+                    ALUOp::AndNot64 => 0b10001010_001,
+                    ALUOp::EorNot32 => 0b01001010_001,
+                    ALUOp::EorNot64 => 0b11001010_001,
                     ALUOp::AddS32 => 0b00101011_000,
                     ALUOp::AddS64 => 0b10101011_000,
                     ALUOp::SubS32 => 0b01101011_000,
                     ALUOp::SubS64 => 0b11101011_000,
                     ALUOp::SDiv64 => 0b10011010_110,
                     ALUOp::UDiv64 => 0b10011010_110,
+                    ALUOp::RotR32 | ALUOp::Lsr32 | ALUOp::Asr32 | ALUOp::Lsl32 => 0b00011010_110,
+                    ALUOp::RotR64 | ALUOp::Lsr64 | ALUOp::Asr64 | ALUOp::Lsl64 => 0b10011010_110,
+
                     ALUOp::MAdd32
                     | ALUOp::MAdd64
                     | ALUOp::MSub32
@@ -246,6 +257,10 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                 let bit15_10 = match alu_op {
                     ALUOp::SDiv64 => 0b000011,
                     ALUOp::UDiv64 => 0b000010,
+                    ALUOp::RotR32 | ALUOp::RotR64 => 0b001011,
+                    ALUOp::Lsr32 | ALUOp::Lsr64 => 0b001001,
+                    ALUOp::Asr32 | ALUOp::Asr64 => 0b001010,
+                    ALUOp::Lsl32 | ALUOp::Lsl64 => 0b001000,
                     _ => 0b000000,
                 };
                 sink.put4(enc_arith_rrr(top11, bit15_10, rd, rn, rm));
@@ -299,17 +314,51 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                 rn,
                 ref imml,
             } => {
-                let top9 = match alu_op {
-                    ALUOp::Orr32 => 0b001_100100,
-                    ALUOp::Orr64 => 0b101_100100,
-                    ALUOp::And32 => 0b000_100100,
-                    ALUOp::And64 => 0b100_100100,
+                let (top9, inv) = match alu_op {
+                    ALUOp::Orr32 => (0b001_100100, false),
+                    ALUOp::Orr64 => (0b101_100100, false),
+                    ALUOp::And32 => (0b000_100100, false),
+                    ALUOp::And64 => (0b100_100100, false),
+                    ALUOp::Eor32 => (0b010_100100, false),
+                    ALUOp::Eor64 => (0b110_100100, false),
+                    ALUOp::OrrNot32 => (0b001_100100, true),
+                    ALUOp::OrrNot64 => (0b101_100100, true),
+                    ALUOp::AndNot32 => (0b000_100100, true),
+                    ALUOp::AndNot64 => (0b100_100100, true),
+                    ALUOp::EorNot32 => (0b010_100100, true),
+                    ALUOp::EorNot64 => (0b110_100100, true),
                     _ => unimplemented!(),
                 };
+                let imml = if inv { imml.invert() } else { imml.clone() };
                 sink.put4(enc_arith_rr_imml(top9, imml.enc_bits(), rn, rd));
             }
 
-            &Inst::AluRRImmShift { rd: _, rn: _, .. } => unimplemented!(),
+            &Inst::AluRRImmShift {
+                alu_op,
+                rd,
+                rn,
+                ref immshift,
+            } => {
+                let amt = immshift.value();
+                let (top10, immr, imms) = match alu_op {
+                    ALUOp::RotR32 => (0b0001001110, machreg_to_gpr(rn), amt as u32),
+                    ALUOp::RotR64 => (0b1001001111, machreg_to_gpr(rn), amt as u32),
+                    ALUOp::Lsr32 => (0b0101001100, amt as u32, 0b011111),
+                    ALUOp::Lsr64 => (0b1101001101, amt as u32, 0b111111),
+                    ALUOp::Asr32 => (0b0001001100, amt as u32, 0b011111),
+                    ALUOp::Asr64 => (0b1001001101, amt as u32, 0b111111),
+                    ALUOp::Lsl32 => (0b0101001100, (32 - amt) as u32, (31 - amt) as u32),
+                    ALUOp::Lsl64 => (0b1101001101, (64 - amt) as u32, (63 - amt) as u32),
+                    _ => unimplemented!(),
+                };
+                sink.put4(
+                    (top10 << 22)
+                        | (immr << 16)
+                        | (imms << 10)
+                        | (machreg_to_gpr(rn) << 5)
+                        | machreg_to_gpr(rd.to_reg()),
+                );
+            }
 
             &Inst::AluRRRShift {
                 alu_op,
@@ -821,6 +870,168 @@ mod test {
         ));
 
         insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Eor32,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A400064A",
+            "eor w4, w5, w6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Eor64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A40006CA",
+            "eor x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::AndNot32,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A400260A",
+            "bic w4, w5, w6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::AndNot64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A400268A",
+            "bic x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::OrrNot32,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A400262A",
+            "orn w4, w5, w6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::OrrNot64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A40026AA",
+            "orn x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::EorNot32,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A400264A",
+            "eon w4, w5, w6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::EorNot64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A40026CA",
+            "eon x4, x5, x6",
+        ));
+
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::RotR32,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A42CC61A",
+            "ror w4, w5, w6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::RotR64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A42CC69A",
+            "ror x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Lsr32,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A424C61A",
+            "lsr w4, w5, w6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Lsr64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A424C69A",
+            "lsr x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Asr32,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A428C61A",
+            "asr w4, w5, w6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Asr64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A428C69A",
+            "asr x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Lsl32,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A420C61A",
+            "lsl w4, w5, w6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::Lsl64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A420C69A",
+            "lsl x4, x5, x6",
+        ));
+
+        insns.push((
             Inst::AluRRImm12 {
                 alu_op: ALUOp::Add32,
                 rd: writable_xreg(7),
@@ -1054,6 +1265,87 @@ mod test {
             },
             "417CC39B",
             "umulh x1, x2, x3",
+        ));
+
+        insns.push((
+            Inst::AluRRImmShift {
+                alu_op: ALUOp::RotR32,
+                rd: writable_xreg(20),
+                rn: xreg(21),
+                immshift: ImmShift::maybe_from_u64(19).unwrap(),
+            },
+            "B44E9513",
+            "ror w20, w21, #19",
+        ));
+        insns.push((
+            Inst::AluRRImmShift {
+                alu_op: ALUOp::RotR64,
+                rd: writable_xreg(20),
+                rn: xreg(21),
+                immshift: ImmShift::maybe_from_u64(42).unwrap(),
+            },
+            "B4AAD593",
+            "ror x20, x21, #42",
+        ));
+        insns.push((
+            Inst::AluRRImmShift {
+                alu_op: ALUOp::Lsr32,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                immshift: ImmShift::maybe_from_u64(13).unwrap(),
+            },
+            "6A7D0D53",
+            "lsr w10, w11, #13",
+        ));
+        insns.push((
+            Inst::AluRRImmShift {
+                alu_op: ALUOp::Lsr64,
+                rd: writable_xreg(10),
+                rn: xreg(11),
+                immshift: ImmShift::maybe_from_u64(57).unwrap(),
+            },
+            "6AFD79D3",
+            "lsr x10, x11, #57",
+        ));
+        insns.push((
+            Inst::AluRRImmShift {
+                alu_op: ALUOp::Asr32,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                immshift: ImmShift::maybe_from_u64(7).unwrap(),
+            },
+            "A47C0713",
+            "asr w4, w5, #7",
+        ));
+        insns.push((
+            Inst::AluRRImmShift {
+                alu_op: ALUOp::Asr64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                immshift: ImmShift::maybe_from_u64(35).unwrap(),
+            },
+            "A4FC6393",
+            "asr x4, x5, #35",
+        ));
+        insns.push((
+            Inst::AluRRImmShift {
+                alu_op: ALUOp::Lsl32,
+                rd: writable_xreg(8),
+                rn: xreg(9),
+                immshift: ImmShift::maybe_from_u64(24).unwrap(),
+            },
+            "281D0853",
+            "lsl w8, w9, #24",
+        ));
+        insns.push((
+            Inst::AluRRImmShift {
+                alu_op: ALUOp::Lsl64,
+                rd: writable_xreg(8),
+                rn: xreg(9),
+                immshift: ImmShift::maybe_from_u64(63).unwrap(),
+            },
+            "280141D3",
+            "lsl x8, x9, #63",
         ));
 
         // TODO: ImmLogic forms (once logic-immediate encoding/decoding exists).

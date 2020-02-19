@@ -187,6 +187,13 @@ impl ImmLogic {
     pub fn value(&self) -> u64 {
         unimplemented!()
     }
+
+    /// Return an immediate for the bitwise-inverted value.
+    /// TODO: is this always possible? If not, isel for AndNot/OrNot/XorNot
+    /// will have to compensate.
+    pub fn invert(&self) -> ImmLogic {
+        unimplemented!()
+    }
 }
 
 /// An immediate for shift instructions.
@@ -199,11 +206,16 @@ pub struct ImmShift {
 impl ImmShift {
     /// Create an ImmShift from raw bits, if possible.
     pub fn maybe_from_u64(val: u64) -> Option<ImmShift> {
-        if val > 0 && val < 64 {
+        if val < 64 {
             Some(ImmShift { imm: val as u8 })
         } else {
             None
         }
+    }
+
+    /// Get the immediate value.
+    pub fn value(&self) -> u8 {
+        self.imm
     }
 }
 
