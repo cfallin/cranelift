@@ -124,6 +124,15 @@ fn enc_arith_rr_imml(bits_31_23: u16, imm_bits: u16, rn: Reg, rd: Writable<Reg>)
         | machreg_to_gpr(rd.to_reg())
 }
 
+fn enc_arith_rrrr(top11: u32, rm: Reg, bit15: u32, ra: Reg, rn: Reg, rd: Writable<Reg>) -> u32 {
+    (top11 << 21)
+        | (machreg_to_gpr(rm) << 16)
+        | (bit15 << 15)
+        | (machreg_to_gpr(ra) << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd.to_reg())
+}
+
 fn enc_jump26(op_31_26: u32, off_26_0: u32) -> u32 {
     assert!(off_26_0 < (1 << 26));
     (op_31_26 << 26) | off_26_0
@@ -222,16 +231,37 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     ALUOp::AddS64 => 0b10101011_000,
                     ALUOp::SubS32 => 0b01101011_000,
                     ALUOp::SubS64 => 0b11101011_000,
-                    ALUOp::MAdd32 | ALUOp::MAdd64 => {
-                        // multiply-add is of form RRRR (three-source).
+                    ALUOp::SDiv64 => 0b10011010_110,
+                    ALUOp::UDiv64 => 0b10011010_110,
+                    ALUOp::MAdd32 | ALUOp::MAdd64 | ALUOp::MSub32 | ALUOp::MSub64 | ALUOp::SMulH | ALUOp::UMulH => {
+                      //// RRRR ops.
                         panic!("Bad ALUOp in RRR form!");
                     }
                 };
-                sink.put4(enc_arith_rrr(top11, 0b000_000, rd, rn, rm));
+                let bit15_10 = match alu_op {
+                  ALUOp::SDiv64 => 0b000011,
+                  ALUOp::UDiv64 => 0b000010,
+                  _ => 0b000000,
+                };
+                sink.put4(enc_arith_rrr(top11, bit15_10, rd, rn, rm));
             }
-            &Inst::AluRRRR { .. } => {
-                // TODO.
-                unimplemented!();
+            &Inst::AluRRRR {
+                alu_op,
+                rd,
+                rm,
+                rn,
+                ra,
+            } => {
+                let (top11, bit15) = match alu_op {
+                    ALUOp::MAdd32 => (0b0_00_11011_000, 0),
+                    ALUOp::MSub32 => (0b0_00_11011_000, 1),
+                    ALUOp::MAdd64 => (0b1_00_11011_000, 0),
+                    ALUOp::MSub64 => (0b1_00_11011_000, 1),
+                    ALUOp::SMulH => (0b1_00_11011_010, 0),
+                    ALUOp::UMulH => (0b1_00_11011_110, 0),
+                    _ => unimplemented!(),
+                };
+                sink.put4(enc_arith_rrrr(top11, rm, bit15, ra, rn, rd));
             }
             &Inst::AluRRImm12 {
                 alu_op,
@@ -764,6 +794,26 @@ mod test {
             "A40006AB",
             "adds x4, x5, x6",
         ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::SDiv64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A40CC69A",
+            "sdiv x4, x5, x6",
+        ));
+        insns.push((
+            Inst::AluRRR {
+                alu_op: ALUOp::UDiv64,
+                rd: writable_xreg(4),
+                rn: xreg(5),
+                rm: xreg(6),
+            },
+            "A408C69A",
+            "udiv x4, x5, x6",
+        ));
 
         insns.push((
             Inst::AluRRImm12 {
@@ -934,9 +984,74 @@ mod test {
             "sub w10, w11, w12, LSL 23",
         ));
 
-        // TODO: ImmLogic forms (once logic-immediate encoding/decoding exists).
+        insns.push((
+            Inst::AluRRRR {
+                alu_op: ALUOp::MAdd32,
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+                ra: xreg(4),
+            },
+            "4110031B",
+            "madd w1, w2, w3, w4",
+        ));
+        insns.push((
+            Inst::AluRRRR {
+                alu_op: ALUOp::MAdd64,
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+                ra: xreg(4),
+            },
+            "4110039B",
+            "madd x1, x2, x3, x4",
+        ));
+        insns.push((
+            Inst::AluRRRR {
+                alu_op: ALUOp::MSub32,
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+                ra: xreg(4),
+            },
+            "4190031B",
+            "msub w1, w2, w3, w4",
+        ));
+        insns.push((
+            Inst::AluRRRR {
+                alu_op: ALUOp::MSub64,
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+                ra: xreg(4),
+            },
+            "4190039B",
+            "msub x1, x2, x3, x4",
+        ));
+        insns.push((
+            Inst::AluRRRR {
+                alu_op: ALUOp::SMulH,
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+                ra: zero_reg(),
+            },
+            "417C439B",
+            "smulh x1, x2, x3",
+        ));
+        insns.push((
+            Inst::AluRRRR {
+                alu_op: ALUOp::UMulH,
+                rd: writable_xreg(1),
+                rn: xreg(2),
+                rm: xreg(3),
+                ra: zero_reg(),
+            },
+            "417CC39B",
+            "umulh x1, x2, x3",
+        ));
 
-        // TODO: AluRRRShift forms.
+        // TODO: ImmLogic forms (once logic-immediate encoding/decoding exists).
 
         insns.push((
             Inst::ULoad8 {

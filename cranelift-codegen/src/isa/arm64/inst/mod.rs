@@ -53,6 +53,12 @@ pub enum ALUOp {
     SubS64,
     MAdd32, // multiply-add
     MAdd64,
+    MSub32,
+    MSub64,
+    SMulH,
+    UMulH,
+    SDiv64,
+    UDiv64,
 }
 
 /// A vector ALU operation.
@@ -935,6 +941,12 @@ impl Inst {
                 ALUOp::SubS64 => ("subs", false),
                 ALUOp::MAdd32 => ("madd", true),
                 ALUOp::MAdd64 => ("madd", false),
+                ALUOp::MSub32 => ("msub", true),
+                ALUOp::MSub64 => ("msub", false),
+                ALUOp::SMulH => ("smulh", false),
+                ALUOp::UMulH => ("umulh", false),
+                ALUOp::SDiv64 => ("sdiv", false),
+                ALUOp::UDiv64 => ("udiv", false),
             }
         }
 
@@ -956,11 +968,18 @@ impl Inst {
                 ra,
             } => {
                 let (op, is32) = op_is32(alu_op);
+                let four_args = alu_op != ALUOp::SMulH && alu_op != ALUOp::UMulH;
                 let rd = show_ireg_sized(rd.to_reg(), mb_rru, is32);
                 let rn = show_ireg_sized(rn, mb_rru, is32);
                 let rm = show_ireg_sized(rm, mb_rru, is32);
                 let ra = show_ireg_sized(ra, mb_rru, is32);
-                format!("{} {}, {}, {}, {}", op, rd, rn, rm, ra)
+                if four_args {
+                    format!("{} {}, {}, {}, {}", op, rd, rn, rm, ra)
+                } else {
+                    // smulh and umulh have Ra "hard-wired" to the zero register
+                    // and the canonical assembly form has only three regs.
+                    format!("{} {}, {}, {}", op, rd, rn, rm)
+                }
             }
             &Inst::AluRRImm12 {
                 alu_op,

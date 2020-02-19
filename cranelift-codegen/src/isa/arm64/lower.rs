@@ -188,8 +188,8 @@ fn output_to_shiftimm<'a, C: LowerCtx<Inst>>(
 /// Lower an instruction input to a reg.
 ///
 /// The given register will be extended appropriately, according to
-/// `narrow_mode` and the input's type. If the input's type is <= 32 bits, the
-/// value will be extended (if specified) into 32 bits; otherwise, 64 bits.
+/// `narrow_mode` and the input's type. If extended, the value is
+/// always extended to 64 bits, for simplicity.
 fn input_to_reg<'a, C: LowerCtx<Inst>>(
     ctx: &'a mut C,
     input: InsnInput,
@@ -197,27 +197,46 @@ fn input_to_reg<'a, C: LowerCtx<Inst>>(
 ) -> Reg {
     let ty = ctx.input_ty(input.insn, input.input);
     let from_bits = ty_bits(ty) as u8;
-    let to_bits = if from_bits < 32 { 32 } else { 64 } as u8;
     let raw_reg = ctx.input(input.insn, input.input);
     match (narrow_mode, from_bits) {
         (NarrowValueMode::None, _) => raw_reg,
-        (NarrowValueMode::ZeroExtend, n) if n < 32 => {
+        (NarrowValueMode::ZeroExtend32, n) if n < 32 => {
             ctx.emit(Inst::Extend {
                 rd: Writable::from_reg(raw_reg),
                 rn: raw_reg,
                 signed: false,
                 from_bits,
-                to_bits,
+                to_bits: 32,
             });
             raw_reg
         }
-        (NarrowValueMode::SignExtend, n) if n < 32 => {
+        (NarrowValueMode::SignExtend32, n) if n < 32 => {
             ctx.emit(Inst::Extend {
                 rd: Writable::from_reg(raw_reg),
                 rn: raw_reg,
                 signed: true,
                 from_bits,
-                to_bits,
+                to_bits: 32,
+            });
+            raw_reg
+        }
+        (NarrowValueMode::ZeroExtend64, n) if n < 64 => {
+            ctx.emit(Inst::Extend {
+                rd: Writable::from_reg(raw_reg),
+                rn: raw_reg,
+                signed: false,
+                from_bits,
+                to_bits: 64,
+            });
+            raw_reg
+        }
+        (NarrowValueMode::SignExtend64, n) if n < 64 => {
+            ctx.emit(Inst::Extend {
+                rd: Writable::from_reg(raw_reg),
+                rn: raw_reg,
+                signed: true,
+                from_bits,
+                to_bits: 64,
             });
             raw_reg
         }
@@ -235,8 +254,24 @@ fn output_to_reg<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, out: InsnOutput) -> Writ
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NarrowValueMode {
     None,
-    ZeroExtend,
-    SignExtend,
+    /// Zero-extend to 32 bits if original is < 32 bits.
+    ZeroExtend32,
+    /// Sign-extend to 32 bits if original is < 32 bits.
+    SignExtend32,
+    /// Zero-extend to 64 bits if original is < 64 bits.
+    ZeroExtend64,
+    /// Sign-extend to 64 bits if original is < 64 bits.
+    SignExtend64,
+}
+
+impl NarrowValueMode {
+    fn is_32bit(&self) -> bool {
+        match self {
+            NarrowValueMode::None => false,
+            NarrowValueMode::ZeroExtend32 | NarrowValueMode::SignExtend32 => true,
+            NarrowValueMode::ZeroExtend64 | NarrowValueMode::SignExtend64 => false,
+        }
+    }
 }
 
 /// Lower an instruction output to a reg, reg/shift, or reg/extend operand.
@@ -266,15 +301,31 @@ fn output_to_rse<'a, C: LowerCtx<Inst>>(
     // If `out_ty` is smaller than 32 bits and we need to zero- or sign-extend,
     // then get the result into a register and return an Extend-mode operand on
     // that register.
-    if out_bits < 32 && narrow_mode != NarrowValueMode::None {
+    if narrow_mode != NarrowValueMode::None
+        && ((narrow_mode.is_32bit() && out_bits < 32) || (!narrow_mode.is_32bit() && out_bits < 64))
+    {
         let reg = output_to_reg(ctx, out);
         let extendop = match (narrow_mode, out_bits) {
-            (NarrowValueMode::SignExtend, 1) => ExtendOp::SXTB,
-            (NarrowValueMode::ZeroExtend, 1) => ExtendOp::UXTB,
-            (NarrowValueMode::SignExtend, 8) => ExtendOp::SXTB,
-            (NarrowValueMode::ZeroExtend, 8) => ExtendOp::UXTB,
-            (NarrowValueMode::SignExtend, 16) => ExtendOp::SXTH,
-            (NarrowValueMode::ZeroExtend, 16) => ExtendOp::UXTH,
+            (NarrowValueMode::SignExtend32, 1) | (NarrowValueMode::SignExtend64, 1) => {
+                ExtendOp::SXTB
+            }
+            (NarrowValueMode::ZeroExtend32, 1) | (NarrowValueMode::ZeroExtend64, 1) => {
+                ExtendOp::UXTB
+            }
+            (NarrowValueMode::SignExtend32, 8) | (NarrowValueMode::SignExtend64, 8) => {
+                ExtendOp::SXTB
+            }
+            (NarrowValueMode::ZeroExtend32, 8) | (NarrowValueMode::ZeroExtend64, 8) => {
+                ExtendOp::UXTB
+            }
+            (NarrowValueMode::SignExtend32, 16) | (NarrowValueMode::SignExtend64, 16) => {
+                ExtendOp::SXTH
+            }
+            (NarrowValueMode::ZeroExtend32, 16) | (NarrowValueMode::ZeroExtend64, 16) => {
+                ExtendOp::UXTH
+            }
+            (NarrowValueMode::SignExtend64, 32) => ExtendOp::SXTW,
+            (NarrowValueMode::ZeroExtend64, 32) => ExtendOp::UXTW,
             _ => unreachable!(),
         };
         return ResultRSE::RegExtend(reg.to_reg(), extendop);
@@ -435,7 +486,7 @@ fn lower_address<'a, C: LowerCtx<Inst>>(
 
     // Handle one reg and offset that fits in immediate, if possible.
     if addends.len() == 1 {
-        let reg = input_to_reg(ctx, addends[0], NarrowValueMode::ZeroExtend);
+        let reg = input_to_reg(ctx, addends[0], NarrowValueMode::ZeroExtend64);
         if let Some(memarg) = MemArg::reg_maybe_offset(reg, offset as i64, elem_ty) {
             return memarg;
         }
@@ -443,8 +494,8 @@ fn lower_address<'a, C: LowerCtx<Inst>>(
 
     // Handle two regs and a zero offset, if possible.
     if addends.len() == 2 && offset == 0 {
-        let ra = input_to_reg(ctx, addends[0], NarrowValueMode::ZeroExtend);
-        let rb = input_to_reg(ctx, addends[1], NarrowValueMode::ZeroExtend);
+        let ra = input_to_reg(ctx, addends[0], NarrowValueMode::ZeroExtend64);
+        let rb = input_to_reg(ctx, addends[1], NarrowValueMode::ZeroExtend64);
         return MemArg::BasePlusReg(ra, rb);
     }
 
@@ -456,7 +507,7 @@ fn lower_address<'a, C: LowerCtx<Inst>>(
 
     // Add each addend to the address.
     for addend in addends {
-        let reg = input_to_reg(ctx, *addend, NarrowValueMode::ZeroExtend);
+        let reg = input_to_reg(ctx, *addend, NarrowValueMode::ZeroExtend64);
         ctx.emit(Inst::AluRRR {
             alu_op: ALUOp::Add64,
             rd: addr.clone(),
@@ -552,35 +603,67 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
         }
 
         Opcode::UaddSat | Opcode::SaddSat => {
-          // We use the vector instruction set's saturating adds (UQADD /
-          // SQADD), which require vector registers.
-          let is_signed = op == Opcode::SaddSat;
-          let narrow_mode = if is_signed { NarrowValueMode::SignExtend } else { NarrowValueMode::ZeroExtend };
-          let alu_op = if is_signed { VecALUOp::SQAddScalar } else { VecALUOp::UQAddScalar };
-          let va = ctx.tmp(RegClass::V128, I128);
-          let vb = ctx.tmp(RegClass::V128, I128);
-          let ra = input_to_reg(ctx, inputs[0], narrow_mode);
-          let rb = input_to_reg(ctx, inputs[1], narrow_mode);
-          let rd = output_to_reg(ctx, outputs[0]);
-          ctx.emit(Inst::MovToVec64 { rd: va, rn: ra });
-          ctx.emit(Inst::MovToVec64 { rd: vb, rn: rb });
-          ctx.emit(Inst::VecRRR { rd: va, rn: va.to_reg(), rm: vb.to_reg(), alu_op });
-          ctx.emit(Inst::MovFromVec64 { rd, rn: va.to_reg() });
+            // We use the vector instruction set's saturating adds (UQADD /
+            // SQADD), which require vector registers.
+            let is_signed = op == Opcode::SaddSat;
+            let narrow_mode = if is_signed {
+                NarrowValueMode::SignExtend64
+            } else {
+                NarrowValueMode::ZeroExtend64
+            };
+            let alu_op = if is_signed {
+                VecALUOp::SQAddScalar
+            } else {
+                VecALUOp::UQAddScalar
+            };
+            let va = ctx.tmp(RegClass::V128, I128);
+            let vb = ctx.tmp(RegClass::V128, I128);
+            let ra = input_to_reg(ctx, inputs[0], narrow_mode);
+            let rb = input_to_reg(ctx, inputs[1], narrow_mode);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::MovToVec64 { rd: va, rn: ra });
+            ctx.emit(Inst::MovToVec64 { rd: vb, rn: rb });
+            ctx.emit(Inst::VecRRR {
+                rd: va,
+                rn: va.to_reg(),
+                rm: vb.to_reg(),
+                alu_op,
+            });
+            ctx.emit(Inst::MovFromVec64 {
+                rd,
+                rn: va.to_reg(),
+            });
         }
 
         Opcode::UsubSat | Opcode::SsubSat => {
-          let is_signed = op == Opcode::SsubSat;
-          let narrow_mode = if is_signed { NarrowValueMode::SignExtend } else { NarrowValueMode::ZeroExtend };
-          let alu_op = if is_signed { VecALUOp::SQSubScalar } else { VecALUOp::UQSubScalar };
-          let va = ctx.tmp(RegClass::V128, I128);
-          let vb = ctx.tmp(RegClass::V128, I128);
-          let ra = input_to_reg(ctx, inputs[0], narrow_mode);
-          let rb = input_to_reg(ctx, inputs[1], narrow_mode);
-          let rd = output_to_reg(ctx, outputs[0]);
-          ctx.emit(Inst::MovToVec64 { rd: va, rn: ra });
-          ctx.emit(Inst::MovToVec64 { rd: vb, rn: rb });
-          ctx.emit(Inst::VecRRR { rd: va, rn: va.to_reg(), rm: vb.to_reg(), alu_op });
-          ctx.emit(Inst::MovFromVec64 { rd, rn: va.to_reg() });
+            let is_signed = op == Opcode::SsubSat;
+            let narrow_mode = if is_signed {
+                NarrowValueMode::SignExtend64
+            } else {
+                NarrowValueMode::ZeroExtend64
+            };
+            let alu_op = if is_signed {
+                VecALUOp::SQSubScalar
+            } else {
+                VecALUOp::UQSubScalar
+            };
+            let va = ctx.tmp(RegClass::V128, I128);
+            let vb = ctx.tmp(RegClass::V128, I128);
+            let ra = input_to_reg(ctx, inputs[0], narrow_mode);
+            let rb = input_to_reg(ctx, inputs[1], narrow_mode);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::MovToVec64 { rd: va, rn: ra });
+            ctx.emit(Inst::MovToVec64 { rd: vb, rn: rb });
+            ctx.emit(Inst::VecRRR {
+                rd: va,
+                rn: va.to_reg(),
+                rm: vb.to_reg(),
+                alu_op,
+            });
+            ctx.emit(Inst::MovFromVec64 {
+                rd,
+                rn: va.to_reg(),
+            });
         }
 
         Opcode::Ineg => {
@@ -608,12 +691,82 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
         }
 
         Opcode::Umulhi | Opcode::Smulhi => {
-            let _ty = ty.unwrap();
-            // TODO
+            let ty = ty.unwrap();
+            let rd = output_to_reg(ctx, outputs[0]);
+            let is_signed = op == Opcode::Smulhi;
+            let narrow_mode = if is_signed {
+                NarrowValueMode::SignExtend64
+            } else {
+                NarrowValueMode::ZeroExtend64
+            };
+            let alu_op = if is_signed {
+                ALUOp::SMulH
+            } else {
+                ALUOp::UMulH
+            };
+            let rn = input_to_reg(ctx, inputs[0], narrow_mode);
+            let rm = input_to_reg(ctx, inputs[1], narrow_mode);
+            let ra = zero_reg();
+            ctx.emit(Inst::AluRRRR {
+                alu_op,
+                rd,
+                rn,
+                rm,
+                ra,
+            });
         }
 
         Opcode::Udiv | Opcode::Sdiv | Opcode::Urem | Opcode::Srem => {
-            // TODO
+            let is_signed = match op {
+                Opcode::Udiv | Opcode::Urem => false,
+                Opcode::Sdiv | Opcode::Srem => true,
+                _ => unreachable!(),
+            };
+            let is_rem = match op {
+                Opcode::Udiv | Opcode::Sdiv => false,
+                Opcode::Urem | Opcode::Srem => true,
+                _ => unreachable!(),
+            };
+            let narrow_mode = if is_signed {
+                NarrowValueMode::SignExtend64
+            } else {
+                NarrowValueMode::ZeroExtend64
+            };
+            let div_op = if is_signed {
+                ALUOp::SDiv64
+            } else {
+                ALUOp::UDiv64
+            };
+
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rn = input_to_reg(ctx, inputs[0], narrow_mode);
+            let rm = input_to_reg(ctx, inputs[1], narrow_mode);
+
+            ctx.emit(Inst::AluRRR {
+                alu_op: div_op,
+                rd,
+                rn,
+                rm,
+            });
+
+            if is_rem {
+                // Remainder (rn % rm) is implemented as:
+                //
+                //   tmp = rn / rm
+                //   rd = rn - (tmp*rm)
+                //
+                // use 'rd' for tmp and you have:
+                //
+                //   div rd, rn, rm       ; rd = rn / rm
+                //   msub rd, rd, rm, rn  ; rd = rn - rd * rm
+                ctx.emit(Inst::AluRRRR {
+                    alu_op: ALUOp::MSub64,
+                    rd: rd,
+                    rn: rd.to_reg(),
+                    rm: rm,
+                    ra: rn,
+                });
+            }
         }
 
         Opcode::Uextend | Opcode::Sextend => {
@@ -854,7 +1007,7 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
                     (ARM64ABICall::from_func(sig, extname), &inputs[..])
                 }
                 Opcode::CallIndirect => {
-                    let ptr = input_to_reg(ctx, inputs[0], NarrowValueMode::ZeroExtend);
+                    let ptr = input_to_reg(ctx, inputs[0], NarrowValueMode::ZeroExtend64);
                     let sig = ctx.call_sig(insn).unwrap();
                     assert!(inputs.len() - 1 == sig.params.len());
                     assert!(outputs.len() == sig.returns.len());
@@ -863,7 +1016,7 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
                 _ => unreachable!(),
             };
             for (i, input) in inputs.iter().enumerate() {
-                let arg_reg = input_to_reg(ctx, *input, NarrowValueMode::ZeroExtend);
+                let arg_reg = input_to_reg(ctx, *input, NarrowValueMode::None);
                 ctx.emit(abi.gen_copy_reg_to_arg(i, arg_reg));
             }
             ctx.emit(abi.gen_call());
@@ -1125,7 +1278,7 @@ impl LowerBackend for Arm64Backend {
                             insn: branches[0],
                             input: 0,
                         },
-                        NarrowValueMode::ZeroExtend,
+                        NarrowValueMode::ZeroExtend64,
                     );
                     let kind = match op0 {
                         Opcode::Brz => CondBrKind::Zero(rt),
@@ -1147,7 +1300,7 @@ impl LowerBackend for Arm64Backend {
                             input: 0,
                         },
                         // TODO: verify that this is correct in all cases.
-                        NarrowValueMode::SignExtend,
+                        NarrowValueMode::SignExtend64,
                     );
                     let rm = input_to_reg(
                         ctx,
@@ -1155,7 +1308,7 @@ impl LowerBackend for Arm64Backend {
                             insn: branches[0],
                             input: 1,
                         },
-                        NarrowValueMode::SignExtend,
+                        NarrowValueMode::SignExtend64,
                     );
                     let ty = ctx.input_ty(branches[0], 0);
                     let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
