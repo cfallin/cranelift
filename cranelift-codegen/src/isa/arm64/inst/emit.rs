@@ -233,15 +233,20 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     ALUOp::SubS64 => 0b11101011_000,
                     ALUOp::SDiv64 => 0b10011010_110,
                     ALUOp::UDiv64 => 0b10011010_110,
-                    ALUOp::MAdd32 | ALUOp::MAdd64 | ALUOp::MSub32 | ALUOp::MSub64 | ALUOp::SMulH | ALUOp::UMulH => {
-                      //// RRRR ops.
+                    ALUOp::MAdd32
+                    | ALUOp::MAdd64
+                    | ALUOp::MSub32
+                    | ALUOp::MSub64
+                    | ALUOp::SMulH
+                    | ALUOp::UMulH => {
+                        //// RRRR ops.
                         panic!("Bad ALUOp in RRR form!");
                     }
                 };
                 let bit15_10 = match alu_op {
-                  ALUOp::SDiv64 => 0b000011,
-                  ALUOp::UDiv64 => 0b000010,
-                  _ => 0b000000,
+                    ALUOp::SDiv64 => 0b000011,
+                    ALUOp::UDiv64 => 0b000010,
+                    _ => 0b000000,
                 };
                 sink.put4(enc_arith_rrr(top11, bit15_10, rd, rn, rm));
             }
