@@ -204,7 +204,11 @@ fn enc_ldst_simm9(op_31_22: u32, simm9: SImm9, op_11_10: u32, rn: Reg, rd: Reg) 
 }
 
 fn enc_ldst_uimm12(op_31_22: u32, uimm12: UImm12Scaled, rn: Reg, rd: Reg) -> u32 {
-    (op_31_22 << 22) | (uimm12.bits() << 10) | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd)
+    (op_31_22 << 22)
+        | (0b1 << 24)
+        | (uimm12.bits() << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd)
 }
 
 fn enc_ldst_reg(op_31_22: u32, rn: Reg, rm: Reg, s_bit: bool, rd: Reg) -> u32 {
@@ -479,7 +483,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b00, reg, rd));
                     }
                     &MemArg::UnsignedOffset(reg, uimm12scaled) => {
-                        sink.put4(enc_ldst_uimm12(op | 0b101, uimm12scaled, reg, rd));
+                        sink.put4(enc_ldst_uimm12(op, uimm12scaled, reg, rd));
                     }
                     &MemArg::RegScaled(r1, r2, ty, scaled) => {
                         match (ty, self) {
@@ -492,7 +496,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                             (I64, &Inst::ULoad64 { .. }) => {}
                             _ => unreachable!(),
                         }
-                        sink.put4(enc_ldst_reg(op | 0b01, r1, r2, scaled, rd));
+                        sink.put4(enc_ldst_reg(op, r1, r2, scaled, rd));
                     }
                     &MemArg::Label(ref label) => {
                         let offset = match label {
@@ -552,7 +556,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b00, reg, rd));
                     }
                     &MemArg::UnsignedOffset(reg, uimm12scaled) => {
-                        sink.put4(enc_ldst_uimm12(op | 0b100, uimm12scaled, reg, rd));
+                        sink.put4(enc_ldst_uimm12(op, uimm12scaled, reg, rd));
                     }
                     &MemArg::RegScaled(r1, r2, _ty, scaled) => {
                         sink.put4(enc_ldst_reg(op, r1, r2, scaled, rd));
@@ -778,7 +782,6 @@ mod test {
         // Then:
         //
         //      $ echo "mov x1, x2" | arm64inst.sh
-
         insns.push((Inst::Ret {}, "C0035FD6", "ret"));
         insns.push((Inst::Nop {}, "", ""));
         insns.push((Inst::Nop4 {}, "1F2003D5", "nop"));
@@ -1473,6 +1476,22 @@ mod test {
             "ldurb w1, [x2]",
         ));
         insns.push((
+            Inst::ULoad8 {
+                rd: writable_xreg(1),
+                mem: MemArg::UnsignedOffset(xreg(2), UImm12Scaled::zero(I8)),
+            },
+            "41004039",
+            "ldrb w1, [x2]",
+        ));
+        insns.push((
+            Inst::ULoad8 {
+                rd: writable_xreg(1),
+                mem: MemArg::RegScaled(xreg(2), xreg(5), I8, false),
+            },
+            "41686538",
+            "ldrb w1, [x2, x5]",
+        ));
+        insns.push((
             Inst::SLoad8 {
                 rd: writable_xreg(1),
                 mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
@@ -1481,12 +1500,44 @@ mod test {
             "ldursb x1, [x2]",
         ));
         insns.push((
+            Inst::SLoad8 {
+                rd: writable_xreg(1),
+                mem: MemArg::UnsignedOffset(xreg(2), UImm12Scaled::maybe_from_i64(63, I8).unwrap()),
+            },
+            "41FC8039",
+            "ldrsb x1, [x2, #63]",
+        ));
+        insns.push((
+            Inst::SLoad8 {
+                rd: writable_xreg(1),
+                mem: MemArg::RegScaled(xreg(2), xreg(5), I8, false),
+            },
+            "4168A538",
+            "ldrsb x1, [x2, x5]",
+        ));
+        insns.push((
             Inst::ULoad16 {
                 rd: writable_xreg(1),
-                mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
+                mem: MemArg::Unscaled(xreg(2), SImm9::maybe_from_i64(5).unwrap()),
             },
-            "41004078",
-            "ldurh w1, [x2]",
+            "41504078",
+            "ldurh w1, [x2, #5]",
+        ));
+        insns.push((
+            Inst::ULoad16 {
+                rd: writable_xreg(1),
+                mem: MemArg::UnsignedOffset(xreg(2), UImm12Scaled::maybe_from_i64(8, I16).unwrap()),
+            },
+            "41104079",
+            "ldrh w1, [x2, #8]",
+        ));
+        insns.push((
+            Inst::ULoad16 {
+                rd: writable_xreg(1),
+                mem: MemArg::RegScaled(xreg(2), xreg(3), I16, true),
+            },
+            "41786378",
+            "ldrh w1, [x2, x3, lsl #1]",
         ));
         insns.push((
             Inst::SLoad16 {
@@ -1497,6 +1548,25 @@ mod test {
             "ldursh x1, [x2]",
         ));
         insns.push((
+            Inst::SLoad16 {
+                rd: writable_xreg(28),
+                mem: MemArg::UnsignedOffset(
+                    xreg(20),
+                    UImm12Scaled::maybe_from_i64(24, I16).unwrap(),
+                ),
+            },
+            "9C328079",
+            "ldrsh x28, [x20, #24]",
+        ));
+        insns.push((
+            Inst::SLoad16 {
+                rd: writable_xreg(28),
+                mem: MemArg::RegScaled(xreg(20), xreg(20), I16, true),
+            },
+            "9C7AB478",
+            "ldrsh x28, [x20, x20, lsl #1]",
+        ));
+        insns.push((
             Inst::ULoad32 {
                 rd: writable_xreg(1),
                 mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
@@ -1505,12 +1575,50 @@ mod test {
             "ldur w1, [x2]",
         ));
         insns.push((
+            Inst::ULoad32 {
+                rd: writable_xreg(12),
+                mem: MemArg::UnsignedOffset(
+                    xreg(0),
+                    UImm12Scaled::maybe_from_i64(204, I32).unwrap(),
+                ),
+            },
+            "0CCC40B9",
+            "ldr w12, [x0, #204]",
+        ));
+        insns.push((
+            Inst::ULoad32 {
+                rd: writable_xreg(1),
+                mem: MemArg::RegScaled(xreg(2), xreg(12), I32, true),
+            },
+            "41786CB8",
+            "ldr w1, [x2, x12, lsl #2]",
+        ));
+        insns.push((
             Inst::SLoad32 {
                 rd: writable_xreg(1),
                 mem: MemArg::Unscaled(xreg(2), SImm9::zero()),
             },
             "410080B8",
             "ldursw x1, [x2]",
+        ));
+        insns.push((
+            Inst::SLoad32 {
+                rd: writable_xreg(12),
+                mem: MemArg::UnsignedOffset(
+                    xreg(1),
+                    UImm12Scaled::maybe_from_i64(16380, I32).unwrap(),
+                ),
+            },
+            "2CFCBFB9",
+            "ldrsw x12, [x1, #16380]",
+        ));
+        insns.push((
+            Inst::SLoad32 {
+                rd: writable_xreg(1),
+                mem: MemArg::RegScaled(xreg(5), xreg(1), I32, true),
+            },
+            "A178A1B8",
+            "ldrsw x1, [x5, x1, lsl #2]",
         ));
         insns.push((
             Inst::ULoad64 {
@@ -1600,8 +1708,8 @@ mod test {
                 rd: writable_xreg(1),
                 mem: MemArg::StackOffset(32768),
             },
-            "8F000058EF011D8BE10140F8000000000080000000000000",
-            "ldr x15, 0 ; add x15, x15, fp ; ldur x1, [x15]",
+            "8F000058EF011D8BE10140F9000000000080000000000000",
+            "ldr x15, 0 ; add x15, x15, fp ; ldr x1, [x15]",
         ));
 
         insns.push((
