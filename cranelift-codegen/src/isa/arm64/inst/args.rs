@@ -151,7 +151,9 @@ pub enum MemArg {
 impl MemArg {
     /// Memory reference using an address in a register.
     pub fn reg(reg: Reg) -> MemArg {
-        MemArg::Unscaled(reg, SImm9::zero())
+        // Use UnsignedOffset rather than Unscaled to use ldr rather than ldur.
+        // This also does not use PostIndexed / PreIndexed as they update the register.
+        MemArg::UnsignedOffset(reg, UImm12Scaled::zero(I64))
     }
 
     /// Memory reference using an address in a register and an offset, if possible.
@@ -407,11 +409,13 @@ impl ShowWithRRU for MemArg {
                     format!("[{}]", reg.show_rru(mb_rru))
                 }
             }
-            &MemArg::UnsignedOffset(reg, uimm12scaled) => format!(
-                "[{}, {}]",
-                reg.show_rru(mb_rru),
-                uimm12scaled.show_rru(mb_rru)
-            ),
+            &MemArg::UnsignedOffset(reg, uimm12) => {
+                if uimm12.value != 0 {
+                    format!("[{}, {}]", reg.show_rru(mb_rru), uimm12.show_rru(mb_rru))
+                } else {
+                    format!("[{}]", reg.show_rru(mb_rru))
+                }
+            }
             &MemArg::RegScaled(r1, r2, ty, scaled) => {
                 if scaled {
                     let shift = shift_for_type(ty);
