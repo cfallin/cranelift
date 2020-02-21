@@ -602,6 +602,19 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                         | machreg_to_gpr(rd.to_reg()),
                 );
             }
+            &Inst::MovToNZCV { rn } => {
+                sink.put4(0xd51b4200 | machreg_to_gpr(rn));
+            }
+            &Inst::MovFromNZCV { rd } => {
+                sink.put4(0xd53b4200 | machreg_to_gpr(rd.to_reg()));
+            }
+            &Inst::CondSet { rd, cond } => {
+                sink.put4(
+                    0b100_11010100_11111_0000_01_11111_00000
+                        | (cond.invert().bits() << 12)
+                        | machreg_to_gpr(rd.to_reg()),
+                );
+            }
             &Inst::VecRRR { rd, rn, rm, alu_op } => {
                 let (top11, bit15_10) = match alu_op {
                     VecALUOp::SQAddScalar => (0b010_11110_11_1, 0b000011),
@@ -1913,6 +1926,26 @@ mod test {
             },
             "953E084E",
             "mov x21, v20.d[0]",
+        ));
+        insns.push((
+            Inst::MovToNZCV { rn: xreg(13) },
+            "0D421BD5",
+            "msr nzcv, x13",
+        ));
+        insns.push((
+            Inst::MovFromNZCV {
+                rd: writable_xreg(27),
+            },
+            "1B423BD5",
+            "mrs x27, nzcv",
+        ));
+        insns.push((
+            Inst::CondSet {
+                rd: writable_xreg(5),
+                cond: Cond::Hi,
+            },
+            "E5979F9A",
+            "cset x5, hi",
         ));
         insns.push((
             Inst::VecRRR {

@@ -152,7 +152,7 @@ impl InsnInputSource {
     }
 }
 
-fn get_input<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, output: InsnOutput, num: usize) -> InsnInput {
+fn get_input<C: LowerCtx<Inst>>(ctx: &mut C, output: InsnOutput, num: usize) -> InsnInput {
     assert!(num <= ctx.num_inputs(output.insn));
     InsnInput {
         insn: output.insn,
@@ -162,7 +162,7 @@ fn get_input<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, output: InsnOutput, num: usi
 
 /// Convert an instruction input to a producing instruction's output if possible (in same BB), or a
 /// register otherwise.
-fn input_source<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, input: InsnInput) -> InsnInputSource {
+fn input_source<C: LowerCtx<Inst>>(ctx: &mut C, input: InsnInput) -> InsnInputSource {
     if let Some((input_inst, result_num)) = ctx.input_inst(input.insn, input.input) {
         let out = InsnOutput {
             insn: input_inst,
@@ -179,7 +179,7 @@ fn input_source<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, input: InsnInput) -> Insn
 // Lowering: convert instruction outputs to result types.
 
 /// Lower an instruction output to a 64-bit constant, if possible.
-fn output_to_const<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, out: InsnOutput) -> Option<u64> {
+fn output_to_const<C: LowerCtx<Inst>>(ctx: &mut C, out: InsnOutput) -> Option<u64> {
     if out.output > 0 {
         None
     } else {
@@ -202,10 +202,7 @@ fn output_to_const<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, out: InsnOutput) -> Op
 }
 
 /// Lower an instruction output to a constant register-shift amount, if possible.
-fn output_to_shiftimm<'a, C: LowerCtx<Inst>>(
-    ctx: &'a mut C,
-    out: InsnOutput,
-) -> Option<ShiftOpShiftImm> {
+fn output_to_shiftimm<C: LowerCtx<Inst>>(ctx: &mut C, out: InsnOutput) -> Option<ShiftOpShiftImm> {
     output_to_const(ctx, out).and_then(ShiftOpShiftImm::maybe_from_shift)
 }
 
@@ -235,7 +232,7 @@ impl NarrowValueMode {
 }
 
 /// Lower an instruction output to a reg.
-fn output_to_reg<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, out: InsnOutput) -> Writable<Reg> {
+fn output_to_reg<C: LowerCtx<Inst>>(ctx: &mut C, out: InsnOutput) -> Writable<Reg> {
     ctx.output(out.insn, out.output)
 }
 
@@ -244,8 +241,8 @@ fn output_to_reg<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, out: InsnOutput) -> Writ
 /// The given register will be extended appropriately, according to
 /// `narrow_mode` and the input's type. If extended, the value is
 /// always extended to 64 bits, for simplicity.
-fn input_to_reg<'a, C: LowerCtx<Inst>>(
-    ctx: &'a mut C,
+fn input_to_reg<C: LowerCtx<Inst>>(
+    ctx: &mut C,
     input: InsnInput,
     narrow_mode: NarrowValueMode,
 ) -> Reg {
@@ -311,8 +308,8 @@ fn input_to_reg<'a, C: LowerCtx<Inst>>(
 /// divide or a right-shift or a compare-to-zero), `narrow_mode` should be
 /// set to `ZeroExtend` or `SignExtend` as appropriate, and the resulting
 /// register will be provided the extended value.
-fn input_to_rs<'a, C: LowerCtx<Inst>>(
-    ctx: &'a mut C,
+fn input_to_rs<C: LowerCtx<Inst>>(
+    ctx: &mut C,
     input: InsnInput,
     narrow_mode: NarrowValueMode,
 ) -> ResultRS {
@@ -345,8 +342,8 @@ fn input_to_rs<'a, C: LowerCtx<Inst>>(
 /// vreg into which the source instruction will generate its value.
 ///
 /// See note on `input_to_rs` for a description of `narrow_mode`.
-fn input_to_rse<'a, C: LowerCtx<Inst>>(
-    ctx: &'a mut C,
+fn input_to_rse<C: LowerCtx<Inst>>(
+    ctx: &mut C,
     input: InsnInput,
     narrow_mode: NarrowValueMode,
 ) -> ResultRSE {
@@ -419,8 +416,8 @@ fn input_to_rse<'a, C: LowerCtx<Inst>>(
     ResultRSE::from_rs(input_to_rs(ctx, input, narrow_mode))
 }
 
-fn input_to_rse_imm12<'a, C: LowerCtx<Inst>>(
-    ctx: &'a mut C,
+fn input_to_rse_imm12<C: LowerCtx<Inst>>(
+    ctx: &mut C,
     input: InsnInput,
     narrow_mode: NarrowValueMode,
 ) -> ResultRSEImm12 {
@@ -436,8 +433,8 @@ fn input_to_rse_imm12<'a, C: LowerCtx<Inst>>(
     ResultRSEImm12::from_rse(input_to_rse(ctx, input, narrow_mode))
 }
 
-fn input_to_rs_immlogic<'a, C: LowerCtx<Inst>>(
-    ctx: &'a mut C,
+fn input_to_rs_immlogic<C: LowerCtx<Inst>>(
+    ctx: &mut C,
     input: InsnInput,
     narrow_mode: NarrowValueMode,
 ) -> ResultRSImmLogic {
@@ -453,10 +450,7 @@ fn input_to_rs_immlogic<'a, C: LowerCtx<Inst>>(
     ResultRSImmLogic::from_rs(input_to_rs(ctx, input, narrow_mode))
 }
 
-fn input_to_reg_immshift<'a, C: LowerCtx<Inst>>(
-    ctx: &'a mut C,
-    input: InsnInput,
-) -> ResultRegImmShift {
+fn input_to_reg_immshift<C: LowerCtx<Inst>>(ctx: &mut C, input: InsnInput) -> ResultRegImmShift {
     if let InsnInputSource::Output(out) = input_source(ctx, input) {
         if let Some(imm_value) = output_to_const(ctx, out) {
             if let Some(immshift) = ImmShift::maybe_from_u64(imm_value) {
@@ -549,8 +543,8 @@ fn alu_inst_immshift(op: ALUOp, rd: Writable<Reg>, rn: Reg, rm: ResultRegImmShif
 // than an `InsnInput`, to do more introspection.
 
 /// Lower the address of a load or store.
-fn lower_address<'a, C: LowerCtx<Inst>>(
-    ctx: &'a mut C,
+fn lower_address<C: LowerCtx<Inst>>(
+    ctx: &mut C,
     elem_ty: Type,
     addends: &[InsnInput],
     offset: i32,
@@ -593,7 +587,7 @@ fn lower_address<'a, C: LowerCtx<Inst>>(
     MemArg::reg(addr.to_reg())
 }
 
-fn lower_constant<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, rd: Writable<Reg>, value: u64) {
+fn lower_constant<C: LowerCtx<Inst>>(ctx: &mut C, rd: Writable<Reg>, value: u64) {
     if let Some(imm) = MoveWideConst::maybe_from_u64(value) {
         // 16-bit immediate (shifted by 0, 16, 32 or 48 bits) in MOVZ
         ctx.emit(Inst::MovZ { rd, imm });
@@ -635,11 +629,32 @@ fn lower_condcode(cc: IntCC) -> Cond {
     }
 }
 
+/// Determines whether this condcode interprets inputs as signed or
+/// unsigned.  See the documentation for the `icmp` instruction in
+/// cranelift-codegen/meta/src/shared/instructions.rs for further insights
+/// into this.
+pub fn condcode_is_signed(cc: IntCC) -> bool {
+    match cc {
+        IntCC::Equal => false,
+        IntCC::NotEqual => false,
+        IntCC::SignedGreaterThanOrEqual => true,
+        IntCC::SignedGreaterThan => true,
+        IntCC::SignedLessThanOrEqual => true,
+        IntCC::SignedLessThan => true,
+        IntCC::UnsignedGreaterThanOrEqual => false,
+        IntCC::UnsignedGreaterThan => false,
+        IntCC::UnsignedLessThanOrEqual => false,
+        IntCC::UnsignedLessThan => false,
+        IntCC::Overflow => true,
+        IntCC::NotOverflow => true,
+    }
+}
+
 //=============================================================================
 // Top-level instruction lowering entry point, for one instruction.
 
 /// Actually codegen an instruction's results into registers.
-fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
+fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
     let op = ctx.data(insn).opcode();
     let inputs: SmallVec<[InsnInput; 4]> = (0..ctx.num_inputs(insn))
         .map(|i| InsnInput { insn, input: i })
@@ -743,10 +758,10 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
         Opcode::Ineg => {
             let rd = output_to_reg(ctx, outputs[0]);
             let rn = zero_reg();
-            let rm = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let rm = input_to_rse_imm12(ctx, inputs[0], NarrowValueMode::None);
             let ty = ty.unwrap();
             let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
-            ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
+            ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
         }
 
         Opcode::Imul => {
@@ -813,16 +828,11 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
 
             let rd = output_to_reg(ctx, outputs[0]);
             let rn = input_to_reg(ctx, inputs[0], narrow_mode);
-            let rm = input_to_reg(ctx, inputs[1], narrow_mode);
-
-            ctx.emit(Inst::AluRRR {
-                alu_op: div_op,
-                rd,
-                rn,
-                rm,
-            });
-
-            if is_rem {
+            if !is_rem {
+                let rm = input_to_rse_imm12(ctx, inputs[1], narrow_mode);
+                ctx.emit(alu_inst_imm12(div_op, rd, rn, rm));
+            } else {
+                let rm = input_to_reg(ctx, inputs[1], narrow_mode);
                 // Remainder (rn % rm) is implemented as:
                 //
                 //   tmp = rn / rm
@@ -832,6 +842,12 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
                 //
                 //   div rd, rn, rm       ; rd = rn / rm
                 //   msub rd, rd, rm, rn  ; rd = rn - rd * rm
+                ctx.emit(Inst::AluRRR {
+                    alu_op: div_op,
+                    rd,
+                    rn,
+                    rm,
+                });
                 ctx.emit(Inst::AluRRRR {
                     alu_op: ALUOp::MSub64,
                     rd: rd,
@@ -1301,9 +1317,33 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
             // N.B.: the Ret itself is generated by the ABI.
         }
 
-        Opcode::Icmp | Opcode::IcmpImm | Opcode::Ifcmp | Opcode::IfcmpImm => {
-            // TODO
-            unimplemented!()
+        Opcode::Ifcmp => {
+            // An Ifcmp must always be seen as a use of a brif instruction. This
+            // will always be the case as long as the IR uses an Ifcmp from the
+            // same block, or a dominating block. In other words, it cannot pass
+            // through a BB param (phi). The flags pass of the verifier will
+            // ensure this.
+            panic!("Should never reach ifcmp as isel root!");
+        }
+
+        Opcode::Icmp => {
+            let condcode = inst_condcode(ctx.data(insn)).unwrap();
+            let cond = lower_condcode(condcode);
+            let is_signed = condcode_is_signed(condcode);
+            let ty = ctx.input_ty(insn, 0);
+            let bits = ty_bits(ty);
+            let narrow_mode = match (bits <= 32, is_signed) {
+                (true, true) => NarrowValueMode::SignExtend32,
+                (true, false) => NarrowValueMode::ZeroExtend32,
+                (false, true) => NarrowValueMode::SignExtend64,
+                (false, false) => NarrowValueMode::ZeroExtend64,
+            };
+            let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
+            let rn = input_to_reg(ctx, inputs[0], narrow_mode);
+            let rm = input_to_rse_imm12(ctx, inputs[1], narrow_mode);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(alu_inst_imm12(alu_op, writable_zero_reg(), rn, rm));
+            ctx.emit(Inst::CondSet { cond, rd });
         }
 
         Opcode::JumpTableEntry => {
@@ -1461,7 +1501,9 @@ fn lower_insn_to_regs<'a, C: LowerCtx<Inst>>(ctx: &'a mut C, insn: IRInst) {
         | Opcode::RotrImm
         | Opcode::IshlImm
         | Opcode::UshrImm
-        | Opcode::SshrImm => {
+        | Opcode::SshrImm
+        | Opcode::IcmpImm
+        | Opcode::IfcmpImm => {
             panic!("ALU+imm and ALU+carry ops should not appear here!");
         }
 
@@ -1506,6 +1548,7 @@ fn ty_bits(ty: Type) -> usize {
         B32 | I32 | F32 => 32,
         B64 | I64 | F64 => 64,
         B128 | I128 => 128,
+        IFLAGS | FFLAGS => 32,
         _ => panic!("ty_bits() on unknown type: {:?}", ty),
     }
 }
@@ -1559,6 +1602,16 @@ fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
         | &InstructionData::IntCompareImm { cond, .. } => Some(cond),
         _ => None,
     }
+}
+
+fn maybe_input_insn<C: LowerCtx<Inst>>(c: &mut C, input: InsnInput, op: Opcode) -> Option<IRInst> {
+    if let InsnInputSource::Output(out) = input_source(c, input) {
+        let data = c.data(out.insn);
+        if data.opcode() == op {
+            return Some(out.insn);
+        }
+    }
+    None
 }
 
 //=============================================================================
@@ -1625,28 +1678,37 @@ impl LowerBackend for Arm64Backend {
                     });
                 }
                 Opcode::BrIcmp => {
-                    let cond = lower_condcode(inst_condcode(ctx.data(branches[0])).unwrap());
+                    let condcode = inst_condcode(ctx.data(branches[0])).unwrap();
+                    let cond = lower_condcode(condcode);
+                    let is_signed = condcode_is_signed(condcode);
+                    let ty = ctx.input_ty(branches[0], 0);
+                    let bits = ty_bits(ty);
+                    let narrow_mode = match (bits <= 32, is_signed) {
+                        (true, true) => NarrowValueMode::SignExtend32,
+                        (true, false) => NarrowValueMode::ZeroExtend32,
+                        (false, true) => NarrowValueMode::SignExtend64,
+                        (false, false) => NarrowValueMode::ZeroExtend64,
+                    };
                     let rn = input_to_reg(
                         ctx,
                         InsnInput {
                             insn: branches[0],
                             input: 0,
                         },
-                        // TODO: verify that this is correct in all cases.
-                        NarrowValueMode::SignExtend64,
+                        narrow_mode,
                     );
-                    let rm = input_to_reg(
+                    let rm = input_to_rse_imm12(
                         ctx,
                         InsnInput {
                             insn: branches[0],
                             input: 1,
                         },
-                        NarrowValueMode::SignExtend64,
+                        narrow_mode,
                     );
-                    let ty = ctx.input_ty(branches[0], 0);
+
                     let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
                     let rd = writable_zero_reg();
-                    ctx.emit(Inst::AluRRR { alu_op, rd, rn, rm });
+                    ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
                     ctx.emit(Inst::CondBr {
                         taken,
                         not_taken,
@@ -1654,7 +1716,60 @@ impl LowerBackend for Arm64Backend {
                     });
                 }
 
-                // TODO: Brif/icmp, Brff/icmp, jump tables
+                Opcode::Brif => {
+                    let condcode = inst_condcode(ctx.data(branches[0])).unwrap();
+                    let cond = lower_condcode(condcode);
+                    let is_signed = condcode_is_signed(condcode);
+                    let flag_input = InsnInput {
+                        insn: branches[0],
+                        input: 0,
+                    };
+                    if let Some(ifcmp_insn) = maybe_input_insn(ctx, flag_input, Opcode::Ifcmp) {
+                        // Get the condcode and the args, and treat this like a BrIcmp.
+                        let ty = ctx.input_ty(ifcmp_insn, 0);
+                        let bits = ty_bits(ty);
+                        let narrow_mode = match (bits <= 32, is_signed) {
+                            (true, true) => NarrowValueMode::SignExtend32,
+                            (true, false) => NarrowValueMode::ZeroExtend32,
+                            (false, true) => NarrowValueMode::SignExtend64,
+                            (false, false) => NarrowValueMode::ZeroExtend64,
+                        };
+                        let ifcmp_inputs = [
+                            InsnInput {
+                                insn: ifcmp_insn,
+                                input: 0,
+                            },
+                            InsnInput {
+                                insn: ifcmp_insn,
+                                input: 1,
+                            },
+                        ];
+                        let ty = ctx.input_ty(ifcmp_insn, 0);
+                        let rn = input_to_reg(ctx, ifcmp_inputs[0], narrow_mode);
+                        let rm = input_to_rse_imm12(ctx, ifcmp_inputs[1], narrow_mode);
+                        let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
+                        let rd = writable_zero_reg();
+                        ctx.merged(ifcmp_insn);
+                        ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
+                        ctx.emit(Inst::CondBr {
+                            taken,
+                            not_taken,
+                            kind: CondBrKind::Cond(cond),
+                        });
+                    } else {
+                        // If the ifcmp result is actually placed in a
+                        // register, we need to move it back into the flags.
+                        let rn = input_to_reg(ctx, flag_input, NarrowValueMode::None);
+                        ctx.emit(Inst::MovToNZCV { rn });
+                        ctx.emit(Inst::CondBr {
+                            taken,
+                            not_taken,
+                            kind: CondBrKind::Cond(cond),
+                        });
+                    }
+                }
+
+                // TODO: Brff, jump tables
                 _ => unimplemented!(),
             }
         } else {
