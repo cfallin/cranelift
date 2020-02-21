@@ -1,6 +1,6 @@
-//! This module implements lowering (instruction selection) from Cranelift IR to machine
-//! instructions with virtual registers, with lookup tables as built by the backend. This is
-//! *almost* the final machine code, except for register allocation.
+//! This module implements lowering (instruction selection) from Cranelift IR
+//! to machine instructions with virtual registers. This is *almost* the final
+//! machine code, except for register allocation.
 
 use crate::binemit::CodeSink;
 use crate::dce::has_side_effect;

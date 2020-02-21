@@ -39,14 +39,10 @@
 //! |        |                          reloads, and moves inserted.
 //! |        |                        - other invariants same as above.)
 //! |        |
-//! |        | [preamble/postamble] -- TODO
+//! |        | [preamble/postamble]
 //! |        |
 //! |    VCode<arch_backend::Inst>   (machine instructions:
-//! |        |                        - stack-frame size known (pass over
-//! |        |                          code to see stackslot allocs +
-//! |        |                          regalloc info on spillslots +
-//! |        |                          regalloc info on clobbered
-//! |        |                          callee-saves)
+//! |        |                        - stack-frame size known.
 //! |        |                        - out-of-band instruction sequence
 //! |        |                          has preamble prepended to entry
 //! |        |                          block, and postamble appended to
@@ -85,7 +81,7 @@
 //! |        |                          function are known, and all branches
 //! |        |                          have resolved-offset targets.)
 //! |        |
-//! |        | [MemArg finalization] -- TODO
+//! |        | [MemArg finalization]
 //! |        |
 //! |    VCode<arch_backend::Inst>   (machine instructions:
 //! |        |                        - all MemArg references to the constant
