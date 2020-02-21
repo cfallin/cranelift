@@ -1271,7 +1271,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
 
         Opcode::Copy => {
             let rd = output_to_reg(ctx, outputs[0]);
-            let rn = input_to_reg(ctx, inputs[0]);
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
             ctx.emit(Inst::gen_move(rd, rn));
         }
 
