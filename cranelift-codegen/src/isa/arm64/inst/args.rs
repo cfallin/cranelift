@@ -5,6 +5,7 @@
 
 use crate::binemit::{CodeOffset, CodeSink, ConstantPoolSink, NullConstantPoolSink};
 use crate::ir::constant::{ConstantData, ConstantOffset};
+use crate::ir::ExternalName;
 use crate::ir::Type;
 use crate::isa::arm64::inst::*;
 use crate::machinst::*;
@@ -124,6 +125,13 @@ pub enum MemLabel {
     /// A value in a constant pool, to be emitted during binemit. This form is
     /// created during isel and is lowered during emission.
     ConstantData(ConstantData),
+    /// An external address constant, placed in the constant pool, to be fixed
+    /// up with a relocation. This form (i) is converted into a slot in the
+    /// constant pool with a reloc pointing to it, and (ii) becomes a
+    /// ConstantPoolRel during emission. The isel should use it by emitting a
+    /// Load64(ExtName(..)) to get the *address* of the external symbol, then
+    /// calling/loading/storing that address as appropriate.
+    ExtName(ExternalName),
 }
 
 /// A memory argument to load/store, encapsulating the possible addressing modes.
@@ -368,6 +376,7 @@ impl ShowWithRRU for MemLabel {
             &MemLabel::ConstantPoolRel(off) => format!("{}", off),
             // Should be resolved into an offset before we pretty-print.
             &MemLabel::ConstantData(..) => "!!constant!!".to_string(),
+            &MemLabel::ExtName(ref name) => format!("{}", name),
         }
     }
 }

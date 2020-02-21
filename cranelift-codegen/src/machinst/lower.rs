@@ -535,7 +535,8 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     /// Get the target for a call instruction, as an `ExternalName`.
     fn call_target<'b>(&'b self, ir_inst: Inst) -> Option<&'b ExternalName> {
         match &self.f.dfg[ir_inst] {
-            &InstructionData::Call { func_ref, .. } => {
+            &InstructionData::Call { func_ref, .. }
+            | &InstructionData::FuncAddr { func_ref, .. } => {
                 let funcdata = &self.f.dfg.ext_funcs[func_ref];
                 Some(&funcdata.name)
             }

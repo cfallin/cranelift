@@ -17,7 +17,7 @@
 //! See the main module comment in `mod.rs` for more details on the VCode-based
 //! backend pipeline.
 
-use crate::binemit::{SizeCodeSink, SizeConstantPoolSink};
+use crate::binemit::{Reloc, SizeCodeSink, SizeConstantPoolSink};
 use crate::ir;
 use crate::machinst::*;
 
@@ -716,6 +716,7 @@ impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
 pub struct VCodeConstantPool {
     start_offset: CodeOffset,
     data: Vec<u8>,
+    relocs: Vec<(usize, Reloc, ir::ExternalName)>,
 }
 
 impl VCodeConstantPool {
@@ -725,6 +726,7 @@ impl VCodeConstantPool {
         VCodeConstantPool {
             start_offset,
             data: vec![],
+            relocs: vec![],
         }
     }
 
@@ -732,7 +734,12 @@ impl VCodeConstantPool {
     /// assuming the CodeSink has already been padded up to the offset given as
     /// `start_offset` to `new()`.
     pub fn emit<CS: CodeSink>(&self, cs: &mut CS) {
-        for byte in &self.data {
+        let mut cur_reloc = 0;
+        for (idx, byte) in self.data.iter().enumerate() {
+            if cur_reloc < self.relocs.len() && self.relocs[cur_reloc].0 == idx {
+                cs.reloc_external(self.relocs[cur_reloc].1, &self.relocs[cur_reloc].2, 0);
+                cur_reloc += 1;
+            }
             cs.put1(*byte);
         }
     }
@@ -755,5 +762,9 @@ impl ConstantPoolSink for VCodeConstantPool {
 
     fn add_data(&mut self, data: &[u8]) {
         self.data.extend(data);
+    }
+
+    fn add_reloc(&mut self, ty: Reloc, name: &ir::ExternalName) {
+        self.relocs.push((self.data.len(), ty, name.clone()));
     }
 }

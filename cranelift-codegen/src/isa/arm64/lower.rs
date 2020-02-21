@@ -1367,8 +1367,12 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         Opcode::Safepoint => unimplemented!(),
 
         Opcode::FuncAddr => {
-            // TODO
-            unimplemented!()
+            let rd = output_to_reg(ctx, outputs[0]);
+            let extname = ctx.call_target(insn).unwrap().clone();
+            ctx.emit(Inst::ULoad64 {
+                rd,
+                mem: MemArg::Label(MemLabel::ExtName(extname)),
+            });
         }
 
         Opcode::Call | Opcode::CallIndirect => {

@@ -67,6 +67,14 @@ pub fn mem_finalize<CPS: ConstantPoolSink>(
             let rel_off = off - insn_off;
             (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))
         }
+        &MemArg::Label(MemLabel::ExtName(ref name)) => {
+            consts.align_to(8);
+            let off = consts.get_offset_from_code_start();
+            consts.add_reloc(Reloc::Abs8, name);
+            consts.add_data(&[0, 0, 0, 0, 0, 0, 0, 0]);
+            let rel_off = off - insn_off;
+            (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))
+        }
         _ => (vec![], mem.clone()),
     }
 }
@@ -476,10 +484,13 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                     &MemArg::Label(ref label) => {
                         let offset = match label {
                             &MemLabel::ConstantPoolRel(off) => off,
-                            // Should be converted by `mem_finalize()` into `ConstantPool`.
+                            // Should be converted by `mem_finalize()` into
+                            // `ConstantPoolRel`.
                             &MemLabel::ConstantData(..) => {
                                 panic!("Should not see ConstantData here!")
                             }
+                            // Should only be used with Addr* instructions.
+                            &MemLabel::ExtName(..) => panic!("Should not see ExtName here!"),
                         } / 4;
                         assert!(offset < (1 << 19));
                         match self {
@@ -602,6 +613,15 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                         | machreg_to_gpr(rd.to_reg()),
                 );
             }
+            &Inst::VecRRR { rd, rn, rm, alu_op } => {
+                let (top11, bit15_10) = match alu_op {
+                    VecALUOp::SQAddScalar => (0b010_11110_11_1, 0b000011),
+                    VecALUOp::SQSubScalar => (0b010_11110_11_1, 0b001011),
+                    VecALUOp::UQAddScalar => (0b011_11110_11_1, 0b000011),
+                    VecALUOp::UQSubScalar => (0b011_11110_11_1, 0b001011),
+                };
+                sink.put4(enc_vec_rrr(top11, rm, bit15_10, rn, rd));
+            }
             &Inst::MovToNZCV { rn } => {
                 sink.put4(0xd51b4200 | machreg_to_gpr(rn));
             }
@@ -614,15 +634,6 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                         | (cond.invert().bits() << 12)
                         | machreg_to_gpr(rd.to_reg()),
                 );
-            }
-            &Inst::VecRRR { rd, rn, rm, alu_op } => {
-                let (top11, bit15_10) = match alu_op {
-                    VecALUOp::SQAddScalar => (0b010_11110_11_1, 0b000011),
-                    VecALUOp::SQSubScalar => (0b010_11110_11_1, 0b001011),
-                    VecALUOp::UQAddScalar => (0b011_11110_11_1, 0b000011),
-                    VecALUOp::UQSubScalar => (0b011_11110_11_1, 0b001011),
-                };
-                sink.put4(enc_vec_rrr(top11, rm, bit15_10, rn, rd));
             }
             &Inst::Extend {
                 rd,

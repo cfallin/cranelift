@@ -277,6 +277,14 @@ pub enum Inst {
     /// Move to a GPR from a vector register.
     MovFromVec64 { rd: Writable<Reg>, rn: Reg },
 
+    /// A vector ALU op.
+    VecRRR {
+        alu_op: VecALUOp,
+        rd: Writable<Reg>,
+        rn: Reg,
+        rm: Reg,
+    },
+
     /// Move to the NZCV flags (actually a `MSR NZCV, Xn` insn).
     MovToNZCV { rn: Reg },
 
@@ -285,14 +293,6 @@ pub enum Inst {
 
     /// Set a register to 1 if condition, else 0.
     CondSet { rd: Writable<Reg>, cond: Cond },
-
-    /// A vector ALU op.
-    VecRRR {
-        alu_op: VecALUOp,
-        rd: Writable<Reg>,
-        rn: Reg,
-        rm: Reg,
-    },
 
     /// A machine call instruction.
     Call {
@@ -486,6 +486,11 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.defined.insert(rd);
             iru.used.insert(rn);
         }
+        &Inst::VecRRR { rd, rn, rm, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+            iru.used.insert(rm);
+        }
         &Inst::MovToNZCV { rn } => {
             iru.used.insert(rn);
         }
@@ -494,11 +499,6 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
         }
         &Inst::CondSet { rd, .. } => {
             iru.defined.insert(rd);
-        }
-        &Inst::VecRRR { rd, rn, rm, .. } => {
-            iru.defined.insert(rd);
-            iru.used.insert(rn);
-            iru.used.insert(rm);
         }
         &Inst::Extend { rd, rn, .. } => {
             iru.defined.insert(rd);
@@ -761,17 +761,17 @@ fn arm64_map_regs(
             rd: map_wr(d, rd),
             rn: map(u, rn),
         },
-        &mut Inst::MovToNZCV { rn } => Inst::MovToNZCV { rn: map(u, rn) },
-        &mut Inst::MovFromNZCV { rd } => Inst::MovFromNZCV { rd: map_wr(d, rd) },
-        &mut Inst::CondSet { rd, cond } => Inst::CondSet {
-            rd: map_wr(d, rd),
-            cond,
-        },
         &mut Inst::VecRRR { rd, rn, rm, alu_op } => Inst::VecRRR {
             rd: map_wr(d, rd),
             rn: map(u, rn),
             rm: map(u, rm),
             alu_op,
+        },
+        &mut Inst::MovToNZCV { rn } => Inst::MovToNZCV { rn: map(u, rn) },
+        &mut Inst::MovFromNZCV { rd } => Inst::MovFromNZCV { rd: map_wr(d, rd) },
+        &mut Inst::CondSet { rd, cond } => Inst::CondSet {
+            rd: map_wr(d, rd),
+            cond,
         },
         &mut Inst::Extend {
             rd,
@@ -1281,6 +1281,18 @@ impl Inst {
                 let rn = rn.show_rru(mb_rru);
                 format!("mov {}, {}.d[0]", rd, rn)
             }
+            &Inst::VecRRR { rd, rn, rm, alu_op } => {
+                let op = match alu_op {
+                    VecALUOp::SQAddScalar => "sqadd",
+                    VecALUOp::UQAddScalar => "uqadd",
+                    VecALUOp::SQSubScalar => "sqsub",
+                    VecALUOp::UQSubScalar => "uqsub",
+                };
+                let rd = show_vreg_scalar(rd.to_reg(), mb_rru);
+                let rn = show_vreg_scalar(rn, mb_rru);
+                let rm = show_vreg_scalar(rm, mb_rru);
+                format!("{} {}, {}, {}", op, rd, rn, rm)
+            }
             &Inst::MovToNZCV { rn } => {
                 let rn = rn.show_rru(mb_rru);
                 format!("msr nzcv, {}", rn)
@@ -1293,18 +1305,6 @@ impl Inst {
                 let rd = rd.to_reg().show_rru(mb_rru);
                 let cond = cond.show_rru(mb_rru);
                 format!("cset {}, {}", rd, cond)
-            }
-            &Inst::VecRRR { rd, rn, rm, alu_op } => {
-                let op = match alu_op {
-                    VecALUOp::SQAddScalar => "sqadd",
-                    VecALUOp::UQAddScalar => "uqadd",
-                    VecALUOp::SQSubScalar => "sqsub",
-                    VecALUOp::UQSubScalar => "uqsub",
-                };
-                let rd = show_vreg_scalar(rd.to_reg(), mb_rru);
-                let rn = show_vreg_scalar(rn, mb_rru);
-                let rm = show_vreg_scalar(rm, mb_rru);
-                format!("{} {}, {}, {}", op, rd, rn, rm)
             }
             &Inst::Extend {
                 rd,

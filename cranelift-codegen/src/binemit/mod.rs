@@ -54,7 +54,9 @@ pub enum Reloc {
     X86GOTPCRel4,
     /// Arm32 call target
     Arm32Call,
-    /// Arm64 call target
+    /// Arm64 call target. Encoded as bottom 26 bits of instruction. This
+    /// value is sign-extended, multiplied by 4, and added to the PC of
+    /// the call instruction to form the destination address.
     Arm64Call,
     /// RISC-V call target
     RiscvCall,
@@ -197,6 +199,9 @@ pub trait ConstantPoolSink {
 
     /// Add data to the constant pool.
     fn add_data(&mut self, data: &[u8]);
+
+    /// Add a relocation referring to the data in the constant pool.
+    fn add_reloc(&mut self, ty: Reloc, name: &ExternalName);
 }
 
 /// A null implementation of a constant-pool sink that discards all data.
@@ -208,6 +213,7 @@ impl ConstantPoolSink for NullConstantPoolSink {
         0
     }
     fn add_data(&mut self, _data: &[u8]) {}
+    fn add_reloc(&mut self, _ty: Reloc, _name: &ExternalName) {}
 }
 
 /// An implementation of a constant-pool sink that counts the size of all
@@ -238,6 +244,8 @@ impl ConstantPoolSink for SizeConstantPoolSink {
     fn add_data(&mut self, data: &[u8]) {
         self.size += data.len() as CodeOffset;
     }
+
+    fn add_reloc(&mut self, _ty: Reloc, _name: &ExternalName) {}
 }
 
 /// Report a bad encoding error.
