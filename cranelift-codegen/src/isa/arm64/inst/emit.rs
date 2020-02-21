@@ -67,10 +67,10 @@ pub fn mem_finalize<CPS: ConstantPoolSink>(
             let rel_off = off - insn_off;
             (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))
         }
-        &MemArg::Label(MemLabel::ExtName(ref name)) => {
+        &MemArg::Label(MemLabel::ExtName(ref name, offset)) => {
             consts.align_to(8);
             let off = consts.get_offset_from_code_start();
-            consts.add_reloc(Reloc::Abs8, name);
+            consts.add_reloc(Reloc::Abs8, name, offset);
             consts.add_data(&[0, 0, 0, 0, 0, 0, 0, 0]);
             let rel_off = off - insn_off;
             (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))

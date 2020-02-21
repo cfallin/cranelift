@@ -131,7 +131,7 @@ pub enum MemLabel {
     /// ConstantPoolRel during emission. The isel should use it by emitting a
     /// Load64(ExtName(..)) to get the *address* of the external symbol, then
     /// calling/loading/storing that address as appropriate.
-    ExtName(ExternalName),
+    ExtName(ExternalName, i64),
 }
 
 /// A memory argument to load/store, encapsulating the possible addressing modes.
@@ -376,7 +376,13 @@ impl ShowWithRRU for MemLabel {
             &MemLabel::ConstantPoolRel(off) => format!("{}", off),
             // Should be resolved into an offset before we pretty-print.
             &MemLabel::ConstantData(..) => "!!constant!!".to_string(),
-            &MemLabel::ExtName(ref name) => format!("{}", name),
+            &MemLabel::ExtName(ref name, off) => {
+                if off != 0 {
+                    format!("{} + {}", name, off)
+                } else {
+                    format!("{}", name)
+                }
+            }
         }
     }
 }

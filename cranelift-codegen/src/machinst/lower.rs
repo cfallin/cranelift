@@ -6,7 +6,8 @@ use crate::binemit::CodeSink;
 use crate::dce::has_side_effect;
 use crate::entity::SecondaryMap;
 use crate::ir::{
-    Block, ExternalName, Function, Inst, InstructionData, Opcode, Signature, Type, Value, ValueDef,
+    Block, ExternalName, Function, GlobalValueData, Inst, InstructionData, Opcode, Signature, Type,
+    Value, ValueDef,
 };
 use crate::isa::registers::RegUnit;
 use crate::machinst::{
@@ -69,6 +70,8 @@ pub trait LowerCtx<I> {
     fn call_target<'b>(&'b self, ir_inst: Inst) -> Option<&'b ExternalName>;
     /// Get the signature for a call or call-indirect instruction.
     fn call_sig<'b>(&'b self, ir_inst: Inst) -> Option<&'b Signature>;
+    /// Get the symbol name and offset for a symbol_value instruction.
+    fn symbol_value<'b>(&'b self, ir_inst: Inst) -> Option<(&'b ExternalName, i64)>;
 }
 
 /// A machine backend.
@@ -551,6 +554,27 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
                 Some(&self.f.dfg.signatures[funcdata.signature])
             }
             &InstructionData::CallIndirect { sig_ref, .. } => Some(&self.f.dfg.signatures[sig_ref]),
+            _ => None,
+        }
+    }
+
+    /// Get the symbol name and offset for a symbol_value instruction.
+    fn symbol_value<'b>(&'b self, ir_inst: Inst) -> Option<(&'b ExternalName, i64)> {
+        match &self.f.dfg[ir_inst] {
+            &InstructionData::UnaryGlobalValue { global_value, .. } => {
+                let gvdata = &self.f.global_values[global_value];
+                match gvdata {
+                    &GlobalValueData::Symbol {
+                        ref name,
+                        ref offset,
+                        ..
+                    } => {
+                        let offset = offset.bits();
+                        Some((name, offset))
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }

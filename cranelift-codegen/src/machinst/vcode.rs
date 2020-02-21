@@ -716,7 +716,7 @@ impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
 pub struct VCodeConstantPool {
     start_offset: CodeOffset,
     data: Vec<u8>,
-    relocs: Vec<(usize, Reloc, ir::ExternalName)>,
+    relocs: Vec<(usize, Reloc, ir::ExternalName, i64)>,
 }
 
 impl VCodeConstantPool {
@@ -737,7 +737,8 @@ impl VCodeConstantPool {
         let mut cur_reloc = 0;
         for (idx, byte) in self.data.iter().enumerate() {
             if cur_reloc < self.relocs.len() && self.relocs[cur_reloc].0 == idx {
-                cs.reloc_external(self.relocs[cur_reloc].1, &self.relocs[cur_reloc].2, 0);
+                let r = &self.relocs[cur_reloc];
+                cs.reloc_external(r.1, &r.2, r.3);
                 cur_reloc += 1;
             }
             cs.put1(*byte);
@@ -764,7 +765,8 @@ impl ConstantPoolSink for VCodeConstantPool {
         self.data.extend(data);
     }
 
-    fn add_reloc(&mut self, ty: Reloc, name: &ir::ExternalName) {
-        self.relocs.push((self.data.len(), ty, name.clone()));
+    fn add_reloc(&mut self, ty: Reloc, name: &ir::ExternalName, offset: i64) {
+        self.relocs
+            .push((self.data.len(), ty, name.clone(), offset));
     }
 }

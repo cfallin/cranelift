@@ -1242,24 +1242,12 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             unimplemented!()
         }
 
-        Opcode::GlobalValue => {
-            // TODO
-            unimplemented!()
-        }
-
-        Opcode::SymbolValue => {
-            // TODO
-            unimplemented!()
-        }
-
         Opcode::HeapAddr => {
-            // TODO
-            unimplemented!()
+            panic!("heap_addr should have been removed by legalization!");
         }
 
         Opcode::TableAddr => {
-            // TODO
-            unimplemented!()
+            panic!("table_addr should have been removed by legalization!");
         }
 
         Opcode::Nop => {
@@ -1282,8 +1270,9 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         }
 
         Opcode::Copy => {
-            // TODO
-            unimplemented!()
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rn = input_to_reg(ctx, inputs[0]);
+            ctx.emit(Inst::gen_move(rd, rn));
         }
 
         Opcode::Breduce | Opcode::Bextend | Opcode::Bint | Opcode::Bmask => {
@@ -1302,7 +1291,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             // epilogue that will then return; that just sounds like a
             // normal fallthrough. TODO: Do we need to handle this
             // differently?
-            unimplemented!();
+            panic!("FallthroughReturn should not appear!");
         }
 
         Opcode::Return => {
@@ -1356,22 +1345,37 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             unimplemented!()
         }
 
-        Opcode::Debugtrap => unimplemented!(),
-
-        Opcode::Trap => unimplemented!(),
-
-        Opcode::Trapz | Opcode::Trapnz | Opcode::Trapif | Opcode::Trapff => unimplemented!(),
-
-        Opcode::ResumableTrap => unimplemented!(),
-
-        Opcode::Safepoint => unimplemented!(),
+        Opcode::Debugtrap
+        | Opcode::Trap
+        | Opcode::Trapz
+        | Opcode::Trapnz
+        | Opcode::Trapif
+        | Opcode::Trapff
+        | Opcode::ResumableTrap
+        | Opcode::Safepoint => {
+            panic!("trap support not implemented!");
+        }
 
         Opcode::FuncAddr => {
             let rd = output_to_reg(ctx, outputs[0]);
             let extname = ctx.call_target(insn).unwrap().clone();
             ctx.emit(Inst::ULoad64 {
                 rd,
-                mem: MemArg::Label(MemLabel::ExtName(extname)),
+                mem: MemArg::Label(MemLabel::ExtName(extname, 0)),
+            });
+        }
+
+        Opcode::GlobalValue => {
+            panic!("global_value should have been removed by legalization!");
+        }
+
+        Opcode::SymbolValue => {
+            let rd = output_to_reg(ctx, outputs[0]);
+            let (extname, offset) = ctx.symbol_value(insn).unwrap();
+            let extname = extname.clone();
+            ctx.emit(Inst::ULoad64 {
+                rd,
+                mem: MemArg::Label(MemLabel::ExtName(extname, offset)),
             });
         }
 

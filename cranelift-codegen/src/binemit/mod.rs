@@ -201,7 +201,7 @@ pub trait ConstantPoolSink {
     fn add_data(&mut self, data: &[u8]);
 
     /// Add a relocation referring to the data in the constant pool.
-    fn add_reloc(&mut self, ty: Reloc, name: &ExternalName);
+    fn add_reloc(&mut self, ty: Reloc, name: &ExternalName, offset: i64);
 }
 
 /// A null implementation of a constant-pool sink that discards all data.
@@ -213,7 +213,7 @@ impl ConstantPoolSink for NullConstantPoolSink {
         0
     }
     fn add_data(&mut self, _data: &[u8]) {}
-    fn add_reloc(&mut self, _ty: Reloc, _name: &ExternalName) {}
+    fn add_reloc(&mut self, _ty: Reloc, _name: &ExternalName, _offset: i64) {}
 }
 
 /// An implementation of a constant-pool sink that counts the size of all
@@ -245,7 +245,7 @@ impl ConstantPoolSink for SizeConstantPoolSink {
         self.size += data.len() as CodeOffset;
     }
 
-    fn add_reloc(&mut self, _ty: Reloc, _name: &ExternalName) {}
+    fn add_reloc(&mut self, _ty: Reloc, _name: &ExternalName, _offset: i64) {}
 }
 
 /// Report a bad encoding error.
