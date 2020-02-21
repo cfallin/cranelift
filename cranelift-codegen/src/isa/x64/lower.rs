@@ -149,6 +149,10 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             ctx.emit(i_Mov_R_R(true, regL, regD));
             ctx.emit(i_Alu_RMI_R(is64, how, ip_RMI_R(regR), regD));
         }
+        Opcode::Imax | Opcode::Imin | Opcode::Umin | Opcode::Umax => {
+            // TODO
+            unimplemented!()
+        }
 
         Opcode::UaddSat | Opcode::SaddSat => {
             // TODO: open-code a sequence: adds, then branch-on-no-overflow

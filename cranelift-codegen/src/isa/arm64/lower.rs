@@ -690,6 +690,10 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             let alu_op = choose_32_64(ty, ALUOp::Sub32, ALUOp::Sub64);
             ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
         }
+        Opcode::Imax | Opcode::Imin | Opcode::Umin | Opcode::Umax => {
+            // TODO
+            unimplemented!()
+        }
 
         Opcode::UaddSat | Opcode::SaddSat => {
             // We use the vector instruction set's saturating adds (UQADD /
