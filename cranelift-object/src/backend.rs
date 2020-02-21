@@ -16,6 +16,7 @@ use object::write::{
 };
 use object::{RelocationEncoding, RelocationKind, SymbolFlags, SymbolKind, SymbolScope};
 use std::collections::HashMap;
+use std::mem;
 use target_lexicon::PointerWidth;
 
 #[derive(Debug)]
@@ -53,14 +54,14 @@ impl ObjectBuilder {
         name: String,
         collect_traps: ObjectTrapCollection,
         libcall_names: Box<dyn Fn(ir::LibCall) -> String>,
-    ) -> ModuleResult<Self> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             isa,
             name,
             collect_traps,
             libcall_names,
             function_alignment: 1,
-        })
+        }
     }
 
     /// Set the alignment used for functions.
@@ -79,6 +80,7 @@ pub struct ObjectBackend {
     functions: SecondaryMap<FuncId, Option<SymbolId>>,
     data_objects: SecondaryMap<DataId, Option<SymbolId>>,
     traps: SecondaryMap<FuncId, Vec<ObjectTrapSite>>,
+    relocs: Vec<SymbolRelocs>,
     libcalls: HashMap<ir::LibCall, SymbolId>,
     libcall_names: Box<dyn Fn(ir::LibCall) -> String>,
     collect_traps: ObjectTrapCollection,
@@ -109,6 +111,7 @@ impl Backend for ObjectBackend {
             functions: SecondaryMap::new(),
             data_objects: SecondaryMap::new(),
             traps: SecondaryMap::new(),
+            relocs: Vec::new(),
             libcalls: HashMap::new(),
             libcall_names: builder.libcall_names,
             collect_traps: builder.collect_traps,
@@ -212,13 +215,15 @@ impl Backend for ObjectBackend {
         let offset = self
             .object
             .add_symbol_data(symbol, section, &code, self.function_alignment);
+        if !reloc_sink.relocs.is_empty() {
+            self.relocs.push(SymbolRelocs {
+                section,
+                offset,
+                relocs: reloc_sink.relocs,
+            });
+        }
         self.traps[func_id] = trap_sink.sites;
-        Ok(ObjectCompiledFunction {
-            offset,
-            size: code_size,
-            section,
-            relocs: reloc_sink.relocs,
-        })
+        Ok(ObjectCompiledFunction)
     }
 
     fn define_data(
@@ -237,20 +242,6 @@ impl Backend for ObjectBackend {
             ref function_relocs,
             ref data_relocs,
         } = data_ctx.description();
-
-        let size = init.size();
-        let mut data = Vec::with_capacity(size);
-        match *init {
-            Init::Uninitialized => {
-                panic!("data is not initialized yet");
-            }
-            Init::Zeros { .. } => {
-                data.resize(size, 0);
-            }
-            Init::Bytes { ref contents } => {
-                data.extend_from_slice(contents);
-            }
-        }
 
         let reloc_size = match self.isa.triple().pointer_width().unwrap() {
             PointerWidth::U16 => 16,
@@ -280,21 +271,37 @@ impl Backend for ObjectBackend {
         }
 
         let symbol = self.data_objects[data_id].unwrap();
-        let section = self.object.section_id(if writable {
+        let section_kind = if let Init::Zeros { .. } = *init {
+            StandardSection::UninitializedData
+        } else if writable {
             StandardSection::Data
         } else if relocs.is_empty() {
             StandardSection::ReadOnlyData
         } else {
             StandardSection::ReadOnlyDataWithRel
-        });
-        let offset =
-            self.object
-                .add_symbol_data(symbol, section, &data, u64::from(align.unwrap_or(1)));
-        Ok(ObjectCompiledData {
-            offset,
-            section,
-            relocs,
-        })
+        };
+        let section = self.object.section_id(section_kind);
+
+        let align = u64::from(align.unwrap_or(1));
+        let offset = match *init {
+            Init::Uninitialized => {
+                panic!("data is not initialized yet");
+            }
+            Init::Zeros { size } => self
+                .object
+                .add_symbol_bss(symbol, section, size as u64, align),
+            Init::Bytes { ref contents } => self
+                .object
+                .add_symbol_data(symbol, section, &contents, align),
+        };
+        if !relocs.is_empty() {
+            self.relocs.push(SymbolRelocs {
+                section,
+                offset,
+                relocs,
+            });
+        }
+        Ok(ObjectCompiledData)
     }
 
     fn write_data_funcaddr(
@@ -319,34 +326,10 @@ impl Backend for ObjectBackend {
     fn finalize_function(
         &mut self,
         _id: FuncId,
-        func: &ObjectCompiledFunction,
-        namespace: &ModuleNamespace<Self>,
+        _func: &ObjectCompiledFunction,
+        _namespace: &ModuleNamespace<Self>,
     ) {
-        for &RelocRecord {
-            offset,
-            ref name,
-            kind,
-            encoding,
-            size,
-            addend,
-        } in &func.relocs
-        {
-            let offset = func.offset + u64::from(offset);
-            let symbol = self.get_symbol(namespace, name);
-            self.object
-                .add_relocation(
-                    func.section,
-                    Relocation {
-                        offset,
-                        size,
-                        kind,
-                        encoding,
-                        symbol,
-                        addend,
-                    },
-                )
-                .unwrap();
-        }
+        // Nothing to do.
     }
 
     fn get_finalized_function(&self, _func: &ObjectCompiledFunction) {
@@ -356,34 +339,10 @@ impl Backend for ObjectBackend {
     fn finalize_data(
         &mut self,
         _id: DataId,
-        data: &ObjectCompiledData,
-        namespace: &ModuleNamespace<Self>,
+        _data: &ObjectCompiledData,
+        _namespace: &ModuleNamespace<Self>,
     ) {
-        for &RelocRecord {
-            offset,
-            ref name,
-            kind,
-            encoding,
-            size,
-            addend,
-        } in &data.relocs
-        {
-            let offset = data.offset + u64::from(offset);
-            let symbol = self.get_symbol(namespace, name);
-            self.object
-                .add_relocation(
-                    data.section,
-                    Relocation {
-                        offset,
-                        size,
-                        kind,
-                        encoding,
-                        symbol,
-                        addend,
-                    },
-                )
-                .unwrap();
-        }
+        // Nothing to do.
     }
 
     fn get_finalized_data(&self, _data: &ObjectCompiledData) {
@@ -394,7 +353,36 @@ impl Backend for ObjectBackend {
         // Nothing to do.
     }
 
-    fn finish(self) -> ObjectProduct {
+    fn finish(mut self, namespace: &ModuleNamespace<Self>) -> ObjectProduct {
+        let mut symbol_relocs = Vec::new();
+        mem::swap(&mut symbol_relocs, &mut self.relocs);
+        for symbol in symbol_relocs {
+            for &RelocRecord {
+                offset,
+                ref name,
+                kind,
+                encoding,
+                size,
+                addend,
+            } in &symbol.relocs
+            {
+                let target_symbol = self.get_symbol(namespace, name);
+                self.object
+                    .add_relocation(
+                        symbol.section,
+                        Relocation {
+                            offset: symbol.offset + u64::from(offset),
+                            size,
+                            kind,
+                            encoding,
+                            symbol: target_symbol,
+                            addend,
+                        },
+                    )
+                    .unwrap();
+            }
+        }
+
         ObjectProduct {
             object: self.object,
             functions: self.functions,
@@ -405,7 +393,7 @@ impl Backend for ObjectBackend {
 }
 
 impl ObjectBackend {
-    // This should only be called during finalization because it creates
+    // This should only be called during finish because it creates
     // symbols for missing libcalls.
     fn get_symbol(
         &mut self,
@@ -459,20 +447,8 @@ fn translate_linkage(linkage: Linkage) -> (SymbolScope, bool) {
     (scope, weak)
 }
 
-#[derive(Clone)]
-pub struct ObjectCompiledFunction {
-    offset: u64,
-    size: u32,
-    section: SectionId,
-    relocs: Vec<RelocRecord>,
-}
-
-#[derive(Clone)]
-pub struct ObjectCompiledData {
-    offset: u64,
-    section: SectionId,
-    relocs: Vec<RelocRecord>,
-}
+pub struct ObjectCompiledFunction;
+pub struct ObjectCompiledData;
 
 /// This is the output of `Module`'s
 /// [`finish`](../cranelift_module/struct.Module.html#method.finish) function.
@@ -507,6 +483,13 @@ impl ObjectProduct {
     pub fn emit(self) -> Result<Vec<u8>, String> {
         self.object.write()
     }
+}
+
+#[derive(Clone)]
+struct SymbolRelocs {
+    section: SectionId,
+    offset: u64,
+    relocs: Vec<RelocRecord>,
 }
 
 #[derive(Clone)]
