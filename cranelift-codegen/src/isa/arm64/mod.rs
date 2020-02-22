@@ -11,9 +11,11 @@ use crate::settings;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use std::str::FromStr;
 use std::string::String;
 
 use regalloc::RealRegUniverse;
+use target_lexicon::Triple;
 
 // New backend:
 mod abi;
@@ -65,6 +67,14 @@ impl MachBackend for Arm64Backend {
         };
 
         Ok(MachCompileResult { code, disasm })
+    }
+
+    fn name(&self) -> &'static str {
+        "arm64"
+    }
+
+    fn triple(&self) -> Triple {
+        FromStr::from_str("arm64").unwrap()
     }
 
     fn flags(&self) -> &settings::Flags {

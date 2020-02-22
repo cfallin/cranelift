@@ -101,6 +101,7 @@ use crate::binemit::{
 };
 use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;
+use crate::ir::condcodes::IntCC;
 use crate::ir::ValueLocations;
 use crate::ir::{DataFlowGraph, Function, Inst, Opcode, Type, Value};
 use crate::isa::RegUnit;
@@ -117,6 +118,7 @@ use regalloc::{RealReg, RealRegUniverse, Reg, RegClass, SpillSlot, VirtualReg, W
 use smallvec::SmallVec;
 use std::hash::Hash;
 use std::string::String;
+use target_lexicon::Triple;
 
 pub mod lower;
 pub use lower::*;
@@ -130,6 +132,8 @@ pub mod abi;
 pub use abi::*;
 pub mod pp;
 pub use pp::*;
+pub mod adapter;
+pub use adapter::*;
 
 /// A machine instruction.
 pub trait MachInst: Clone + Debug {
@@ -249,6 +253,24 @@ pub trait MachBackend {
     /// Return flags for this backend.
     fn flags(&self) -> &Flags;
 
+    /// Return triple for this backend.
+    fn triple(&self) -> Triple;
+
+    /// Return name for this backend.
+    fn name(&self) -> &'static str;
+
     /// Return the register universe for this backend.
     fn reg_universe(&self) -> RealRegUniverse;
+
+    /// Machine-specific condcode info needed by TargetIsa.
+    fn unsigned_add_overflow_condition(&self) -> IntCC {
+        // TODO: this is what x86 specifies. Is this right for arm64?
+        IntCC::UnsignedLessThan
+    }
+
+    /// Machine-specific condcode info needed by TargetIsa.
+    fn unsigned_sub_overflow_condition(&self) -> IntCC {
+        // TODO: this is what x86 specifies. Is this right for arm64?
+        IntCC::UnsignedLessThan
+    }
 }

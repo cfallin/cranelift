@@ -11,7 +11,8 @@
 
 use crate::binemit::{
     relax_branches, shrink_instructions, CodeInfo, FrameUnwindKind, FrameUnwindSink,
-    MemoryCodeSink, RelocSink, StackmapSink, TrapSink,
+    MemoryCodeSink, NullRelocSink, NullStackmapSink, NullTrapSink, RelocSink, StackmapSink,
+    TrapSink,
 };
 use crate::dce::do_dce;
 use crate::dominator_tree::DominatorTree;
@@ -19,6 +20,7 @@ use crate::flowgraph::ControlFlowGraph;
 use crate::ir::Function;
 use crate::isa::TargetIsa;
 use crate::legalize_function;
+use crate::legalizer::simple_legalize;
 use crate::licm::do_licm;
 use crate::loop_analysis::LoopAnalysis;
 use crate::nan_canonicalization::do_nan_canonicalization;
@@ -141,6 +143,7 @@ impl Context {
         if isa.flags().enable_nan_canonicalization() {
             self.canonicalize_nans(isa)?;
         }
+
         self.legalize(isa)?;
         if opt_level != OptLevel::None {
             self.postopt(isa)?;
@@ -149,23 +152,41 @@ impl Context {
             self.licm(isa)?;
             self.simple_gvn(isa)?;
         }
+
         self.compute_domtree();
         self.eliminate_unreachable_code(isa)?;
         if opt_level != OptLevel::None {
             self.dce(isa)?;
         }
-        self.regalloc(isa)?;
-        self.prologue_epilogue(isa)?;
-        if opt_level == OptLevel::Speed || opt_level == OptLevel::SpeedAndSize {
-            self.redundant_reload_remover(isa)?;
-        }
-        if opt_level == OptLevel::SpeedAndSize {
-            self.shrink_instructions(isa)?;
-        }
-        let result = self.relax_branches(isa);
 
-        debug!("Compiled:\n{}", self.func.display(isa));
-        result
+        if let Some(backend) = isa.get_mach_backend() {
+            let func = std::mem::replace(&mut self.func, Function::new());
+            let _code = backend.compile_function(
+                func,
+                &mut NullRelocSink {},
+                &mut NullTrapSink {},
+                &mut NullStackmapSink {},
+                false,
+            )?;
+
+            // TODO: capture the result of the relocs/traps/stackmaps above, and
+            // re-emit in `emit_to_memory()` below. We just need the section
+            // sizes to return the CodeInfo here.
+            unimplemented!()
+        } else {
+            self.regalloc(isa)?;
+            self.prologue_epilogue(isa)?;
+            if opt_level == OptLevel::Speed || opt_level == OptLevel::SpeedAndSize {
+                self.redundant_reload_remover(isa)?;
+            }
+            if opt_level == OptLevel::SpeedAndSize {
+                self.shrink_instructions(isa)?;
+            }
+            let result = self.relax_branches(isa);
+
+            debug!("Compiled:\n{}", self.func.display(isa));
+            result
+        }
     }
 
     /// Emit machine code directly into raw memory.
@@ -275,13 +296,19 @@ impl Context {
 
     /// Run the legalizer for `isa` on the function.
     pub fn legalize(&mut self, isa: &dyn TargetIsa) -> CodegenResult<()> {
-        // Legalization invalidates the domtree and loop_analysis by mutating the CFG.
-        // TODO: Avoid doing this when legalization doesn't actually mutate the CFG.
-        self.domtree.clear();
-        self.loop_analysis.clear();
-        legalize_function(&mut self.func, &mut self.cfg, isa);
-        debug!("Legalized:\n{}", self.func.display(isa));
-        self.verify_if(isa)
+        if isa.get_mach_backend().is_some() {
+            // Run some specific legalizations only.
+            simple_legalize(&mut self.func, &mut self.cfg, isa);
+            Ok(())
+        } else {
+            // Legalization invalidates the domtree and loop_analysis by mutating the CFG.
+            // TODO: Avoid doing this when legalization doesn't actually mutate the CFG.
+            self.domtree.clear();
+            self.loop_analysis.clear();
+            legalize_function(&mut self.func, &mut self.cfg, isa);
+            debug!("Legalized:\n{}", self.func.display(isa));
+            self.verify_if(isa)
+        }
     }
 
     /// Perform post-legalization rewrites on the function.
