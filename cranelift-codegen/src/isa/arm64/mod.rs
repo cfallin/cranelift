@@ -49,16 +49,10 @@ impl MachBackend for Arm64Backend {
     fn compile_function(
         &self,
         func: Function,
-        relocs: &mut dyn RelocSink,
-        traps: &mut dyn TrapSink,
-        stackmaps: &mut dyn StackmapSink,
         want_disasm: bool,
     ) -> CodegenResult<MachCompileResult> {
         let vcode = self.compile_vcode(func);
-        let mut code: Vec<u8> = vec![0; vcode.emitted_size()];
-
-        let mut sink = unsafe { MemoryCodeSink::new(code.as_mut_ptr(), relocs, traps, stackmaps) };
-        vcode.emit(&mut sink);
+        let sections = vcode.emit();
 
         let disasm = if want_disasm {
             Some(vcode.show_rru(Some(&create_reg_universe())))
@@ -66,7 +60,7 @@ impl MachBackend for Arm64Backend {
             None
         };
 
-        Ok(MachCompileResult { code, disasm })
+        Ok(MachCompileResult { sections, disasm })
     }
 
     fn name(&self) -> &'static str {

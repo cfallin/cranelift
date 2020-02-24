@@ -12,26 +12,29 @@ use std::fmt;
 use target_lexicon::Triple;
 
 /// A wrapper around a `MachBackend` that provides a `TargetIsa` impl.
-pub struct TargetIsaAdapter<B: MachBackend> {
-    backend: B,
+pub struct TargetIsaAdapter {
+    backend: Box<dyn MachBackend + Send + Sync + 'static>,
     triple: Triple,
 }
 
-impl<B: MachBackend> TargetIsaAdapter<B> {
+impl TargetIsaAdapter {
     /// Create a new `TargetIsa` wrapper around a `MachBackend`.
-    pub fn new(backend: B) -> TargetIsaAdapter<B> {
+    pub fn new<B: MachBackend + Send + Sync + 'static>(backend: B) -> TargetIsaAdapter {
         let triple = backend.triple();
-        TargetIsaAdapter { backend, triple }
+        TargetIsaAdapter {
+            backend: Box::new(backend),
+            triple,
+        }
     }
 }
 
-impl<B: MachBackend> fmt::Display for TargetIsaAdapter<B> {
+impl fmt::Display for TargetIsaAdapter {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "MachBackend")
     }
 }
 
-impl<B: MachBackend + Send + Sync> TargetIsa for TargetIsaAdapter<B> {
+impl TargetIsa for TargetIsaAdapter {
     fn name(&self) -> &'static str {
         self.backend.name()
     }
@@ -103,7 +106,7 @@ impl<B: MachBackend + Send + Sync> TargetIsa for TargetIsaAdapter<B> {
     }
 
     fn get_mach_backend(&self) -> Option<&dyn MachBackend> {
-        Some(&self.backend)
+        Some(&*self.backend)
     }
 
     fn unsigned_add_overflow_condition(&self) -> ir::condcodes::IntCC {

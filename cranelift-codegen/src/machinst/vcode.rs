@@ -17,7 +17,7 @@
 //! See the main module comment in `mod.rs` for more details on the VCode-based
 //! backend pipeline.
 
-use crate::binemit::{Reloc, SizeCodeSink, SizeConstantPoolSink};
+use crate::binemit::Reloc;
 use crate::ir;
 use crate::machinst::*;
 
@@ -41,8 +41,8 @@ pub type BlockIndex = u32;
 
 /// VCodeInst wraps all requirements for a MachInst to be in VCode: it must be
 /// a `MachInst` and it must be able to emit itself at least to a `SizeCodeSink`.
-pub trait VCodeInst: MachInst + MachInstEmit<SizeCodeSink, SizeConstantPoolSink> {}
-impl<I: MachInst + MachInstEmit<SizeCodeSink, SizeConstantPoolSink>> VCodeInst for I {}
+pub trait VCodeInst: MachInst + MachInstEmit<MachSection> + MachInstEmit<MachSectionSize> {}
+impl<I: MachInst + MachInstEmit<MachSection> + MachInstEmit<MachSectionSize>> VCodeInst for I {}
 
 /// A function in "VCode" (virtualized-register code) form, after lowering.
 /// This is essentially a standard CFG of basic blocks, where each basic block
@@ -248,15 +248,6 @@ fn is_redundant_move<I: VCodeInst>(insn: &I) -> bool {
     }
 }
 
-/// Returns the size of the instruction, and update the size of its constant-pool usage, if any.
-fn inst_size<I: VCodeInst>(insn: &I, constant_offset: &mut CodeOffset) -> CodeOffset {
-    let mut sizesink = SizeCodeSink::new();
-    let mut csizesink = SizeConstantPoolSink::new(*constant_offset);
-    insn.emit(&mut sizesink, &mut csizesink);
-    *constant_offset = csizesink.get_offset_from_code_start();
-    sizesink.size() as CodeOffset
-}
-
 fn is_trivial_jump_block<I: VCodeInst>(vcode: &VCode<I>, block: BlockIndex) -> Option<BlockIndex> {
     let range = vcode.block_insns(BlockIx::new(block));
 
@@ -428,7 +419,10 @@ impl<I: VCodeInst> VCode<I> {
 
     /// Mutate branch instructions to (i) lower two-way condbrs to one-way,
     /// depending on fallthrough; and (ii) use concrete offsets.
-    pub fn finalize_branches(&mut self) {
+    pub fn finalize_branches(&mut self)
+    where
+        I: MachInstEmit<MachSectionSize>,
+    {
         // Compute fallthrough block, indexed by block.
         let num_final_blocks = self.final_block_order.len();
         let mut block_fallthrough: Vec<Option<BlockIndex>> = vec![None; self.num_blocks()];
@@ -451,15 +445,15 @@ impl<I: VCodeInst> VCode<I> {
         }
 
         // Compute block offsets.
-        let mut offset = 0;
-        let mut constant_offset = 0;
+        let mut code_section = MachSectionSize::new();
+        let mut const_section = MachSectionSize::new();
         let mut block_offsets = vec![0; self.num_blocks()];
         for block in &self.final_block_order {
-            offset = I::align_basic_block(offset);
-            block_offsets[*block as usize] = offset;
+            code_section.offset = I::align_basic_block(code_section.offset);
+            block_offsets[*block as usize] = code_section.offset;
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                offset += inst_size(&self.insts[iix as usize], &mut constant_offset);
+                self.insts[iix as usize].emit(&mut code_section, &mut const_section);
             }
         }
 
@@ -467,57 +461,50 @@ impl<I: VCodeInst> VCode<I> {
         // traversal above, but (i) does not update block_offsets, rather uses
         // it (so forward references are now possible), and (ii) mutates the
         // instructions.
-        let mut offset = 0;
-        let mut constant_offset = 0;
+        let mut code_section = MachSectionSize::new();
+        let mut const_section = MachSectionSize::new();
         for block in &self.final_block_order {
-            offset = I::align_basic_block(offset);
+            code_section.offset = I::align_basic_block(code_section.offset);
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                self.insts[iix as usize].with_block_offsets(offset, &block_offsets[..]);
-                offset += inst_size(&self.insts[iix as usize], &mut constant_offset);
+                self.insts[iix as usize]
+                    .with_block_offsets(code_section.offset, &block_offsets[..]);
+                self.insts[iix as usize].emit(&mut code_section, &mut const_section);
             }
         }
 
         self.final_block_offsets = block_offsets;
-        self.code_size = offset;
-        self.constants_start = I::align_constant_pool(offset);
-        self.constants_size = constant_offset;
+        self.code_size = code_section.offset;
+        self.constants_start = I::align_constant_pool(self.code_size);
+        self.constants_size = const_section.offset;
     }
 
-    /// Get the total size of the code when emitted.
-    pub fn emitted_size(&self) -> usize {
-        (self.constants_start + self.constants_size) as usize
-    }
-
-    /// Emit the instructions to the given sink.
-    pub fn emit<CS: CodeSink>(&self, cs: &mut CS)
+    /// Emit the instructions to a list of sections.
+    pub fn emit(&self) -> MachSections
     where
-        I: MachInstEmit<CS, VCodeConstantPool>,
+        I: MachInstEmit<MachSection>,
     {
-        let mut cps = VCodeConstantPool::new(self.constants_start);
+        let mut sections = MachSections::new();
+        let code_idx = sections.add_section(0, self.code_size);
+        let const_idx = sections.add_section(self.constants_start, self.constants_size);
+        let (code_section, const_section) = sections.two_sections(code_idx, const_idx);
 
         for block in &self.final_block_order {
-            let new_offset = I::align_basic_block(cs.offset());
-            while new_offset > cs.offset() {
+            let new_offset = I::align_basic_block(code_section.cur_offset_from_start());
+            while new_offset > code_section.cur_offset_from_start() {
                 // Pad with NOPs up to the aligned block offset.
-                let nop = I::gen_nop((new_offset - cs.offset()) as usize);
-                nop.emit(cs, &mut cps);
+                let nop = I::gen_nop((new_offset - code_section.cur_offset_from_start()) as usize);
+                nop.emit(code_section, const_section);
             }
-            assert_eq!(cs.offset(), new_offset);
+            assert_eq!(code_section.cur_offset_from_start(), new_offset);
 
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                self.insts[iix as usize].emit(cs, &mut cps);
+                self.insts[iix as usize].emit(code_section, const_section);
             }
         }
 
-        for _ in self.code_size..self.constants_start {
-            cs.put1(0);
-        }
-
-        cs.begin_rodata();
-        cps.emit(cs);
-        cs.end_codegen();
+        sections
     }
 }
 
@@ -709,64 +696,5 @@ impl<I: VCodeInst + ShowWithRRU> ShowWithRRU for VCode<I> {
         s = s + &"\n".to_string();
 
         s
-    }
-}
-
-/// The constant-pool sink used by VCode emission.
-pub struct VCodeConstantPool {
-    start_offset: CodeOffset,
-    data: Vec<u8>,
-    relocs: Vec<(usize, Reloc, ir::ExternalName, i64)>,
-}
-
-impl VCodeConstantPool {
-    /// Create a new VCodeConstantPool that assumes it will emit bytes from the
-    /// given offset.
-    pub fn new(start_offset: CodeOffset) -> VCodeConstantPool {
-        VCodeConstantPool {
-            start_offset,
-            data: vec![],
-            relocs: vec![],
-        }
-    }
-
-    /// Emit the collected constant-data bytes into the given CodeSink,
-    /// assuming the CodeSink has already been padded up to the offset given as
-    /// `start_offset` to `new()`.
-    pub fn emit<CS: CodeSink>(&self, cs: &mut CS) {
-        let mut cur_reloc = 0;
-        for (idx, byte) in self.data.iter().enumerate() {
-            if cur_reloc < self.relocs.len() && self.relocs[cur_reloc].0 == idx {
-                let r = &self.relocs[cur_reloc];
-                cs.reloc_external(r.1, &r.2, r.3);
-                cur_reloc += 1;
-            }
-            cs.put1(*byte);
-        }
-    }
-}
-
-impl ConstantPoolSink for VCodeConstantPool {
-    fn align_to(&mut self, alignment: usize) {
-        assert!(alignment.is_power_of_two());
-        let alignment = alignment as CodeOffset;
-        let cur_offset = self.start_offset + self.data.len() as CodeOffset;
-        let new_offset = (cur_offset + alignment - 1) & !(alignment - 1);
-        for _ in cur_offset..new_offset {
-            self.data.push(0);
-        }
-    }
-
-    fn get_offset_from_code_start(&self) -> CodeOffset {
-        self.start_offset + self.data.len() as CodeOffset
-    }
-
-    fn add_data(&mut self, data: &[u8]) {
-        self.data.extend(data);
-    }
-
-    fn add_reloc(&mut self, ty: Reloc, name: &ir::ExternalName, offset: i64) {
-        self.relocs
-            .push((self.data.len(), ty, name.clone(), offset));
     }
 }

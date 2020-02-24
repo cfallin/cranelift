@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 
-use crate::binemit::{CodeOffset, CodeSink, ConstantPoolSink, NullConstantPoolSink};
+use crate::binemit::{CodeOffset, CodeSink};
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::ExternalName;
 use crate::ir::Type;

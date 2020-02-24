@@ -11,8 +11,7 @@
 
 use crate::binemit::{
     relax_branches, shrink_instructions, CodeInfo, FrameUnwindKind, FrameUnwindSink,
-    MemoryCodeSink, NullRelocSink, NullStackmapSink, NullTrapSink, RelocSink, StackmapSink,
-    TrapSink,
+    MemoryCodeSink, RelocSink, StackmapSink, TrapSink,
 };
 use crate::dce::do_dce;
 use crate::dominator_tree::DominatorTree;
@@ -23,6 +22,7 @@ use crate::legalize_function;
 use crate::legalizer::simple_legalize;
 use crate::licm::do_licm;
 use crate::loop_analysis::LoopAnalysis;
+use crate::machinst::MachCompileResult;
 use crate::nan_canonicalization::do_nan_canonicalization;
 use crate::postopt::do_postopt;
 use crate::redundant_reload_remover::RedundantReloadRemover;
@@ -57,6 +57,9 @@ pub struct Context {
 
     /// Redundant-reload remover context.
     pub redundant_reload_remover: RedundantReloadRemover,
+
+    /// Result of MachBackend compilation, if computed.
+    pub mach_compile_result: Option<MachCompileResult>,
 }
 
 impl Context {
@@ -80,6 +83,7 @@ impl Context {
             regalloc: regalloc::Context::new(),
             loop_analysis: LoopAnalysis::new(),
             redundant_reload_remover: RedundantReloadRemover::new(),
+            mach_compile_result: None,
         }
     }
 
@@ -161,18 +165,10 @@ impl Context {
 
         if let Some(backend) = isa.get_mach_backend() {
             let func = std::mem::replace(&mut self.func, Function::new());
-            let _code = backend.compile_function(
-                func,
-                &mut NullRelocSink {},
-                &mut NullTrapSink {},
-                &mut NullStackmapSink {},
-                false,
-            )?;
-
-            // TODO: capture the result of the relocs/traps/stackmaps above, and
-            // re-emit in `emit_to_memory()` below. We just need the section
-            // sizes to return the CodeInfo here.
-            unimplemented!()
+            let result = backend.compile_function(func, false)?;
+            let info = result.code_info();
+            self.mach_compile_result = Some(result);
+            Ok(info)
         } else {
             self.regalloc(isa)?;
             self.prologue_epilogue(isa)?;
@@ -212,7 +208,11 @@ impl Context {
     ) -> CodeInfo {
         let _tt = timing::binemit();
         let mut sink = MemoryCodeSink::new(mem, relocs, traps, stackmaps);
-        isa.emit_function_to_memory(&self.func, &mut sink);
+        if let Some(ref result) = &self.mach_compile_result {
+            result.sections.emit(&mut sink);
+        } else {
+            isa.emit_function_to_memory(&self.func, &mut sink);
+        }
         sink.info
     }
 

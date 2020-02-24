@@ -97,7 +97,7 @@
 #![allow(unused_imports)]
 
 use crate::binemit::{
-    CodeOffset, CodeSink, ConstantPoolSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink,
+    CodeInfo, CodeOffset, CodeSink, MemoryCodeSink, RelocSink, StackmapSink, TrapSink,
 };
 use crate::entity::EntityRef;
 use crate::entity::SecondaryMap;
@@ -132,6 +132,8 @@ pub mod abi;
 pub use abi::*;
 pub mod pp;
 pub use pp::*;
+pub mod sections;
+pub use sections::*;
 pub mod adapter;
 pub use adapter::*;
 
@@ -223,18 +225,31 @@ pub enum MachTerminator {
 }
 
 /// A trait describing the ability to encode a MachInst into binary machine code.
-pub trait MachInstEmit<CS: CodeSink, CPS: ConstantPoolSink> {
+pub trait MachInstEmit<O: MachSectionOutput> {
     /// Emit the instruction.
-    fn emit(&self, cs: &mut CS, consts: &mut CPS);
+    fn emit(&self, code: &mut O, consts: &mut O);
 }
 
 /// The result of a `MachBackend::compile_function()` call. Contains machine
 /// code (as bytes) and a disassembly, if requested.
 pub struct MachCompileResult {
     /// Machine code.
-    pub code: Vec<u8>,
-    /// Disassembly.
+    pub sections: MachSections,
+    /// Disassembly, if requested.
     pub disasm: Option<String>,
+}
+
+impl MachCompileResult {
+    /// Get a `CodeInfo` describing section sizes from this compilation result.
+    pub fn code_info(&self) -> CodeInfo {
+        let code_size = self.sections.total_size();
+        CodeInfo {
+            code_size,
+            jumptables_size: 0,
+            rodata_size: 0,
+            total_size: code_size,
+        }
+    }
 }
 
 /// Top-level machine backend trait, which wraps all monomorphized code and
@@ -244,9 +259,6 @@ pub trait MachBackend {
     fn compile_function(
         &self,
         func: Function,
-        relocs: &mut dyn RelocSink,
-        traps: &mut dyn TrapSink,
-        stackmaps: &mut dyn StackmapSink,
         want_disasm: bool,
     ) -> CodegenResult<MachCompileResult>;
 

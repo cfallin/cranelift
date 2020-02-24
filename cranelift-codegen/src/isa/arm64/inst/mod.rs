@@ -5,7 +5,7 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-use crate::binemit::{CodeOffset, CodeSink, ConstantPoolSink, NullConstantPoolSink};
+use crate::binemit::CodeOffset;
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{
     B1, B128, B16, B32, B64, B8, F32, F64, FFLAGS, I128, I16, I32, I64, I8, IFLAGS,
@@ -999,10 +999,10 @@ impl MachInst for Inst {
 //=============================================================================
 // Pretty-printing of instructions.
 
-fn mem_finalize_for_show<CPS: ConstantPoolSink>(
+fn mem_finalize_for_show<O: MachSectionOutput>(
     mem: &MemArg,
     mb_rru: Option<&RealRegUniverse>,
-    consts: &mut CPS,
+    consts: &mut O,
 ) -> (String, MemArg) {
     let (mem_insts, mem) = mem_finalize(0, mem, consts);
     let mut mem_str = mem_insts
@@ -1019,17 +1019,17 @@ fn mem_finalize_for_show<CPS: ConstantPoolSink>(
 
 impl ShowWithRRU for Inst {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
-        let mut nullcps = NullConstantPoolSink {};
-        self.show_rru_with_constsink(mb_rru, &mut nullcps)
+        let mut const_section = MachSectionSize::new();
+        self.show_rru_with_constsec(mb_rru, &mut const_section)
     }
 }
 
 impl Inst {
     /// Show the instruction, also providing constants to a constant sink.
-    pub fn show_rru_with_constsink<CPS: ConstantPoolSink>(
+    pub fn show_rru_with_constsec<O: MachSectionOutput>(
         &self,
         mb_rru: Option<&RealRegUniverse>,
-        consts: &mut CPS,
+        consts: &mut O,
     ) -> String {
         fn op_is32(alu_op: ALUOp) -> (&'static str, bool) {
             match alu_op {

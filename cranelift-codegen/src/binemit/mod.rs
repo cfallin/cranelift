@@ -6,7 +6,6 @@
 mod memorysink;
 mod relaxation;
 mod shrink;
-mod sizesink;
 mod stackmap;
 
 pub use self::memorysink::{
@@ -15,7 +14,6 @@ pub use self::memorysink::{
 };
 pub use self::relaxation::relax_branches;
 pub use self::shrink::shrink_instructions;
-pub use self::sizesink::SizeCodeSink;
 pub use self::stackmap::Stackmap;
 use crate::ir::entities::Value;
 use crate::ir::{ConstantOffset, ExternalName, Function, Inst, JumpTable, SourceLoc, TrapCode};
@@ -123,13 +121,13 @@ pub trait CodeSink {
     fn put1(&mut self, _: u8);
 
     /// Add 2 bytes to the code section.
-    fn put2(&mut self, _: u16);
+    fn put2(&mut self, value: u16);
 
     /// Add 4 bytes to the code section.
-    fn put4(&mut self, _: u32);
+    fn put4(&mut self, value: u32);
 
     /// Add 8 bytes to the code section.
-    fn put8(&mut self, _: u64);
+    fn put8(&mut self, value: u64);
 
     /// Add a relocation referencing an block at the current offset.
     fn reloc_block(&mut self, _: Reloc, _: CodeOffset);
@@ -187,65 +185,6 @@ pub trait FrameUnwindSink {
 
     /// Specified offset to main structure.
     fn set_entry_offset(&mut self, _: FrameUnwindOffset);
-}
-
-/// Describes a receiver of constant pool data during machine-instruction emission.
-pub trait ConstantPoolSink {
-    /// Align the offset to the given alignment, which must be a power of two.
-    fn align_to(&mut self, alignment: usize);
-
-    /// Return the offset from the start of the function code.
-    fn get_offset_from_code_start(&self) -> CodeOffset;
-
-    /// Add data to the constant pool.
-    fn add_data(&mut self, data: &[u8]);
-
-    /// Add a relocation referring to the data in the constant pool.
-    fn add_reloc(&mut self, ty: Reloc, name: &ExternalName, offset: i64);
-}
-
-/// A null implementation of a constant-pool sink that discards all data.
-pub struct NullConstantPoolSink {}
-
-impl ConstantPoolSink for NullConstantPoolSink {
-    fn align_to(&mut self, _alignment: usize) {}
-    fn get_offset_from_code_start(&self) -> CodeOffset {
-        0
-    }
-    fn add_data(&mut self, _data: &[u8]) {}
-    fn add_reloc(&mut self, _ty: Reloc, _name: &ExternalName, _offset: i64) {}
-}
-
-/// An implementation of a constant-pool sink that counts the size of all
-/// constants (but does not record their data).
-pub struct SizeConstantPoolSink {
-    size: CodeOffset,
-}
-
-impl SizeConstantPoolSink {
-    /// Create a new size-counting constant pool sink.
-    pub fn new(start_offset: CodeOffset) -> SizeConstantPoolSink {
-        SizeConstantPoolSink { size: start_offset }
-    }
-}
-
-impl ConstantPoolSink for SizeConstantPoolSink {
-    fn align_to(&mut self, alignment: usize) {
-        // Must be a power of two.
-        assert!((alignment & (alignment - 1)) == 0);
-        let alignment = alignment as CodeOffset;
-        self.size = (self.size + alignment - 1) & !(alignment - 1);
-    }
-
-    fn get_offset_from_code_start(&self) -> CodeOffset {
-        self.size
-    }
-
-    fn add_data(&mut self, data: &[u8]) {
-        self.size += data.len() as CodeOffset;
-    }
-
-    fn add_reloc(&mut self, _ty: Reloc, _name: &ExternalName, _offset: i64) {}
 }
 
 /// Report a bad encoding error.

@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 
-use crate::binemit::{CodeOffset, CodeSink, ConstantPoolSink, NullConstantPoolSink, Reloc};
+use crate::binemit::{CodeOffset, CodeSink, Reloc};
 use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::*;
 use crate::ir::Type;
@@ -21,10 +21,10 @@ use alloc::vec::Vec;
 /// generic arbitrary stack offset) into real addressing modes, possibly by
 /// emitting some helper instructions that come immediately before the use
 /// of this amod.
-pub fn mem_finalize<CPS: ConstantPoolSink>(
+pub fn mem_finalize<O: MachSectionOutput>(
     insn_off: CodeOffset,
     mem: &MemArg,
-    consts: &mut CPS,
+    consts: &mut O,
 ) -> (Vec<Inst>, MemArg) {
     match mem {
         &MemArg::StackOffset(fp_offset) => {
@@ -62,16 +62,16 @@ pub fn mem_finalize<CPS: ConstantPoolSink>(
                 16
             };
             consts.align_to(alignment);
-            let off = consts.get_offset_from_code_start();
-            consts.add_data(data.iter().as_slice());
+            let off = consts.cur_offset_from_start();
+            consts.put_data(data.iter().as_slice());
             let rel_off = off - insn_off;
             (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))
         }
         &MemArg::Label(MemLabel::ExtName(ref name, offset)) => {
             consts.align_to(8);
-            let off = consts.get_offset_from_code_start();
+            let off = consts.cur_offset_from_start();
             consts.add_reloc(Reloc::Abs8, name, offset);
-            consts.add_data(&[0, 0, 0, 0, 0, 0, 0, 0]);
+            consts.put_data(&[0, 0, 0, 0, 0, 0, 0, 0]);
             let rel_off = off - insn_off;
             (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))
         }
@@ -231,8 +231,8 @@ fn enc_bit_rr(size: u32, opcode2: u32, opcode1: u32, rn: Reg, rd: Writable<Reg>)
         | machreg_to_gpr(rd.to_reg())
 }
 
-impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
-    fn emit(&self, sink: &mut CS, consts: &mut CPS) {
+impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
+    fn emit(&self, sink: &mut O, consts: &mut O) {
         match self {
             &Inst::AluRRR { alu_op, rd, rn, rm } => {
                 let top11 = match alu_op {
@@ -439,7 +439,7 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem } => {
-                let (mem_insts, mem) = mem_finalize(sink.offset(), mem, consts);
+                let (mem_insts, mem) = mem_finalize(sink.cur_offset_from_start(), mem, consts);
 
                 for inst in mem_insts.into_iter() {
                     inst.emit(sink, consts);
@@ -521,7 +521,7 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem } => {
-                let (mem_insts, mem) = mem_finalize(sink.offset(), mem, consts);
+                let (mem_insts, mem) = mem_finalize(sink.cur_offset_from_start(), mem, consts);
 
                 for inst in mem_insts.into_iter() {
                     inst.emit(sink, consts);
@@ -677,7 +677,7 @@ impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
                 sink.put4(0xd65f03c0);
             }
             &Inst::Call { ref dest, .. } => {
-                sink.reloc_external(Reloc::Arm64Call, dest, 0);
+                sink.add_reloc(Reloc::Arm64Call, dest, 0);
                 sink.put4(enc_jump26(0b100101, 0));
             }
             &Inst::CallInd { rn, .. } => {

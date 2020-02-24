@@ -1652,8 +1652,8 @@ const F_PREFIX_66: u32 = 4;
 // deleted if it is redundant (0x40).  Note that for a 64-bit operation, the
 // REX prefix will normally never be redundant, since REX.W must be 1 to
 // indicate a 64-bit operation.
-fn emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE<CS: CodeSink>(
-    sink: &mut CS,
+fn emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE<O: MachSectionOutput>(
+    sink: &mut O,
     opcodes: u32,
     mut numOpcodes: usize,
     encG: u8,
@@ -1771,8 +1771,8 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE<CS: CodeSink>(
 // emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE, except it is for the case
 // where the E operand is a register rather than memory.  Hence it is much
 // simpler.
-fn emit_REX_OPCODES_MODRM_encG_encE<CS: CodeSink>(
-    sink: &mut CS,
+fn emit_REX_OPCODES_MODRM_encG_encE<O: MachSectionOutput>(
+    sink: &mut O,
     opcodes: u32,
     mut numOpcodes: usize,
     encG: u8,
@@ -1811,8 +1811,8 @@ fn emit_REX_OPCODES_MODRM_encG_encE<CS: CodeSink>(
 
 // These are merely wrappers for the above two functions that facilitate passing
 // actual |Reg|s rather than their encodings.
-fn emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE<CS: CodeSink>(
-    sink: &mut CS,
+fn emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE<O: MachSectionOutput>(
+    sink: &mut O,
     opcodes: u32,
     numOpcodes: usize,
     regG: Reg,
@@ -1824,8 +1824,8 @@ fn emit_REX_OPCODES_MODRM_SIB_IMM_regG_memE<CS: CodeSink>(
     emit_REX_OPCODES_MODRM_SIB_IMM_encG_memE(sink, opcodes, numOpcodes, encG, memE, flags);
 }
 
-fn emit_REX_OPCODES_MODRM_regG_regE<CS: CodeSink>(
-    sink: &mut CS,
+fn emit_REX_OPCODES_MODRM_regG_regE<O: MachSectionOutput>(
+    sink: &mut O,
     opcodes: u32,
     numOpcodes: usize,
     regG: Reg,
@@ -1839,7 +1839,7 @@ fn emit_REX_OPCODES_MODRM_regG_regE<CS: CodeSink>(
 }
 
 // Write a suitable number of bits from an imm64 to the sink.
-fn emit_simm<CS: CodeSink>(sink: &mut CS, size: u8, simm32: u32) {
+fn emit_simm<O: MachSectionOutput>(sink: &mut O, size: u8, simm32: u32) {
     match size {
         8 | 4 => sink.put4(simm32),
         2 => sink.put2(simm32 as u16),
@@ -1901,7 +1901,7 @@ fn emit_simm<CS: CodeSink>(sink: &mut CS, size: u8, simm32: u32) {
 // * there's a shorter encoding for shl/shr/sar by a 1-bit immediate.  (Do we
 //   care?)
 
-fn x64_emit<CS: CodeSink>(inst: &Inst, sink: &mut CS) {
+fn x64_emit<O: MachSectionOutput>(inst: &Inst, sink: &mut O) {
     match inst {
         Inst::Nop { len: 0 } => {}
         Inst::Alu_RMI_R {
@@ -2547,8 +2547,8 @@ impl MachInst for Inst {
     }
 }
 
-impl<CS: CodeSink, CPS: ConstantPoolSink> MachInstEmit<CS, CPS> for Inst {
-    fn emit(&self, sink: &mut CS, _consts: &mut CPS) {
+impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
+    fn emit(&self, sink: &mut O, _consts: &mut O) {
         x64_emit(self, sink);
     }
 }

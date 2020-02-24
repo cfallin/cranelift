@@ -40,8 +40,9 @@ struct Isa {
 pub fn isa_builder(triple: Triple) -> IsaBuilder {
     IsaBuilder {
         triple,
-        setup: settings::builder(),
-        constructor: isa_constructor,
+        setup: Some(settings::builder()),
+        constructor: Some(isa_constructor),
+        wrapped: None,
     }
 }
 
