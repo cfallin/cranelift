@@ -64,7 +64,15 @@ pub fn mem_finalize<O: MachSectionOutput>(
             consts.align_to(alignment);
             let off = consts.cur_offset_from_start();
             consts.put_data(data.iter().as_slice());
-            let rel_off = off - insn_off;
+            let rel_off = if off >= insn_off {
+              off - insn_off
+            } else {
+              // May occur when measuring instruction sizes: both const pool
+              // and code section are measured with fake section sinks at
+              // offset 0. The answer doesn't matter in this case, so just use
+              // a relative offset of 0.
+              0
+            };
             (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))
         }
         &MemArg::Label(MemLabel::ExtName(ref name, offset)) => {
@@ -72,7 +80,12 @@ pub fn mem_finalize<O: MachSectionOutput>(
             let off = consts.cur_offset_from_start();
             consts.add_reloc(Reloc::Abs8, name, offset);
             consts.put_data(&[0, 0, 0, 0, 0, 0, 0, 0]);
-            let rel_off = off - insn_off;
+            let rel_off = if off >= insn_off {
+              off - insn_off
+            } else {
+              // See note above.
+              0
+            };
             (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))
         }
         _ => (vec![], mem.clone()),
@@ -1563,8 +1576,8 @@ mod test {
                 rd: writable_xreg(1),
                 mem: MemArg::Label(MemLabel::ConstantData(u64_constant(0x0123456789abcdef))),
             },
-            "01200058EFCDAB8967452301",
-            "ldr x1, 1024",
+            "81000058000000000000000000000000EFCDAB8967452301",
+            "ldr x1, 0",
         ));
         insns.push((
             Inst::ULoad64 {
@@ -1587,8 +1600,8 @@ mod test {
                 rd: writable_xreg(1),
                 mem: MemArg::StackOffset(32768),
             },
-            "0F200058EF011D8BE10140F80080000000000000",
-            "ldr x15, 1024 ; add x15, x15, fp ; ldur x1, [x15]",
+            "8F000058EF011D8BE10140F8000000000080000000000000",
+            "ldr x15, 0 ; add x15, x15, fp ; ldur x1, [x15]",
         ));
 
         insns.push((
@@ -2346,15 +2359,25 @@ mod test {
             );
 
             // Check the printed text is as expected.
-            let mut consts = VCodeConstantPool::new(1024);
-            let actual_printing = insn.show_rru_with_constsink(Some(&rru), &mut consts);
+            let mut const_sec = MachSectionSize::new(0);
+            let actual_printing = insn.show_rru_with_constsec(Some(&rru), &mut const_sec);
             assert_eq!(expected_printing, actual_printing);
 
             // Check the encoding is as expected.
+            let (text_size, rodata_size) = {
+              let mut code_sec = MachSectionSize::new(0);
+              let mut const_sec = MachSectionSize::new(0);
+              insn.emit(&mut code_sec, &mut const_sec);
+              (code_sec.size(), const_sec.size())
+            };
+
             let mut sink = test_utils::TestCodeSink::new();
-            let mut consts = VCodeConstantPool::new(1024);
-            insn.emit(&mut sink, &mut consts);
-            consts.emit(&mut sink);
+            let mut sections = MachSections::new();
+            sections.add_section(0, text_size);
+            sections.add_section(Inst::align_constant_pool(text_size), rodata_size);
+            let (code_sec, const_sec) = sections.two_sections(0, 1);
+            insn.emit(code_sec, const_sec);
+            sections.emit(&mut sink);
             let actual_encoding = &sink.stringify();
             assert_eq!(expected_encoding, actual_encoding);
         }

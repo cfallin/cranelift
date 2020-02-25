@@ -46,10 +46,12 @@ impl MachSections {
     /// relocations, traps, and stackmap.
     pub fn emit<CS: CodeSink>(&self, sink: &mut CS) {
         for section in &self.sections {
-            while sink.offset() < section.start_offset {
-                sink.put1(0);
+            if section.data.len() > 0 {
+                while sink.offset() < section.start_offset {
+                    sink.put1(0);
+                }
+                section.emit(sink);
             }
-            section.emit(sink);
         }
     }
 
@@ -107,7 +109,7 @@ pub trait MachSectionOutput {
     /// Align up to the given alignment.
     fn align_to(&mut self, align_to: CodeOffset) {
         assert!(align_to.is_power_of_two());
-        while self.cur_offset_from_start() & !(align_to - 1) != 0 {
+        while self.cur_offset_from_start() & (align_to - 1) != 0 {
             self.put1(0);
         }
     }
@@ -166,12 +168,12 @@ impl MachSectionOutput for MachSection {
     }
 
     fn put1(&mut self, value: u8) {
-        assert!(((self.data.len() + 1) as CodeOffset) < self.length_limit);
+        assert!(((self.data.len() + 1) as CodeOffset) <= self.length_limit);
         self.data.push(value);
     }
 
     fn put_data(&mut self, data: &[u8]) {
-        assert!(((self.data.len() + data.len()) as CodeOffset) < self.length_limit);
+        assert!(((self.data.len() + data.len()) as CodeOffset) <= self.length_limit);
         self.data.extend_from_slice(data);
     }
 
@@ -188,19 +190,24 @@ impl MachSectionOutput for MachSection {
 
 /// A MachSectionOutput implementation that records only size.
 pub struct MachSectionSize {
+    /// The starting offset of this section.
+    pub start_offset: CodeOffset,
     /// The current offset of this section.
     pub offset: CodeOffset,
 }
 
 impl MachSectionSize {
     /// Create a new size-counting dummy section.
-    pub fn new() -> MachSectionSize {
-        MachSectionSize { offset: 0 }
+    pub fn new(start_offset: CodeOffset) -> MachSectionSize {
+        MachSectionSize {
+            start_offset,
+            offset: start_offset,
+        }
     }
 
     /// Return the size this section would take if emitted with a real sink.
     pub fn size(&self) -> CodeOffset {
-        self.offset
+        self.offset - self.start_offset
     }
 }
 

@@ -2,6 +2,7 @@
 
 use crate::disasm::{print_all, PrintRelocs, PrintStackmaps, PrintTraps};
 use crate::utils::{parse_sets_and_triple, read_to_string};
+use cranelift_codegen::binemit::{MemoryCodeSink, NullRelocSink, NullStackmapSink, NullTrapSink};
 use cranelift_codegen::print_errors::pretty_error;
 use cranelift_codegen::settings::FlagsOrIsa;
 use cranelift_codegen::timing;
@@ -88,13 +89,7 @@ fn handle_module(
             }
         } else if let Some(backend) = backend {
             let result = backend
-                .compile_function(
-                    func,
-                    &mut relocs,
-                    &mut traps,
-                    &mut stackmaps,
-                    /* want_disasm = */ flag_disasm,
-                )
+                .compile_function(func, /* want_disasm = */ flag_disasm)
                 .expect("Compilation error");
 
             if flag_disasm {
@@ -102,8 +97,16 @@ fn handle_module(
             }
 
             if flag_print {
+                let mut buf: Vec<u8> = vec![0; result.sections.total_size() as usize];
+                let mut relocs = NullRelocSink {};
+                let mut traps = NullTrapSink {};
+                let mut stackmaps = NullStackmapSink {};
+                let mut sink = unsafe {
+                    MemoryCodeSink::new(buf.as_mut_ptr(), &mut relocs, &mut traps, &mut stackmaps)
+                };
+                result.sections.emit(&mut sink);
                 println!("Machine code:");
-                for word in result.code.chunks(4) {
+                for word in buf.chunks(4) {
                     println!(
                         "{:02x}{:02x}{:02x}{:02x}",
                         word[3], word[2], word[1], word[0]

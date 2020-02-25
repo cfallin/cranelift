@@ -1019,7 +1019,7 @@ fn mem_finalize_for_show<O: MachSectionOutput>(
 
 impl ShowWithRRU for Inst {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
-        let mut const_section = MachSectionSize::new();
+        let mut const_section = MachSectionSize::new(0);
         self.show_rru_with_constsec(mb_rru, &mut const_section)
     }
 }

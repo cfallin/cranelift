@@ -294,6 +294,7 @@ mod tests {
     fn test_simple_func() {
         let isa = lookup(triple!("x86_64"))
             .expect("expect x86 ISA")
+            .as_builder()
             .finish(Flags::new(builder()));
 
         let mut context = Context::for_function(create_function(
@@ -359,6 +360,7 @@ mod tests {
     fn test_multi_return_func() {
         let isa = lookup(triple!("x86_64"))
             .expect("expect x86 ISA")
+            .as_builder()
             .finish(Flags::new(builder()));
 
         let mut context = Context::for_function(create_multi_return_function(CallConv::SystemV));

@@ -41,16 +41,25 @@ impl ABISig {
         let mut args = vec![];
         let mut next_xreg = 0;
         for param in &sig.params {
-            if &param.purpose == &ir::ArgumentPurpose::Normal
-                && in_int_reg(param.value_type)
-                && next_xreg < 8
-            {
+            if in_int_reg(param.value_type) && next_xreg < 8 {
                 let x = next_xreg;
                 next_xreg += 1;
                 let reg = xreg(x).to_real_reg();
-                args.push(ABIArg::Reg(reg));
+                match &param.purpose {
+                    &ir::ArgumentPurpose::VMContext | 
+                    &ir::ArgumentPurpose::Normal => {
+                        args.push(ABIArg::Reg(reg));
+                    }
+                    _ => panic!(
+                        "Unsupported argument purpose {:?} in signature: {:?}",
+                        param.purpose, sig
+                    ),
+                }
             } else {
-                panic!("Unsupported argument in signature: {:?}", sig);
+                panic!(
+                    "Unsupported argument type or argument count in signature: {:?}",
+                    sig
+                );
             }
         }
 

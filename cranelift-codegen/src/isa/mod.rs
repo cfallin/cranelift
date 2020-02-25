@@ -135,7 +135,7 @@ pub fn lookup(triple: Triple) -> Result<IsaBackend, LookupError> {
     match triple.architecture {
         Architecture::Riscv32 | Architecture::Riscv64 => isa_builder!(riscv, "riscv", triple),
         #[cfg(not(feature = "new-x64"))]
-        Architecture::I386 | Architecture::I586 | Architecture::I686 => {
+        Architecture::I386 | Architecture::I586 | Architecture::I686 | Architecture::X86_64 => {
             isa_builder!(x86, "x86", triple)
         }
         Architecture::Arm { .. } => isa_builder!(arm32, "arm32", triple),
@@ -148,6 +148,16 @@ pub fn lookup(triple: Triple) -> Result<IsaBackend, LookupError> {
         Architecture::X86_64 => Ok(IsaBackend::Builder(Builder::wrap(Box::new(
             TargetIsaAdapter::new(x64::X64Backend::new()),
         )))),
+        _ => Err(LookupError::Unsupported),
+    }
+}
+
+/// Return a MachBackend if supported.
+pub fn lookup_mach_backend(triple: Triple) -> Result<Box<dyn MachBackend>, LookupError> {
+    match triple.architecture {
+        Architecture::Aarch64 { .. } => Ok(Box::new(arm64::Arm64Backend::new())),
+        #[cfg(feature = "new-x64")]
+        Architecture::X86_64 => Ok(Box::new(x64::X64Backend::new())),
         _ => Err(LookupError::Unsupported),
     }
 }

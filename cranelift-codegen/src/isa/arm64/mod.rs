@@ -106,14 +106,12 @@ mod test {
         let v1 = pos.ins().iadd(arg0, v0);
         pos.ins().return_(&[v1]);
 
-        let mut relocs = NullRelocSink {};
-        let mut traps = NullTrapSink {};
-        let mut stackmaps = NullStackmapSink {};
         let backend = Arm64Backend::new();
-        let code = backend
-            .compile_function(func, &mut relocs, &mut traps, &mut stackmaps, false)
+        let sections = backend
+            .compile_function(func, false)
             .unwrap()
-            .code;
+            .sections;
+        let code = &sections.sections[0].data;
 
         // stp x29, x30, [sp, #-16]!
         // mov x29, sp
@@ -122,14 +120,11 @@ mod test {
         // mov sp, x29
         // ldp x29, x30, [sp], #16
         // ret
-        // .word 0  // padding
-        // .xword 0x12345678  // offset 0x20
         let golden = vec![
             0xfd, 0x7b, 0xbf, 0xa9, 0xfd, 0x03, 0x00, 0x91, 0xc1, 0x00, 0x00, 0x58, 0x00, 0x00,
             0x01, 0x0b, 0xbf, 0x03, 0x00, 0x91, 0xfd, 0x7b, 0xc1, 0xa8, 0xc0, 0x03, 0x5f, 0xd6,
-            0x00, 0x00, 0x00, 0x00, 0x78, 0x56, 0x34, 0x12, 0x00, 0x00, 0x00, 0x00,
         ];
 
-        assert_eq!(code, golden);
+        assert_eq!(code, &golden);
     }
 }

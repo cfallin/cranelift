@@ -445,8 +445,8 @@ impl<I: VCodeInst> VCode<I> {
         }
 
         // Compute block offsets.
-        let mut code_section = MachSectionSize::new();
-        let mut const_section = MachSectionSize::new();
+        let mut code_section = MachSectionSize::new(0);
+        let mut const_section = MachSectionSize::new(0);
         let mut block_offsets = vec![0; self.num_blocks()];
         for block in &self.final_block_order {
             code_section.offset = I::align_basic_block(code_section.offset);
@@ -461,8 +461,8 @@ impl<I: VCodeInst> VCode<I> {
         // traversal above, but (i) does not update block_offsets, rather uses
         // it (so forward references are now possible), and (ii) mutates the
         // instructions.
-        let mut code_section = MachSectionSize::new();
-        let mut const_section = MachSectionSize::new();
+        let mut code_section = MachSectionSize::new(0);
+        let mut const_section = MachSectionSize::new(0);
         for block in &self.final_block_order {
             code_section.offset = I::align_basic_block(code_section.offset);
             let (start, end) = self.block_ranges[*block as usize];
@@ -474,9 +474,9 @@ impl<I: VCodeInst> VCode<I> {
         }
 
         self.final_block_offsets = block_offsets;
-        self.code_size = code_section.offset;
+        self.code_size = code_section.size();
         self.constants_start = I::align_constant_pool(self.code_size);
-        self.constants_size = const_section.offset;
+        self.constants_size = const_section.size();
     }
 
     /// Emit the instructions to a list of sections.
