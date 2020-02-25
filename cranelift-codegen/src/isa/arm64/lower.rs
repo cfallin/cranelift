@@ -1151,7 +1151,20 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             ctx.emit(Inst::BitRR { rd, rn, op });
         }
 
-        Opcode::Ctz | Opcode::Popcnt => {
+        Opcode::Ctz => {
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let op = BitOp::from((Opcode::Bitrev, ty.unwrap()));
+            ctx.emit(Inst::BitRR { rd, rn, op });
+            let op = BitOp::from((Opcode::Clz, ty.unwrap()));
+            ctx.emit(Inst::BitRR {
+                rd,
+                rn: rd.to_reg(),
+                op,
+            });
+        }
+
+        Opcode::Popcnt => {
             // TODO
             unimplemented!()
         }
