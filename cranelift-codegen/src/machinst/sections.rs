@@ -4,7 +4,7 @@
 //! caller at the end of compilation.
 
 use crate::binemit::{Addend, CodeOffset, CodeSink, Reloc, RelocSink, StackmapSink, TrapSink};
-use crate::ir::ExternalName;
+use crate::ir::{ExternalName, SourceLoc, TrapCode};
 
 use alloc::vec::Vec;
 
@@ -115,6 +115,9 @@ pub trait MachSectionOutput {
     /// Add a relocation at the current offset.
     fn add_reloc(&mut self, kind: Reloc, name: &ExternalName, addend: Addend);
 
+    /// Add a trap record at the current offset.
+    fn add_trap(&mut self, loc: SourceLoc, code: TrapCode);
+
     /// Align up to the given alignment.
     fn align_to(&mut self, align_to: CodeOffset) {
         assert!(align_to.is_power_of_two());
@@ -138,6 +141,8 @@ pub struct MachSection {
     pub data: Vec<u8>,
     /// Any relocations referring to this section.
     pub relocs: Vec<MachReloc>,
+    /// Any trap records referring to this section.
+    pub traps: Vec<MachTrap>,
 }
 
 impl MachSection {
@@ -148,6 +153,7 @@ impl MachSection {
             length_limit,
             data: vec![],
             relocs: vec![],
+            traps: vec![],
         }
     }
 
@@ -158,12 +164,20 @@ impl MachSection {
         assert!(sink.offset() == self.start_offset);
 
         let mut next_reloc = 0;
+        let mut next_trap = 0;
         for (idx, byte) in self.data.iter().enumerate() {
             if next_reloc < self.relocs.len() {
                 let reloc = &self.relocs[next_reloc];
                 if reloc.offset == idx as CodeOffset {
                     sink.reloc_external(reloc.kind, &reloc.name, reloc.addend);
                     next_reloc += 1;
+                }
+            }
+            if next_trap < self.traps.len() {
+                let trap = &self.traps[next_trap];
+                if trap.offset == idx as CodeOffset {
+                    sink.trap(trap.code, trap.srcloc);
+                    next_trap += 1;
                 }
             }
             sink.put1(*byte);
@@ -193,6 +207,14 @@ impl MachSectionOutput for MachSection {
             kind,
             name,
             addend,
+        });
+    }
+
+    fn add_trap(&mut self, srcloc: SourceLoc, code: TrapCode) {
+        self.traps.push(MachTrap {
+            offset: self.data.len() as CodeOffset,
+            srcloc,
+            code,
         });
     }
 }
@@ -236,6 +258,8 @@ impl MachSectionOutput for MachSectionSize {
     }
 
     fn add_reloc(&mut self, _: Reloc, _: &ExternalName, _: Addend) {}
+
+    fn add_trap(&mut self, _: SourceLoc, _: TrapCode) {}
 }
 
 /// A relocation resulting from a compilation.
@@ -249,4 +273,15 @@ pub struct MachReloc {
     pub name: ExternalName,
     /// The addend to add to the symbol value.
     pub addend: i64,
+}
+
+/// A trap record resulting from a compilation.
+pub struct MachTrap {
+    /// The offset at which the trap instruction occurs, *relative to the
+    /// containing section*.
+    pub offset: CodeOffset,
+    /// The original source location.
+    pub srcloc: SourceLoc,
+    /// The trap code.
+    pub code: TrapCode,
 }

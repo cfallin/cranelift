@@ -701,29 +701,22 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 sink.put4(0b1101011_0001_11111_000000_00000_00000 | (machreg_to_gpr(rn) << 5));
             }
             &Inst::CondBr { .. } => panic!("Unlowered CondBr during binemit!"),
-            &Inst::CondBrLowered {
-                target,
-                inverted,
-                kind,
-            } => {
-                let kind = if inverted { kind.invert() } else { kind };
-                match kind {
-                    CondBrKind::Zero(reg) => {
-                        sink.put4(enc_cmpbr(0b1_011010_0, target.as_off19().unwrap_or(0), reg));
-                    }
-                    CondBrKind::NotZero(reg) => {
-                        sink.put4(enc_cmpbr(0b1_011010_1, target.as_off19().unwrap_or(0), reg));
-                    }
-                    CondBrKind::Cond(c) => {
-                        sink.put4(enc_cbr(
-                            0b01010100,
-                            target.as_off19().unwrap_or(0),
-                            0b0,
-                            c.bits(),
-                        ));
-                    }
+            &Inst::CondBrLowered { target, kind } => match kind {
+                CondBrKind::Zero(reg) => {
+                    sink.put4(enc_cmpbr(0b1_011010_0, target.as_off19().unwrap_or(0), reg));
                 }
-            }
+                CondBrKind::NotZero(reg) => {
+                    sink.put4(enc_cmpbr(0b1_011010_1, target.as_off19().unwrap_or(0), reg));
+                }
+                CondBrKind::Cond(c) => {
+                    sink.put4(enc_cbr(
+                        0b01010100,
+                        target.as_off19().unwrap_or(0),
+                        0b0,
+                        c.bits(),
+                    ));
+                }
+            },
             &Inst::CondBrLoweredCompound {
                 taken,
                 not_taken,
@@ -752,6 +745,12 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             &Inst::Nop => {}
             &Inst::Nop4 => {
                 sink.put4(0xd503201f);
+            }
+            &Inst::Brk { trap_info } => {
+                if let Some((srcloc, code)) = trap_info {
+                    sink.add_trap(srcloc, code);
+                }
+                sink.put4(0xd4200000);
             }
         }
     }
@@ -2232,211 +2231,166 @@ mod test {
 
         insns.push((
             Inst::Jump {
-                dest: BranchTarget::ResolvedOffset(0, 64),
+                dest: BranchTarget::ResolvedOffset(64),
             },
             "10000014",
-            "b block0",
+            "b 64",
         ));
 
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Zero(xreg(8)),
             },
             "080200B4",
-            "cbz x8, block0",
+            "cbz x8, 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: true,
-                kind: CondBrKind::Zero(xreg(8)),
-            },
-            "080200B5",
-            "cbnz x8, block0",
-        ));
-        insns.push((
-            Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::NotZero(xreg(8)),
             },
             "080200B5",
-            "cbnz x8, block0",
+            "cbnz x8, 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: true,
-                kind: CondBrKind::NotZero(xreg(8)),
-            },
-            "080200B4",
-            "cbz x8, block0",
-        ));
-        insns.push((
-            Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Eq),
             },
             "00020054",
-            "b.eq block0",
+            "b.eq 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Ne),
             },
             "01020054",
-            "b.ne block0",
-        ));
-        insns.push((
-            Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: true,
-                kind: CondBrKind::Cond(Cond::Ne),
-            },
-            "00020054",
-            "b.eq block0",
+            "b.ne 64",
         ));
 
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Hs),
             },
             "02020054",
-            "b.hs block0",
+            "b.hs 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Lo),
             },
             "03020054",
-            "b.lo block0",
+            "b.lo 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Mi),
             },
             "04020054",
-            "b.mi block0",
+            "b.mi 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Pl),
             },
             "05020054",
-            "b.pl block0",
+            "b.pl 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Vs),
             },
             "06020054",
-            "b.vs block0",
+            "b.vs 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Vc),
             },
             "07020054",
-            "b.vc block0",
+            "b.vc 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Hi),
             },
             "08020054",
-            "b.hi block0",
+            "b.hi 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Ls),
             },
             "09020054",
-            "b.ls block0",
+            "b.ls 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Ge),
             },
             "0A020054",
-            "b.ge block0",
+            "b.ge 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Lt),
             },
             "0B020054",
-            "b.lt block0",
+            "b.lt 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Gt),
             },
             "0C020054",
-            "b.gt block0",
+            "b.gt 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Le),
             },
             "0D020054",
-            "b.le block0",
+            "b.le 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Al),
             },
             "0E020054",
-            "b.al block0",
+            "b.al 64",
         ));
         insns.push((
             Inst::CondBrLowered {
-                target: BranchTarget::ResolvedOffset(0, 64),
-                inverted: false,
+                target: BranchTarget::ResolvedOffset(64),
                 kind: CondBrKind::Cond(Cond::Nv),
             },
             "0F020054",
-            "b.nv block0",
+            "b.nv 64",
         ));
 
         insns.push((
             Inst::CondBrLoweredCompound {
-                taken: BranchTarget::ResolvedOffset(0, 64),
-                not_taken: BranchTarget::ResolvedOffset(1, 128),
+                taken: BranchTarget::ResolvedOffset(64),
+                not_taken: BranchTarget::ResolvedOffset(128),
                 kind: CondBrKind::Cond(Cond::Le),
             },
             "0D02005420000014",
-            "b.le block0 ; b block1",
+            "b.le 64 ; b 128",
         ));
 
         insns.push((
@@ -2458,6 +2412,8 @@ mod test {
             "40013FD6",
             "blr x10",
         ));
+
+        insns.push((Inst::Brk { trap_info: None }, "000020D4", "brk #0"));
 
         let rru = create_reg_universe();
         for (insn, expected_encoding, expected_printing) in insns {

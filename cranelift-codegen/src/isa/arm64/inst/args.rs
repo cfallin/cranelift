@@ -292,7 +292,7 @@ pub enum BranchTarget {
     Block(BlockIndex),
     /// A resolved reference to another instruction, after
     /// `Inst::with_block_offsets()`.
-    ResolvedOffset(BlockIndex, isize),
+    ResolvedOffset(isize),
 }
 
 impl BranchTarget {
@@ -304,7 +304,7 @@ impl BranchTarget {
                 assert!(bix < targets.len());
                 let block_offset_in_func = targets[bix];
                 let branch_offset = (block_offset_in_func as isize) - (my_offset as isize);
-                *self = BranchTarget::ResolvedOffset(bix as BlockIndex, branch_offset);
+                *self = BranchTarget::ResolvedOffset(branch_offset);
             }
             &mut BranchTarget::ResolvedOffset(..) => {}
         }
@@ -321,7 +321,7 @@ impl BranchTarget {
     /// Get the offset as 4-byte words (instructions).
     pub fn as_offset_words(&self) -> Option<isize> {
         match self {
-            &BranchTarget::ResolvedOffset(_, off) => Some(off >> 2),
+            &BranchTarget::ResolvedOffset(off) => Some(off >> 2),
             _ => None,
         }
     }
@@ -355,7 +355,7 @@ impl BranchTarget {
                 let n = block_index_map[*bix as usize];
                 *bix = n;
             }
-            _ => panic!("BranchTarget::map() called on already-lowered BranchTarget!"),
+            &mut BranchTarget::ResolvedOffset(off) => {}
         }
     }
 }
@@ -482,7 +482,7 @@ impl ShowWithRRU for BranchTarget {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
             &BranchTarget::Block(block) => format!("block{}", block),
-            &BranchTarget::ResolvedOffset(block, _) => format!("block{}", block),
+            &BranchTarget::ResolvedOffset(off) => format!("{}", off),
         }
     }
 }

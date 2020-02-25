@@ -10,7 +10,7 @@ use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{
     B1, B128, B16, B32, B64, B8, F32, F64, FFLAGS, I128, I16, I32, I64, I8, IFLAGS,
 };
-use crate::ir::{ExternalName, GlobalValue, Opcode, Type};
+use crate::ir::{ExternalName, GlobalValue, Opcode, SourceLoc, TrapCode, Type};
 use crate::machinst::*;
 
 use regalloc::Map as RegallocMap;
@@ -320,13 +320,11 @@ pub enum Inst {
         kind: CondBrKind,
     },
 
-    /// Lowered conditional branch: contains the original instruction, and a
-    /// flag indicating whether to invert the taken-condition or not. Only one
-    /// BranchTarget is retained, and the other is implicitly the next
-    /// instruction, given the final basic-block layout.
+    /// Lowered conditional branch: contains the original branch kind (or the
+    /// inverse), but only one BranchTarget is retained. The other is
+    /// implicitly the next instruction, given the final basic-block layout.
     CondBrLowered {
         target: BranchTarget,
-        inverted: bool,
         kind: CondBrKind,
     },
 
@@ -337,6 +335,11 @@ pub enum Inst {
         taken: BranchTarget,
         not_taken: BranchTarget,
         kind: CondBrKind,
+    },
+
+    /// A "break" instruction, used for e.g. traps and debug breakpoints.
+    Brk {
+        trap_info: Option<(SourceLoc, TrapCode)>,
     },
 }
 
@@ -530,6 +533,7 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             CondBrKind::Cond(_) => {}
         },
         &Inst::Nop | Inst::Nop4 => {}
+        &Inst::Brk { .. } => {}
     }
 
     // Enforce the invariant that if a register is in the 'modify' set, it
@@ -820,13 +824,8 @@ fn arm64_map_regs(
             not_taken,
             kind: map_br(u, &kind),
         },
-        &mut Inst::CondBrLowered {
+        &mut Inst::CondBrLowered { target, kind } => Inst::CondBrLowered {
             target,
-            inverted,
-            kind,
-        } => Inst::CondBrLowered {
-            target,
-            inverted,
             kind: map_br(u, &kind),
         },
         &mut Inst::CondBrLoweredCompound {
@@ -840,6 +839,7 @@ fn arm64_map_regs(
         },
         &mut Inst::Nop => Inst::Nop,
         &mut Inst::Nop4 => Inst::Nop4,
+        &mut Inst::Brk { trap_info } => Inst::Brk { trap_info },
     };
     *inst = newval;
 }
@@ -877,7 +877,14 @@ impl MachInst for Inst {
                 taken.as_block_index().unwrap(),
                 not_taken.as_block_index().unwrap(),
             ),
-            &Inst::CondBrLowered { .. } | &Inst::CondBrLoweredCompound { .. } => {
+            &Inst::CondBrLowered { .. } => {
+                // This is used prior to branch finalization when we must have branches
+                // within an open-coded sequence. From the point of view of CFG analysis,
+                // it is part of a black-box single-in single-out region, hence is not
+                // denoted a terminator.
+                MachTerminator::None
+            }
+            &Inst::CondBrLoweredCompound { .. } => {
                 panic!("is_term() called after lowering branches");
             }
             _ => MachTerminator::None,
@@ -927,7 +934,11 @@ impl MachInst for Inst {
                 taken.map(block_target_map);
                 not_taken.map(block_target_map);
             }
-            &mut Inst::CondBrLowered { .. } | &mut Inst::CondBrLoweredCompound { .. } => {
+            &mut Inst::CondBrLowered { .. } => {
+                // See note in `is_term()`: this is used in open-coded sequences
+                // within blocks and should be left alone.
+            }
+            &mut Inst::CondBrLoweredCompound { .. } => {
                 panic!("with_block_rewrites called after branch lowering!");
             }
             _ => {}
@@ -944,13 +955,11 @@ impl MachInst for Inst {
                 if taken.as_block_index() == fallthrough {
                     *self = Inst::CondBrLowered {
                         target: not_taken,
-                        inverted: true,
-                        kind,
+                        kind: kind.invert(),
                     };
                 } else if not_taken.as_block_index() == fallthrough {
                     *self = Inst::CondBrLowered {
                         target: taken,
-                        inverted: false,
                         kind,
                     };
                 } else {
@@ -1373,15 +1382,9 @@ impl Inst {
             }
             &Inst::CondBrLowered {
                 ref target,
-                inverted,
                 ref kind,
             } => {
                 let target = target.show_rru(mb_rru);
-                let kind = if inverted {
-                    kind.invert()
-                } else {
-                    kind.clone()
-                };
                 match &kind {
                     &CondBrKind::Zero(reg) => {
                         let reg = reg.show_rru(mb_rru);
@@ -1404,7 +1407,6 @@ impl Inst {
             } => {
                 let first = Inst::CondBrLowered {
                     target: taken.clone(),
-                    inverted: false,
                     kind: kind.clone(),
                 };
                 let second = Inst::Jump {
@@ -1412,6 +1414,7 @@ impl Inst {
                 };
                 first.show_rru(mb_rru) + " ; " + &second.show_rru(mb_rru)
             }
+            &Inst::Brk { .. } => "brk #0".to_string(),
         }
     }
 }

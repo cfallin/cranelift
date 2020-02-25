@@ -5,7 +5,7 @@
 use crate::ir::condcodes::IntCC;
 use crate::ir::types::*;
 use crate::ir::Inst as IRInst;
-use crate::ir::{Block, InstructionData, Opcode, Type};
+use crate::ir::{Block, InstructionData, Opcode, SourceLoc, TrapCode, Type};
 use crate::machinst::lower::*;
 use crate::machinst::*;
 
@@ -1362,15 +1362,47 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             unimplemented!()
         }
 
-        Opcode::Debugtrap
-        | Opcode::Trap
-        | Opcode::Trapz
-        | Opcode::Trapnz
-        | Opcode::Trapif
-        | Opcode::Trapff
-        | Opcode::ResumableTrap
-        | Opcode::Safepoint => {
+        Opcode::Debugtrap | Opcode::Trap | Opcode::Trapif => {
+            let is_cond = op == Opcode::Trapif;
+            let maybe_trapinfo = inst_trapcode(ctx.data(insn)).map(|code| (ctx.srcloc(insn), code));
+
+            if is_cond {
+                let condcode = inst_condcode(ctx.data(insn)).unwrap();
+                let cond = lower_condcode(condcode);
+                let is_signed = condcode_is_signed(condcode);
+                // Verification ensures that the input is always a
+                // single-def ifcmp.
+                let ifcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ifcmp).unwrap();
+                lower_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
+
+                // Branch around the break instruction with inverted cond. Go straight
+                // to lowered one-target form; this is logically part of a single-in
+                // single-out template lowering.
+                let cond = cond.invert();
+                ctx.emit(Inst::CondBrLowered {
+                    target: BranchTarget::ResolvedOffset(8),
+                    kind: CondBrKind::Cond(cond),
+                });
+            }
+            ctx.emit(Inst::Brk {
+                trap_info: maybe_trapinfo,
+            });
+        }
+
+        Opcode::Safepoint => {
             panic!("trap support not implemented!");
+        }
+
+        Opcode::Trapz | Opcode::Trapnz => {
+            panic!("trapz / trapnz should have been removed by legalization!");
+        }
+
+        Opcode::Trapff => {
+            panic!("trapff requires floating point support");
+        }
+
+        Opcode::ResumableTrap => {
+            panic!("Resumable traps not supported");
         }
 
         Opcode::FuncAddr => {
@@ -1629,6 +1661,16 @@ fn inst_condcode(data: &InstructionData) -> Option<IntCC> {
     }
 }
 
+fn inst_trapcode(data: &InstructionData) -> Option<TrapCode> {
+    match data {
+        &InstructionData::Trap { code, .. }
+        | &InstructionData::CondTrap { code, .. }
+        | &InstructionData::IntCondTrap { code, .. }
+        | &InstructionData::FloatCondTrap { code, .. } => Some(code),
+        _ => None,
+    }
+}
+
 fn maybe_input_insn<C: LowerCtx<Inst>>(c: &mut C, input: InsnInput, op: Opcode) -> Option<IRInst> {
     if let InsnInputSource::Output(out) = input_source(c, input) {
         let data = c.data(out.insn);
@@ -1637,6 +1679,35 @@ fn maybe_input_insn<C: LowerCtx<Inst>>(c: &mut C, input: InsnInput, op: Opcode) 
         }
     }
     None
+}
+
+fn lower_ifcmp_to_flags<C: LowerCtx<Inst>>(ctx: &mut C, ifcmp_insn: IRInst, is_signed: bool) {
+    // Get the condcode and the args, and treat this like a BrIcmp.
+    let ty = ctx.input_ty(ifcmp_insn, 0);
+    let bits = ty_bits(ty);
+    let narrow_mode = match (bits <= 32, is_signed) {
+        (true, true) => NarrowValueMode::SignExtend32,
+        (true, false) => NarrowValueMode::ZeroExtend32,
+        (false, true) => NarrowValueMode::SignExtend64,
+        (false, false) => NarrowValueMode::ZeroExtend64,
+    };
+    let ifcmp_inputs = [
+        InsnInput {
+            insn: ifcmp_insn,
+            input: 0,
+        },
+        InsnInput {
+            insn: ifcmp_insn,
+            input: 1,
+        },
+    ];
+    let ty = ctx.input_ty(ifcmp_insn, 0);
+    let rn = input_to_reg(ctx, ifcmp_inputs[0], narrow_mode);
+    let rm = input_to_rse_imm12(ctx, ifcmp_inputs[1], narrow_mode);
+    let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
+    let rd = writable_zero_reg();
+    ctx.merged(ifcmp_insn);
+    ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
 }
 
 //=============================================================================
@@ -1750,32 +1821,7 @@ impl LowerBackend for Arm64Backend {
                         input: 0,
                     };
                     if let Some(ifcmp_insn) = maybe_input_insn(ctx, flag_input, Opcode::Ifcmp) {
-                        // Get the condcode and the args, and treat this like a BrIcmp.
-                        let ty = ctx.input_ty(ifcmp_insn, 0);
-                        let bits = ty_bits(ty);
-                        let narrow_mode = match (bits <= 32, is_signed) {
-                            (true, true) => NarrowValueMode::SignExtend32,
-                            (true, false) => NarrowValueMode::ZeroExtend32,
-                            (false, true) => NarrowValueMode::SignExtend64,
-                            (false, false) => NarrowValueMode::ZeroExtend64,
-                        };
-                        let ifcmp_inputs = [
-                            InsnInput {
-                                insn: ifcmp_insn,
-                                input: 0,
-                            },
-                            InsnInput {
-                                insn: ifcmp_insn,
-                                input: 1,
-                            },
-                        ];
-                        let ty = ctx.input_ty(ifcmp_insn, 0);
-                        let rn = input_to_reg(ctx, ifcmp_inputs[0], narrow_mode);
-                        let rm = input_to_rse_imm12(ctx, ifcmp_inputs[1], narrow_mode);
-                        let alu_op = choose_32_64(ty, ALUOp::SubS32, ALUOp::SubS64);
-                        let rd = writable_zero_reg();
-                        ctx.merged(ifcmp_insn);
-                        ctx.emit(alu_inst_imm12(alu_op, rd, rn, rm));
+                        lower_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
                         ctx.emit(Inst::CondBr {
                             taken,
                             not_taken,

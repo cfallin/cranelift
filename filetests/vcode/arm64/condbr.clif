@@ -32,7 +32,7 @@ block2:
 ; check: stp fp, lr, [sp, #-16]!
 ; nextln: mov fp, sp
 ; nextln: subs xzr, x0, x1
-; nextln: b.eq block1
+; nextln: b.eq 20
 ; check: Block 0:
 ; check: movz x0, #2
 ; nextln: mov sp, fp
