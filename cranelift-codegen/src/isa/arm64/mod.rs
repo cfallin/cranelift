@@ -107,10 +107,7 @@ mod test {
         pos.ins().return_(&[v1]);
 
         let backend = Arm64Backend::new();
-        let sections = backend
-            .compile_function(func, false)
-            .unwrap()
-            .sections;
+        let sections = backend.compile_function(func, false).unwrap().sections;
         let code = &sections.sections[0].data;
 
         // stp x29, x30, [sp, #-16]!

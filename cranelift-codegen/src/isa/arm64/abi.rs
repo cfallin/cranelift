@@ -46,8 +46,7 @@ impl ABISig {
                 next_xreg += 1;
                 let reg = xreg(x).to_real_reg();
                 match &param.purpose {
-                    &ir::ArgumentPurpose::VMContext | 
-                    &ir::ArgumentPurpose::Normal => {
+                    &ir::ArgumentPurpose::VMContext | &ir::ArgumentPurpose::Normal => {
                         args.push(ABIArg::Reg(reg));
                     }
                     _ => panic!(

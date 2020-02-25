@@ -65,13 +65,13 @@ pub fn mem_finalize<O: MachSectionOutput>(
             let off = consts.cur_offset_from_start();
             consts.put_data(data.iter().as_slice());
             let rel_off = if off >= insn_off {
-              off - insn_off
+                off - insn_off
             } else {
-              // May occur when measuring instruction sizes: both const pool
-              // and code section are measured with fake section sinks at
-              // offset 0. The answer doesn't matter in this case, so just use
-              // a relative offset of 0.
-              0
+                // May occur when measuring instruction sizes: both const pool
+                // and code section are measured with fake section sinks at
+                // offset 0. The answer doesn't matter in this case, so just use
+                // a relative offset of 0.
+                0
             };
             (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))
         }
@@ -81,10 +81,10 @@ pub fn mem_finalize<O: MachSectionOutput>(
             consts.add_reloc(Reloc::Abs8, name, offset);
             consts.put_data(&[0, 0, 0, 0, 0, 0, 0, 0]);
             let rel_off = if off >= insn_off {
-              off - insn_off
+                off - insn_off
             } else {
-              // See note above.
-              0
+                // See note above.
+                0
             };
             (vec![], MemArg::Label(MemLabel::ConstantPoolRel(rel_off)))
         }
@@ -2365,10 +2365,10 @@ mod test {
 
             // Check the encoding is as expected.
             let (text_size, rodata_size) = {
-              let mut code_sec = MachSectionSize::new(0);
-              let mut const_sec = MachSectionSize::new(0);
-              insn.emit(&mut code_sec, &mut const_sec);
-              (code_sec.size(), const_sec.size())
+                let mut code_sec = MachSectionSize::new(0);
+                let mut const_sec = MachSectionSize::new(0);
+                insn.emit(&mut code_sec, &mut const_sec);
+                (code_sec.size(), const_sec.size())
             };
 
             let mut sink = test_utils::TestCodeSink::new();
