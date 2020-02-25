@@ -71,10 +71,6 @@ use thiserror::Error;
 #[cfg(feature = "riscv")]
 mod riscv;
 
-#[cfg(feature = "x86")]
-mod x86;
-
-#[cfg(feature = "new-x64")]
 mod x64;
 
 #[cfg(feature = "arm32")]
@@ -134,17 +130,12 @@ macro_rules! isa_builder {
 pub fn lookup(triple: Triple) -> Result<IsaBackend, LookupError> {
     match triple.architecture {
         Architecture::Riscv32 | Architecture::Riscv64 => isa_builder!(riscv, "riscv", triple),
-        #[cfg(not(feature = "new-x64"))]
-        Architecture::I386 | Architecture::I586 | Architecture::I686 | Architecture::X86_64 => {
-            isa_builder!(x86, "x86", triple)
-        }
         Architecture::Arm { .. } => isa_builder!(arm32, "arm32", triple),
         // ARM64 uses the new backend.
         Architecture::Aarch64 { .. } => Ok(IsaBackend::Builder(Builder::wrap(Box::new(
             TargetIsaAdapter::new(arm64::Arm64Backend::new()),
         )))),
         // X86_64 uses the new backend.  Bwaha!
-        #[cfg(feature = "new-x64")]
         Architecture::X86_64 => Ok(IsaBackend::Builder(Builder::wrap(Box::new(
             TargetIsaAdapter::new(x64::X64Backend::new()),
         )))),

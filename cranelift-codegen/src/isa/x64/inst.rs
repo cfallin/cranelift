@@ -5,7 +5,7 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-use crate::binemit::{Addend, CodeOffset, CodeSink, ConstantPoolSink, NullConstantPoolSink, Reloc};
+use crate::binemit::{Addend, CodeOffset, CodeSink, Reloc};
 //zz use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{B1, B128, B16, B32, B64, B8, F32, F64, I128, I16, I32, I64, I8};
 use crate::ir::{ConstantOffset, ExternalName, Function, JumpTable, SourceLoc, TrapCode};
@@ -4667,16 +4667,28 @@ fn test_x64_insn_encoding_and_printing() {
     // ========================================================
     // Actually run the tests!
     let rru = create_reg_universe();
-    let mut nullcps = NullConstantPoolSink {};
     for (insn, expected_encoding, expected_printing) in insns {
         println!("     {}", insn.show_rru(Some(&rru)));
         // Check the printed text is as expected.
+        let mut const_sec = MachSectionSize::new(0);
         let actual_printing = insn.show_rru(Some(&rru));
         assert_eq!(expected_printing, actual_printing);
 
         // Check the encoding is as expected.
+        let (text_size, rodata_size) = {
+            let mut code_sec = MachSectionSize::new(0);
+            let mut const_sec = MachSectionSize::new(0);
+            insn.emit(&mut code_sec, &mut const_sec);
+            (code_sec.size(), const_sec.size())
+        };
+
         let mut sink = test_utils::TestCodeSink::new();
-        insn.emit(&mut sink, &mut nullcps);
+        let mut sections = MachSections::new();
+        sections.add_section(0, text_size);
+        sections.add_section(Inst::align_constant_pool(text_size), rodata_size);
+        let (code_sec, const_sec) = sections.two_sections(0, 1);
+        insn.emit(code_sec, const_sec);
+        sections.emit(&mut sink);
         let actual_encoding = &sink.stringify();
         assert_eq!(expected_encoding, actual_encoding);
     }
