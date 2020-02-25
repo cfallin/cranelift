@@ -1,15 +1,29 @@
 TODO:
 
+- Bring up wasmtime / cranelift-wasm:
+  - traps
+  - VMContext arg and global value
+  - jump tables?
+  - branch tables?
+
 - ISA completeness:
   - ImmLogic: implement the algorithm to determine whether an immediate can be
     encoded as a logical immediate.
   - Add opcodes to lowering. Full integer/ALU instruction set.
 
-- Top-level pipeline:
-  - Better story to integrate with existing Cranelift users
-  - Wrap in a skeleton TargetIsa implementation?
-  - Make sure we invoke all optimization passes, legalization passes, etc.
-    (Function::compile is responsible for this?)
+- Calling conventions for non-SysV cases
+  - Wasm: take implicit VMContext argument
+  - Baldrdash: no prologue/epilogue; take this info in flags
+  - audit for others
+
+- Limits (handle gracefully / return error from lowering)
+  - Jump offsets (19, 26-bit forms)
+
+- Performance tests vs. SpiderMonkey WASM
+  - make sure that cranelift-wasm can run (or wasmtime?)
+  - compile benchmarks (Spec CPU? bzip2? rustfmt? tinycc?)
+  - SM JS shell: ./js --wasm-compiler=ion
+  - SM with Cranelift: ./js --wasm-compiler=cranelift
 
 - API and naming cleanups
   - Add a "get input insn if we are its only use" method to LowerCtx
@@ -25,37 +39,6 @@ TODO:
 
 - misc fixups
   - Ensure that clobbered reg saves in ARM64 ABI consider register class
-
-- Legalization
-  - see cranelift-codegen/meta/src/shared/legalize.rs
-  - instructions: global_value, heap_addr, table_addr, trapz, trapnz, br_table,
-                  select, fconst, stack_load, stack_store
-  - narrowing: I128
-
-  - Document which opcodes should for sure not appear in legalized code.
-
-- Lowering tests
-  - Make sure all (non-vector) filetests can compile
-  - Develop suite of golden-machine-code (or golden-assembly?) tests
-  - verify a bunch of corner / interesting cases
-    - add128 / add-with-carry
-    - conditional select?
-    - bit ops
-    - multiply-add / multiply-subtract
-    - address of global (with relos)
-
-- Calling conventions for non-SysV cases
-  - Wasm: take implicit VMContext argument
-  - audit for others
-
-- Limits (handle gracefully / return error from lowering)
-  - Jump offsets (19, 26-bit forms)
-
-- Performance tests vs. SpiderMonkey WASM
-  - make sure that cranelift-wasm can run (or wasmtime?)
-  - compile benchmarks (Spec CPU? bzip2? rustfmt? tinycc?)
-  - SM JS shell: ./js --wasm-compiler=ion
-  - SM with Cranelift: ./js --wasm-compiler=cranelift
 
 - Post-MVP:
 
