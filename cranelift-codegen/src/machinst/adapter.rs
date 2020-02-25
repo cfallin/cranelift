@@ -48,7 +48,11 @@ impl TargetIsa for TargetIsaAdapter {
     }
 
     fn register_info(&self) -> RegInfo {
-        panic!("Should not be called when new-style backend is available!")
+        // Called from function's Display impl, so we need a stub here.
+        RegInfo {
+            banks: &[],
+            classes: &[],
+        }
     }
 
     fn legal_encodings<'a>(

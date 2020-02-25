@@ -204,9 +204,36 @@ pub fn simple_legalize(func: &mut ir::Function, cfg: &mut ControlFlowGraph, isa:
     pos.set_position(func_begin);
     while let Some(_block) = pos.next_block() {
         while let Some(inst) = pos.next_inst() {
-            let prev_pos = pos.position();
-            if expand(inst, &mut pos.func, cfg, isa) {
-                pos.set_position(prev_pos);
+            match pos.func.dfg[inst].opcode() {
+                ir::Opcode::BrIcmp
+                | ir::Opcode::BrTable
+                | ir::Opcode::GlobalValue
+                | ir::Opcode::HeapAddr
+                | ir::Opcode::StackLoad
+                | ir::Opcode::StackStore
+                | ir::Opcode::TableAddr
+                | ir::Opcode::Trapnz
+                | ir::Opcode::Trapz
+                | ir::Opcode::BandImm
+                | ir::Opcode::BorImm
+                | ir::Opcode::BxorImm
+                | ir::Opcode::IaddImm
+                | ir::Opcode::IfcmpImm
+                | ir::Opcode::ImulImm
+                | ir::Opcode::IrsubImm
+                | ir::Opcode::IshlImm
+                | ir::Opcode::RotlImm
+                | ir::Opcode::RotrImm
+                | ir::Opcode::SdivImm
+                | ir::Opcode::SremImm
+                | ir::Opcode::SshrImm
+                | ir::Opcode::UdivImm
+                | ir::Opcode::UremImm
+                | ir::Opcode::UshrImm
+                | ir::Opcode::IcmpImm => {
+                    expand(inst, &mut pos.func, cfg, isa);
+                }
+                _ => {}
             }
         }
     }

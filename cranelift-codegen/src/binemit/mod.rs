@@ -82,7 +82,7 @@ impl fmt::Display for Reloc {
 /// The code starts at offset 0 and is followed optionally by relocatable jump tables and copyable
 /// (raw binary) read-only data.  Any padding between sections is always part of the section that
 /// precedes the boundary between the sections.
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub struct CodeInfo {
     /// Number of bytes of machine code (the code starts at offset 0).
     pub code_size: CodeOffset,

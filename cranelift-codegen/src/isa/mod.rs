@@ -201,6 +201,15 @@ impl Builder {
             self.wrapped.unwrap()
         }
     }
+
+    /// If this is a wrapped existing TargetIsa instance, return the wrapped instance.
+    pub fn get_wrapped(self) -> Box<dyn TargetIsa> {
+        if let Some(w) = self.wrapped {
+            w
+        } else {
+            panic!("This Builder is not a wrapped TargetIsa!");
+        }
+    }
 }
 
 impl settings::Configurable for Builder {

@@ -1,6 +1,7 @@
 use crate::subtest::{run_filecheck, Context, SubTest, SubtestResult};
 use cranelift_codegen::ir::Function;
-use cranelift_codegen::isa::lookup_mach_backend;
+use cranelift_codegen::isa::lookup;
+use cranelift_codegen::Context as CodegenContext;
 use cranelift_reader::{TestCommand, TestOption};
 use target_lexicon::Triple;
 
@@ -48,14 +49,20 @@ impl SubTest for TestVCode {
         let triple =
             Triple::from_str(&self.arch).map_err(|_| format!("Unknown arch: '{}'", self.arch))?;
 
-        let backend = lookup_mach_backend(triple)
-            .map_err(|_| format!("Could not look up backend for arch '{}'", self.arch))?;
+        let mut isa = lookup(triple)
+            .map_err(|_| format!("Could not look up backend for arch '{}'", self.arch))?
+            .as_builder()
+            .get_wrapped();
 
-        let text = backend
-            .compile_function(func, /* want_disasm = */ true)
-            .map_err(|e| format!("Error from backend compilation: {:?}", e))?
-            .disasm
-            .unwrap();
+        let mut codectx = CodegenContext::for_function(func);
+        codectx.set_disasm(true);
+
+        codectx
+            .compile(&mut *isa)
+            .map_err(|e| format!("Could not compile with arch '{}': {:?}", self.arch, e))?;
+
+        let result = codectx.mach_compile_result.take().unwrap();
+        let text = result.disasm.unwrap();
 
         info!("text input to filecheck is:\n{}\n", text);
 

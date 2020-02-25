@@ -60,6 +60,9 @@ pub struct Context {
 
     /// Result of MachBackend compilation, if computed.
     pub mach_compile_result: Option<MachCompileResult>,
+
+    /// Flag: do we want a disassembly with the MachCompileResult?
+    pub want_disasm: bool,
 }
 
 impl Context {
@@ -84,6 +87,7 @@ impl Context {
             loop_analysis: LoopAnalysis::new(),
             redundant_reload_remover: RedundantReloadRemover::new(),
             mach_compile_result: None,
+            want_disasm: false,
         }
     }
 
@@ -95,6 +99,14 @@ impl Context {
         self.regalloc.clear();
         self.loop_analysis.clear();
         self.redundant_reload_remover.clear();
+        self.mach_compile_result = None;
+        self.want_disasm = false;
+    }
+
+    /// Set the flag to request a disassembly when compiling with a
+    /// `MachBackend` backend.
+    pub fn set_disasm(&mut self, val: bool) {
+        self.want_disasm = val;
     }
 
     /// Compile the function, and emit machine code into a `Vec<u8>`.
@@ -165,7 +177,7 @@ impl Context {
 
         if let Some(backend) = isa.get_mach_backend() {
             let func = std::mem::replace(&mut self.func, Function::new());
-            let result = backend.compile_function(func, false)?;
+            let result = backend.compile_function(func, self.want_disasm)?;
             let info = result.code_info();
             self.mach_compile_result = Some(result);
             Ok(info)

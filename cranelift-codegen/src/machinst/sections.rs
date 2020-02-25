@@ -53,6 +53,9 @@ impl MachSections {
                 section.emit(sink);
             }
         }
+        sink.begin_jumptables();
+        sink.begin_rodata();
+        sink.end_codegen();
     }
 
     /// Get the total required size for these sections.
@@ -60,7 +63,13 @@ impl MachSections {
         if self.sections.len() == 0 {
             0
         } else {
-            self.sections.last().unwrap().cur_offset_from_start()
+            // Find the last non-empty section.
+            self.sections
+                .iter()
+                .rev()
+                .find(|s| s.data.len() > 0)
+                .map(|s| s.cur_offset_from_start())
+                .unwrap_or(0)
         }
     }
 }
