@@ -309,7 +309,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                         // If we're skipping the instruction, we need to dec-ref
                         // its arguments.
                         for arg in self.f.dfg.inst_args(inst) {
-                            match self.f.dfg.value_def(*arg) {
+                            let val = self.f.dfg.resolve_aliases(*arg);
+                            match self.f.dfg.value_def(val) {
                                 ValueDef::Result(src_inst, _) => {
                                     self.dec_use(src_inst);
                                 }
@@ -372,8 +373,9 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
             // Create all of the phi uses (reads) from jump args to temps.
             for (i, arg) in self.f.dfg.inst_variable_args(inst).iter().enumerate() {
+                let arg = self.f.dfg.resolve_aliases(*arg);
                 debug!("jump arg {} is {}", i, arg);
-                let src_reg = self.value_regs[*arg];
+                let src_reg = self.value_regs[arg];
                 let dst_reg = phi_temps[i];
                 self.vcode.push(I::gen_move(dst_reg, src_reg));
             }
@@ -447,7 +449,8 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
         // First, inc-ref all inputs of `from_inst`, because they are now used
         // directly by `into_inst`.
         for arg in self.f.dfg.inst_args(from_inst) {
-            match self.f.dfg.value_def(*arg) {
+            let arg = self.f.dfg.resolve_aliases(*arg);
+            match self.f.dfg.value_def(arg) {
                 ValueDef::Result(src_inst, _) => {
                     debug!(" -> inc-reffing src inst {}", src_inst);
                     self.inc_use(src_inst);
@@ -466,6 +469,7 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
     /// given IR instruction.
     fn input_inst(&self, ir_inst: Inst, idx: usize) -> Option<(Inst, usize)> {
         let val = self.f.dfg.inst_args(ir_inst)[idx];
+        let val = self.f.dfg.resolve_aliases(val);
         match self.f.dfg.value_def(val) {
             ValueDef::Result(src_inst, result_idx) => Some((src_inst, result_idx)),
             _ => None,
@@ -474,17 +478,20 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
 
     /// Map a Value to its associated writable (probably virtual) Reg.
     fn value_to_writable_reg(&self, val: Value) -> Writable<Reg> {
+        let val = self.f.dfg.resolve_aliases(val);
         Writable::from_reg(self.value_regs[val])
     }
 
     /// Map a Value to its associated (probably virtual) Reg.
     fn value_to_reg(&self, val: Value) -> Reg {
+        let val = self.f.dfg.resolve_aliases(val);
         self.value_regs[val]
     }
 
     /// Get the `idx`th input to the given IR instruction as a virtual register.
     fn input(&self, ir_inst: Inst, idx: usize) -> Reg {
         let val = self.f.dfg.inst_args(ir_inst)[idx];
+        let val = self.f.dfg.resolve_aliases(val);
         self.value_to_reg(val)
     }
 
@@ -515,7 +522,9 @@ impl<'a, I: VCodeInst> LowerCtx<I> for Lower<'a, I> {
 
     /// Get the type for an instruction's input.
     fn input_ty(&self, ir_inst: Inst, idx: usize) -> Type {
-        self.f.dfg.value_type(self.f.dfg.inst_args(ir_inst)[idx])
+        let val = self.f.dfg.inst_args(ir_inst)[idx];
+        let val = self.f.dfg.resolve_aliases(val);
+        self.f.dfg.value_type(val)
     }
 
     /// Get the type for an instruction's output.
