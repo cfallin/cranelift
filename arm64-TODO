@@ -1,10 +1,9 @@
 TODO:
 
 - Bring up wasmtime / cranelift-wasm:
-  - traps
-  - VMContext arg and global value
-  - jump tables?
-  - branch tables?
+  - VMContext arg and `vmctx` global value
+  - branch tables
+  - separate jumptable and rodata sections; relocs between them
 
 - ISA completeness:
   - ImmLogic: implement the algorithm to determine whether an immediate can be
@@ -12,7 +11,6 @@ TODO:
   - Add opcodes to lowering. Full integer/ALU instruction set.
 
 - Calling conventions for non-SysV cases
-  - Wasm: take implicit VMContext argument
   - Baldrdash: no prologue/epilogue; take this info in flags
   - audit for others
 

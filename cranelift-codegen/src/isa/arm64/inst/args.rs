@@ -355,7 +355,7 @@ impl BranchTarget {
                 let n = block_index_map[*bix as usize];
                 *bix = n;
             }
-            &mut BranchTarget::ResolvedOffset(off) => {}
+            &mut BranchTarget::ResolvedOffset(_) => {}
         }
     }
 }

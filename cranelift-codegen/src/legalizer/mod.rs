@@ -203,7 +203,9 @@ pub fn simple_legalize(func: &mut ir::Function, cfg: &mut ControlFlowGraph, isa:
     let func_begin = pos.position();
     pos.set_position(func_begin);
     while let Some(_block) = pos.next_block() {
-        let mut prev_pos = pos.position();
+        let prev_pos = pos.position();
+        // Move from CursorPosition::Before(block) to first insn.
+        pos.next_inst();
         loop {
             if let Some(inst) = pos.current_inst() {
                 pos.goto_after_inst(inst);

@@ -245,7 +245,9 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                         Opcode::Fallthrough | Opcode::FallthroughReturn => {
                             self.f.layout.next_block(*bb).unwrap()
                         }
-                        Opcode::Trap | Opcode::IndirectJumpTableBr => unimplemented!(),
+                        Opcode::IndirectJumpTableBr => {
+                            panic!("Unimplemented branch type: {:?}", instdata);
+                        }
                         _ => branch_target(instdata).unwrap(),
                     };
 
