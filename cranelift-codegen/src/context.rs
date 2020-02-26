@@ -310,6 +310,7 @@ impl Context {
     pub fn legalize(&mut self, isa: &dyn TargetIsa) -> CodegenResult<()> {
         if isa.get_mach_backend().is_some() {
             // Run some specific legalizations only.
+            let before_func = self.func.clone();
             simple_legalize(&mut self.func, &mut self.cfg, isa);
             Ok(())
         } else {

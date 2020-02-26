@@ -203,47 +203,44 @@ pub fn simple_legalize(func: &mut ir::Function, cfg: &mut ControlFlowGraph, isa:
     let func_begin = pos.position();
     pos.set_position(func_begin);
     while let Some(_block) = pos.next_block() {
-        let prev_pos = pos.position();
-        // Move from CursorPosition::Before(block) to first insn.
-        pos.next_inst();
-        loop {
-            if let Some(inst) = pos.current_inst() {
-                pos.goto_after_inst(inst);
-                match pos.func.dfg[inst].opcode() {
-                    ir::Opcode::BrIcmp
-                    | ir::Opcode::BrTable
-                    | ir::Opcode::GlobalValue
-                    | ir::Opcode::HeapAddr
-                    | ir::Opcode::StackLoad
-                    | ir::Opcode::StackStore
-                    | ir::Opcode::TableAddr
-                    | ir::Opcode::Trapnz
-                    | ir::Opcode::Trapz
-                    | ir::Opcode::BandImm
-                    | ir::Opcode::BorImm
-                    | ir::Opcode::BxorImm
-                    | ir::Opcode::IaddImm
-                    | ir::Opcode::IfcmpImm
-                    | ir::Opcode::ImulImm
-                    | ir::Opcode::IrsubImm
-                    | ir::Opcode::IshlImm
-                    | ir::Opcode::RotlImm
-                    | ir::Opcode::RotrImm
-                    | ir::Opcode::SdivImm
-                    | ir::Opcode::SremImm
-                    | ir::Opcode::SshrImm
-                    | ir::Opcode::UdivImm
-                    | ir::Opcode::UremImm
-                    | ir::Opcode::UshrImm
-                    | ir::Opcode::IcmpImm => {
-                        if expand(inst, &mut pos.func, cfg, isa) {
-                            pos.set_position(prev_pos);
-                        }
-                    }
-                    _ => {}
-                }
+        let mut prev_pos = pos.position();
+        while let Some(inst) = pos.next_inst() {
+            let expanded = match pos.func.dfg[inst].opcode() {
+                ir::Opcode::BrIcmp
+                | ir::Opcode::BrTable
+                | ir::Opcode::GlobalValue
+                | ir::Opcode::HeapAddr
+                | ir::Opcode::StackLoad
+                | ir::Opcode::StackStore
+                | ir::Opcode::TableAddr
+                | ir::Opcode::Trapnz
+                | ir::Opcode::Trapz
+                | ir::Opcode::BandImm
+                | ir::Opcode::BorImm
+                | ir::Opcode::BxorImm
+                | ir::Opcode::IaddImm
+                | ir::Opcode::IfcmpImm
+                | ir::Opcode::ImulImm
+                | ir::Opcode::IrsubImm
+                | ir::Opcode::IshlImm
+                | ir::Opcode::RotlImm
+                | ir::Opcode::RotrImm
+                | ir::Opcode::SdivImm
+                | ir::Opcode::SremImm
+                | ir::Opcode::SshrImm
+                | ir::Opcode::UdivImm
+                | ir::Opcode::UremImm
+                | ir::Opcode::UshrImm
+                | ir::Opcode::IcmpImm => expand(inst, &mut pos.func, cfg, isa),
+                _ => false,
+            };
+
+            if expanded {
+                // Legalization implementations require fixpoint loop
+                // here. TODO: fix this.
+                pos.set_position(prev_pos);
             } else {
-                break;
+                prev_pos = pos.position();
             }
         }
     }
