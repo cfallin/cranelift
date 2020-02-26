@@ -422,16 +422,7 @@ fn lower_insn_to_regs<'a>(ctx: Ctx<'a>, iri: IRInst) {
             unimplemented = true;
         }
 
-        Opcode::FallthroughReturn => {
-            // What is this? The definition says it's a "special
-            // instruction" meant to allow falling through into an
-            // epilogue that will then return; that just sounds like a
-            // normal fallthrough. TODO: Do we need to handle this
-            // differently?
-            unimplemented = true;
-        }
-
-        Opcode::Return => {
+        Opcode::FallthroughReturn | Opcode::Return => {
             for i in 0..ctx.num_inputs(iri) {
                 let src_reg = ctx.input(iri, i);
                 let retval_reg = ctx.retval(i);

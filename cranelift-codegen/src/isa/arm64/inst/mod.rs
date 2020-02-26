@@ -310,6 +310,11 @@ pub enum Inst {
     // ---- branches (exactly one must appear at end of BB) ----
     /// A machine return instruction.
     Ret {},
+
+    /// A placeholder instruction, generating no code, meaning that a function epilogue must be
+    /// inserted there.
+    EpiloguePlaceholder {},
+
     /// An unconditional branch.
     Jump { dest: BranchTarget },
 
@@ -511,7 +516,7 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.defined.insert(rd);
             iru.used.insert(rn);
         }
-        &Inst::Jump { .. } | &Inst::Ret { .. } => {}
+        &Inst::Jump { .. } | &Inst::Ret { .. } | &Inst::EpiloguePlaceholder { .. } => {}
         &Inst::Call {
             ref uses, ref defs, ..
         } => {
@@ -809,6 +814,7 @@ fn arm64_map_regs(
             Inst::Call { dest, uses, defs }
         }
         &mut Inst::Ret {} => Inst::Ret {},
+        &mut Inst::EpiloguePlaceholder {} => Inst::EpiloguePlaceholder {},
         &mut Inst::CallInd {
             ref uses,
             ref defs,
@@ -1367,6 +1373,7 @@ impl Inst {
                 format!("blr {}", rn)
             }
             &Inst::Ret {} => "ret".to_string(),
+            &Inst::EpiloguePlaceholder {} => "epilogue placeholder".to_string(),
             &Inst::Jump { ref dest } => {
                 let dest = dest.show_rru(mb_rru);
                 format!("b {}", dest)

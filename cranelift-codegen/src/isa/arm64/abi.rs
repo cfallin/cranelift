@@ -89,6 +89,7 @@ pub struct ARM64ABIBody {
     stackslots_size: usize,            // total stack size of all stackslots
     clobbered: Set<Writable<RealReg>>, // clobbered registers, from regalloc.
     spillslots: Option<usize>,         // total number of spillslots, from regalloc.
+    frame_size: Option<usize>,
 }
 
 fn in_int_reg(ty: types::Type) -> bool {
@@ -123,6 +124,7 @@ impl ARM64ABIBody {
             stackslots_size: stack_offset,
             clobbered: Set::empty(),
             spillslots: None,
+            frame_size: None,
         }
     }
 }
@@ -265,6 +267,10 @@ impl ABIBody<Inst> for ARM64ABIBody {
         Inst::Ret {}
     }
 
+    fn gen_epilogue_placeholder(&self) -> Inst {
+        Inst::EpiloguePlaceholder {}
+    }
+
     fn set_num_spillslots(&mut self, slots: usize) {
         self.spillslots = Some(slots);
     }
@@ -390,6 +396,7 @@ impl ABIBody<Inst> for ARM64ABIBody {
             });
         }
 
+        self.frame_size = Some(total_stacksize);
         insts
     }
 
@@ -444,6 +451,10 @@ impl ABIBody<Inst> for ARM64ABIBody {
         insts.push(Inst::Ret {});
         debug!("Epilogue: {:?}", insts);
         insts
+    }
+
+    fn frame_size(&self) -> u32 {
+        self.frame_size.expect("frame size not computed before prologue generation") as u32
     }
 
     fn get_spillslot_size(&self, rc: RegClass, ty: Type) -> u32 {

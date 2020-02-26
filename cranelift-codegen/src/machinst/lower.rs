@@ -134,6 +134,11 @@ fn alloc_vreg(
     value_regs[value].as_virtual_reg().unwrap()
 }
 
+enum GenerateReturn {
+    Yes,
+    No,
+}
+
 impl<'a, I: VCodeInst> Lower<'a, I> {
     /// Prepare a new lowering context for the given IR function.
     pub fn new(f: &'a Function, abi: Box<dyn ABIBody<I>>) -> Lower<'a, I> {
@@ -206,13 +211,20 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         }
     }
 
-    fn gen_retval_setup(&mut self) {
+    fn gen_retval_setup(&mut self, gen_ret_inst: GenerateReturn) {
         for (i, reg) in self.retval_regs.iter().enumerate() {
             let insn = self.vcode.abi().gen_copy_reg_to_retval(i, *reg);
             self.vcode.push(insn);
         }
-        let ret = self.vcode.abi().gen_ret();
-        self.vcode.push(ret);
+        let inst = match gen_ret_inst {
+            GenerateReturn::Yes => {
+                self.vcode.abi().gen_ret()
+            }
+            GenerateReturn::No => {
+                self.vcode.abi().gen_epilogue_placeholder()
+            }
+        };
+        self.vcode.push(inst);
     }
 
     /// Lower the function.
@@ -271,8 +283,15 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
 
             // If this is a return block, produce the return value setup.
             let last_insn = self.f.layout.block_insts(*bb).last().unwrap();
-            if self.f.dfg[last_insn].opcode().is_return() {
-                self.gen_retval_setup();
+            let last_insn_opcode = self.f.dfg[last_insn].opcode();
+            if last_insn_opcode.is_return() {
+                let gen_ret = if last_insn_opcode == Opcode::Return {
+                    GenerateReturn::Yes
+                } else {
+                    debug_assert!(last_insn_opcode == Opcode::FallthroughReturn);
+                    GenerateReturn::No
+                };
+                self.gen_retval_setup(gen_ret);
                 self.vcode.end_ir_inst();
             }
 

@@ -275,6 +275,9 @@ pub fn reg_R8() -> Reg {
 pub fn reg_R9() -> Reg {
     info_R9().0.to_reg()
 }
+pub fn reg_R14() -> Reg {
+    info_R14().0.to_reg()
+}
 
 pub fn reg_RSP() -> Reg {
     info_RSP().0.to_reg()
@@ -865,6 +868,10 @@ pub enum Inst {
     /// ret
     Ret {},
 
+    /// A placeholder instruction, generating no code, meaning that a function epilogue must be
+    /// inserted there.
+    EpiloguePlaceholder {},
+
     /// jmp simm32
     JmpKnown { dest: BranchTarget },
 
@@ -1026,6 +1033,10 @@ pub fn i_CallUnknown(dest: RM) -> Inst {
 
 pub fn i_Ret() -> Inst {
     Inst::Ret {}
+}
+
+pub fn i_epilogue_placeholder() -> Inst {
+    Inst::EpiloguePlaceholder {}
 }
 
 pub fn i_JmpKnown(dest: BranchTarget) -> Inst {
@@ -1209,6 +1220,7 @@ fn x64_show_rru(inst: &Inst, mb_rru: Option<&RealRegUniverse>) -> String {
             dest.show_rru(mb_rru)
         ),
         Inst::Ret {} => "ret".to_string(),
+        Inst::EpiloguePlaceholder {} => "epilogue placeholder".to_string(),
         Inst::JmpKnown { dest } => {
             format!("{} {}", ljustify("jmp".to_string()), dest.show_rru(mb_rru))
         }
@@ -1384,6 +1396,7 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
             dest.get_regs(&mut iru.used);
         }
         Inst::Ret {} => {}
+        Inst::EpiloguePlaceholder {} => {}
         Inst::JmpKnown { dest: _ } => {}
         Inst::JmpCondSymm {
             cc: _,
@@ -1398,7 +1411,10 @@ fn x64_get_regs(inst: &Inst) -> InstRegUses {
         //Inst::JmpUnknown { target } => {
         //    target.get_regs(&mut iru.used);
         //}
-        other => panic!("x64_get_regs: {}", other.show_rru(None)),
+        Inst::Nop { .. }
+        | Inst::JmpCond { .. }
+        | Inst::JmpCondCompound { .. }
+        | Inst::JmpUnknown { .. } => unimplemented!("x64_get_regs inst"),
     }
 
     // Enforce invariants described above.
@@ -1566,6 +1582,7 @@ fn x64_map_regs(
             dest.apply_map(pre_map);
         }
         Inst::Ret {} => {}
+        Inst::EpiloguePlaceholder {} => {}
         Inst::JmpKnown { dest: _ } => {}
         Inst::JmpCondSymm {
             cc: _,
@@ -1580,7 +1597,10 @@ fn x64_map_regs(
         //Inst::JmpUnknown { target } => {
         //    target.apply_map(pre_map);
         //}
-        other => panic!("x64_map_regs: {}", other.show_rru(None)),
+        Inst::Nop { .. }
+        | Inst::JmpCond { .. }
+        | Inst::JmpCondCompound { .. }
+        | Inst::JmpUnknown { .. } => unimplemented!("x64_map_regs opcode"),
     }
 }
 
@@ -2420,7 +2440,7 @@ impl MachInst for Inst {
     fn is_term(&self) -> MachTerminator {
         match self {
             // Interesting cases.
-            &Inst::Ret {} => MachTerminator::Ret,
+            &Inst::Ret {} | &Inst::EpiloguePlaceholder {} => MachTerminator::Ret,
             &Inst::JmpKnown { dest } => MachTerminator::Uncond(dest.as_block_index().unwrap()),
             &Inst::JmpCondSymm {
                 cc: _,

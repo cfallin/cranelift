@@ -245,6 +245,8 @@ pub trait MachInstEmit<O: MachSectionOutput> {
 pub struct MachCompileResult {
     /// Machine code.
     pub sections: MachSections,
+    /// Size of stack frame, in bytes.
+    pub frame_size: u32,
     /// Disassembly, if requested.
     pub disasm: Option<String>,
 }

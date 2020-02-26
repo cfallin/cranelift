@@ -52,6 +52,7 @@ impl MachBackend for X64Backend {
     ) -> CodegenResult<MachCompileResult> {
         let vcode = self.compile_vcode(func);
         let sections = vcode.emit();
+        let frame_size = vcode.frame_size();
 
         let disasm = if want_disasm {
             Some(vcode.show_rru(Some(&create_reg_universe())))
@@ -59,7 +60,7 @@ impl MachBackend for X64Backend {
             None
         };
 
-        Ok(MachCompileResult { sections, disasm })
+        Ok(MachCompileResult { sections, frame_size, disasm })
     }
 
     fn flags(&self) -> &settings::Flags {

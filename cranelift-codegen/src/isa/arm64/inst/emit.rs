@@ -721,6 +721,9 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             &Inst::Ret {} => {
                 sink.put4(0xd65f03c0);
             }
+            &Inst::EpiloguePlaceholder {} => {
+                // Noop; this is just a placeholder for epilogues.
+            }
             &Inst::Call { ref dest, .. } => {
                 sink.add_reloc(Reloc::Arm64Call, dest, 0);
                 sink.put4(enc_jump26(0b100101, 0));

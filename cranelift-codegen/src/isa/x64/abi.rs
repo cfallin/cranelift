@@ -8,6 +8,7 @@ use crate::ir::types;
 use crate::ir::types::*;
 use crate::ir::StackSlot;
 use crate::ir::Type;
+use crate::isa;
 use crate::isa::x64::inst::*;
 use crate::isa::x64::*;
 use crate::machinst::*;
@@ -42,6 +43,7 @@ pub struct X64ABIBody {
     // epilogue.  Amount by which RSP is adjusted downwards to allocate the
     // spill area.
     spill_area_sizeB: Option<usize>,
+    call_conv: isa::CallConv,
 }
 
 // Clone of arm64 version
@@ -92,39 +94,57 @@ fn get_callee_saves(regs: Vec<Writable<RealReg>>) -> Vec<Writable<RealReg>> {
 
 impl X64ABIBody {
     /// Create a new body ABI instance.
-    pub fn new(f: &ir::Function) -> X64ABIBody {
+    pub fn new(f: &ir::Function) -> Self {
         println!("X64 ABI: func signature {:?}", f.signature);
 
         // Compute args and retvals from signature.
         let mut args = vec![];
         let mut next_int_arg = 0;
         for param in &f.signature.params {
-            let mut ok = false;
-            if &param.purpose == &ir::ArgumentPurpose::Normal && in_int_reg(param.value_type) {
-                if let Some(reg) = get_intreg_for_arg_ELF(next_int_arg) {
-                    args.push(ABIArg::Reg(reg.to_real_reg()));
-                    ok = true;
+            match param.purpose {
+                ir::ArgumentPurpose::Normal => {
+                    if in_int_reg(param.value_type) {
+                        if let Some(reg) = get_intreg_for_arg_ELF(next_int_arg) {
+                            args.push(ABIArg::Reg(reg.to_real_reg()));
+                        } else {
+                            unimplemented!("passing arg on the stack");
+                        }
+                        next_int_arg += 1;
+                    } else {
+                        unimplemented!("non int normal register")
+                    }
                 }
-                next_int_arg += 1;
-            }
-            if !ok {
-                panic!("Unsupported argument in signature: {:?}", f.signature);
+
+                ir::ArgumentPurpose::VMContext => {
+                    debug_assert!(f.signature.call_conv.extends_baldrdash());
+                    // VmContext is r14 in Baldrdash.
+                    args.push(ABIArg::Reg(reg_R14().to_real_reg()));
+                }
+
+                _ => unimplemented!("other parameter purposes"),
             }
         }
 
         let mut rets = vec![];
         let mut next_int_retval = 0;
         for ret in &f.signature.returns {
-            let mut ok = false;
-            if &ret.purpose == &ir::ArgumentPurpose::Normal && in_int_reg(ret.value_type) {
-                if let Some(reg) = get_intreg_for_retval_ELF(next_int_retval) {
-                    rets.push(ABIRet::Reg(reg.to_real_reg()));
-                    ok = true;
+            match ret.purpose {
+                ir::ArgumentPurpose::Normal => {
+                    if in_int_reg(ret.value_type) {
+                        if let Some(reg) = get_intreg_for_retval_ELF(next_int_retval) {
+                            rets.push(ABIRet::Reg(reg.to_real_reg()));
+                        } else {
+                            unimplemented!("passing return on the stack");
+                        }
+                        next_int_retval += 1;
+                    } else {
+                        unimplemented!("returning non integer normal value");
+                    }
                 }
-                next_int_retval += 1;
-            }
-            if !ok {
-                panic!("Unsupported return value in signature: {:?}", f.signature);
+
+                _ => {
+                    unimplemented!("non normal argument purpose");
+                }
             }
         }
 
@@ -139,7 +159,7 @@ impl X64ABIBody {
             stackslots.push(off);
         }
 
-        X64ABIBody {
+        Self {
             args,
             rets,
             stackslots,
@@ -147,6 +167,7 @@ impl X64ABIBody {
             clobbered: Set::empty(),
             spillslots: None,
             spill_area_sizeB: None,
+            call_conv: f.signature.call_conv.clone(),
         }
     }
 }
@@ -189,25 +210,44 @@ impl ABIBody<Inst> for X64ABIBody {
     }
 
     fn gen_copy_arg_to_reg(&self, idx: usize, to_reg: Writable<Reg>) -> Inst {
-        if let Some(from_reg) = get_intreg_for_arg_ELF(idx) {
-            return i_Mov_R_R(/*is64=*/ true, from_reg, to_reg);
+        match &self.args[idx] {
+            ABIArg::Reg(from_reg) => {
+                if from_reg.get_class() == RegClass::I32 || from_reg.get_class() == RegClass::I64 {
+                    // TODO do we need a sign extension if it's I32?
+                    return i_Mov_R_R(/*is64=*/ true, from_reg.to_reg(), to_reg);
+                }
+                unimplemented!("moving from non-int arg to vreg");
+            }
+            ABIArg::Stack => unimplemented!("moving from stack arg to vreg"),
         }
-        unimplemented!()
     }
 
     fn gen_copy_reg_to_retval(&self, idx: usize, from_reg: Reg) -> Inst {
-        if let Some(to_reg) = get_intreg_for_retval_ELF(idx) {
-            return i_Mov_R_R(
-                /*is64=*/ true,
-                from_reg,
-                Writable::<Reg>::from_reg(to_reg),
-            );
+        match &self.rets[idx] {
+            ABIRet::Reg(to_reg) => {
+                if to_reg.get_class() == RegClass::I32 || to_reg.get_class() == RegClass::I64 {
+                    return i_Mov_R_R(
+                        /*is64=*/ true,
+                        from_reg,
+                        Writable::<Reg>::from_reg(to_reg.to_reg()),
+                    );
+                }
+                unimplemented!("moving from vreg to non-int return value");
+            }
+
+            ABIRet::Mem => {
+                // This shouldn't happen.
+                panic!("moving from vreg to memory return value");
+            }
         }
-        unimplemented!()
     }
 
     fn gen_ret(&self) -> Inst {
         i_Ret()
+    }
+
+    fn gen_epilogue_placeholder(&self) -> Inst {
+        i_epilogue_placeholder()
     }
 
     // Clone of arm64
@@ -243,7 +283,6 @@ impl ABIBody<Inst> for X64ABIBody {
     }
 
     fn gen_prologue(&mut self) -> Vec<Inst> {
-        let mut insts = vec![];
         let total_stacksize = self.stackslots_size + 8 * self.spillslots.unwrap();
         let total_stacksize = (total_stacksize + 15) & !15; // 16-align the stack
 
@@ -252,11 +291,16 @@ impl ABIBody<Inst> for X64ABIBody {
         let w_rbp = Writable::<Reg>::from_reg(r_rbp);
         let w_rsp = Writable::<Reg>::from_reg(r_rsp);
 
-        // The "traditional" pre-preamble
-        // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
-        insts.push(i_Push64(ip_RMI_R(r_rbp)));
-        // RSP is now 0 % 16
-        insts.push(i_Mov_R_R(true, r_rsp, w_rbp));
+        let mut insts = vec![];
+
+        // Baldrdash generates its own prologue sequence, so we don't have to.
+        if !self.call_conv.extends_baldrdash() {
+            // The "traditional" pre-preamble
+            // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
+            insts.push(i_Push64(ip_RMI_R(r_rbp)));
+            // RSP is now 0 % 16
+            insts.push(i_Mov_R_R(true, r_rsp, w_rbp));
+        }
 
         // Save callee saved registers that we trash.  Keep track of how much
         // space we've used, so as to know what we have to do to get the base
@@ -291,7 +335,7 @@ impl ABIBody<Inst> for X64ABIBody {
         if spill_area_sizeB > 0x7FFF_FFFF {
             panic!("gen_prologue(x86): total_stacksize >= 2G");
         }
-        if spill_area_sizeB >= 0 {
+        if spill_area_sizeB > 0 {
             // FIXME JRS 2020Feb16: handle spill_area_size >= 2G?
             insts.push(i_Alu_RMI_R(
                 true,
@@ -300,26 +344,26 @@ impl ABIBody<Inst> for X64ABIBody {
                 w_rsp,
             ));
         }
-        debug_assert!(self.spill_area_sizeB.is_none());
+
         // Stash this value.  We'll need it for the epilogue.
+        debug_assert!(self.spill_area_sizeB.is_none());
         self.spill_area_sizeB = Some(spill_area_sizeB);
 
         insts
     }
 
     fn gen_epilogue(&self) -> Vec<Inst> {
-        let mut insts = vec![];
         let r_rbp = reg_RBP();
         let r_rsp = reg_RSP();
         let w_rbp = Writable::<Reg>::from_reg(r_rbp);
         let w_rsp = Writable::<Reg>::from_reg(r_rsp);
+        let mut insts = vec![];
 
         // Undo what we did in the prologue.
 
         // Clear the spill area and the 16-alignment padding below it.
-        debug_assert!(self.spill_area_sizeB.is_some());
         let spill_area_sizeB = self.spill_area_sizeB.unwrap();
-        if spill_area_sizeB >= 0 {
+        if spill_area_sizeB > 0 {
             // FIXME JRS 2020Feb16: what if spill_area_size >= 2G?
             insts.push(i_Alu_RMI_R(
                 true,
@@ -348,13 +392,21 @@ impl ABIBody<Inst> for X64ABIBody {
             insts.push(i);
         }
 
-        // Undo the "traditional" pre-preamble
-        // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
-        // uhhhh .. insts.push(i_Mov_R_R(true, r_rbp, w_rsp));
-        insts.push(i_Pop64(w_rbp));
+        // Baldrdash has its own preamble.
+        if !self.call_conv.extends_baldrdash() {
+            // Undo the "traditional" pre-preamble
+            // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
+            // uhhhh .. insts.push(i_Mov_R_R(true, r_rbp, w_rsp));
+            insts.push(i_Pop64(w_rbp));
+            insts.push(i_Ret());
+        }
 
-        insts.push(i_Ret());
         insts
+    }
+
+    fn frame_size(&self) -> u32 {
+        self.spill_area_sizeB
+            .expect("frame size not computed before prologue generation") as u32
     }
 
     fn get_spillslot_size(&self, rc: RegClass, ty: Type) -> u32 {

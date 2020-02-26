@@ -34,6 +34,9 @@ pub trait ABIBody<I: VCodeInst> {
     /// Generate a return instruction.
     fn gen_ret(&self) -> I;
 
+    /// Generate an epilogue placeholder.
+    fn gen_epilogue_placeholder(&self) -> I;
+
     // -----------------------------------------------------------------
     // Every function above this line may only be called pre-regalloc.
     // Every function below this line may only be called post-regalloc.
@@ -77,6 +80,10 @@ pub trait ABIBody<I: VCodeInst> {
     /// logic), because the epilogue code comes before the return and the two are
     /// likely closely related.
     fn gen_epilogue(&self) -> Vec<I>;
+
+    /// Returns the full frame size for the given function, after prologue emission has run. This
+    /// comprises the spill space, incoming argument space, alignment padding, etc.
+    fn frame_size(&self) -> u32;
 
     /// Get the spill-slot size.
     fn get_spillslot_size(&self, rc: RegClass, ty: Type) -> u32;

@@ -357,6 +357,11 @@ impl<I: VCodeInst> VCode<I> {
         self.block_ranges.len()
     }
 
+    /// Stack frame size for the full function's body.
+    pub fn frame_size(&self) -> u32 {
+        self.abi.frame_size()
+    }
+
     /// Get the successors for a block.
     pub fn succs(&self, block: BlockIndex) -> &[BlockIndex] {
         let (start, end) = self.block_succ_range[block as usize];
@@ -409,6 +414,7 @@ impl<I: VCodeInst> VCode<I> {
                     final_insns.push(insn.clone());
                 }
             }
+
             let final_end = final_insns.len() as InsnIndex;
             final_block_ranges[*block as usize] = (final_start, final_end);
         }
