@@ -1721,7 +1721,7 @@ mod test {
                 mem: MemArg::Label(MemLabel::PCRel(64)),
             },
             "01020058",
-            "ldr x1, 64",
+            "ldr x1, pc+64",
         ));
         insns.push((
             Inst::ULoad64 {
@@ -1729,7 +1729,7 @@ mod test {
                 mem: MemArg::Label(MemLabel::ConstantData(u64_constant(0x0123456789abcdef))),
             },
             "81000058000000000000000000000000EFCDAB8967452301",
-            "ldr x1, 0",
+            "ldr x1, pc+0",
         ));
         insns.push((
             Inst::ULoad64 {
@@ -1753,7 +1753,7 @@ mod test {
                 mem: MemArg::StackOffset(32768),
             },
             "8F000058EF011D8BE10140F9000000000080000000000000",
-            "ldr x15, 0 ; add x15, x15, fp ; ldr x1, [x15]",
+            "ldr x15, pc+0 ; add x15, x15, fp ; ldr x1, [x15]",
         ));
 
         insns.push((
@@ -2475,7 +2475,7 @@ mod test {
                 label: MemLabel::PCRel((1 << 20) - 4),
             },
             "EFFF7F10",
-            "adr x15, 1048572",
+            "adr x15, pc+1048572",
         ));
 
         let rru = create_reg_universe();
