@@ -454,7 +454,8 @@ impl ABIBody<Inst> for ARM64ABIBody {
     }
 
     fn frame_size(&self) -> u32 {
-        self.frame_size.expect("frame size not computed before prologue generation") as u32
+        self.frame_size
+            .expect("frame size not computed before prologue generation") as u32
     }
 
     fn get_spillslot_size(&self, rc: RegClass, ty: Type) -> u32 {

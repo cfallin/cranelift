@@ -118,10 +118,10 @@ impl ExtendOp {
 /// A reference to some memory address.
 #[derive(Clone, Debug)]
 pub enum MemLabel {
-    /// A value in a constant pool or jumptable, already emitted, with relative
-    /// offset from this instruction. This form must be used rather than
-    /// ConstantData or JumpTable at emission time.
-    PCRel(u32),
+    /// An address in the code, a constant pool or jumptable, with relative
+    /// offset from this instruction. This form must be used at emission time;
+    /// see `memlabel_finalize()` for how other forms are lowered to this one.
+    PCRel(i32),
     /// A value in a constant pool, to be emitted during binemit. This form is
     /// created during isel and is converted during emission to PCRel.
     ConstantData(ConstantData),
@@ -135,6 +135,8 @@ pub enum MemLabel {
     /// Load64(ExtName(..)) to get the *address* of the external symbol, then
     /// calling/loading/storing that address as appropriate.
     ExtName(ExternalName, i64),
+    /// Address of a particular code-segment offset.
+    CodeOffset(CodeOffset),
 }
 
 /// A memory argument to load/store, encapsulating the possible addressing modes.
@@ -175,6 +177,11 @@ impl MemArg {
     /// Memory reference using the sum of two registers as an address.
     pub fn reg_reg(reg1: Reg, reg2: Reg) -> MemArg {
         MemArg::RegScaled(reg1, reg2, I64, false)
+    }
+
+    /// Memory reference using `reg1 + sizeof(ty) * reg2` as an address.
+    pub fn reg_reg_scaled(reg1: Reg, reg2: Reg, ty: Type) -> MemArg {
+        MemArg::RegScaled(reg1, reg2, ty, true)
     }
 
     /// Memory reference to a label: a global function or value, or data in the constant pool.
@@ -378,7 +385,7 @@ impl ShowWithRRU for ExtendOp {
 impl ShowWithRRU for MemLabel {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            &MemLabel::PCRel(off) => format!("{}", off),
+            &MemLabel::PCRel(off) => format!("pc+{}", off),
             // Should be resolved into an offset before we pretty-print.
             &MemLabel::ConstantData(..) => "!!constant!!".to_string(),
             &MemLabel::ExtName(ref name, off) => {
@@ -388,7 +395,8 @@ impl ShowWithRRU for MemLabel {
                     format!("{}", name)
                 }
             }
-            &MemLabel::JumpTable(jt) => format!("jt{}", jt),
+            &MemLabel::JumpTable(jt) => format!("{}", jt),
+            &MemLabel::CodeOffset(off) => format!(".text + {}", off),
         }
     }
 }

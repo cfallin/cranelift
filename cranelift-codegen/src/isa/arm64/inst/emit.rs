@@ -18,6 +18,50 @@ use regalloc::{
 
 use alloc::vec::Vec;
 
+/// Memory label/reference finalization: convert a MemLabel to a PC-relative
+/// offset, possibly emitting relocation(s) as necessary.
+pub fn memlabel_finalize<O: MachSectionOutput>(
+    insn_off: CodeOffset,
+    label: &MemLabel,
+    consts: &mut O,
+    jt_offsets: &[CodeOffset],
+) -> i32 {
+    match label {
+        &MemLabel::PCRel(rel) => rel,
+        &MemLabel::ConstantData(ref data) => {
+            let len = data.len();
+            let alignment = if len <= 4 {
+                4
+            } else if len <= 8 {
+                8
+            } else {
+                16
+            };
+            consts.align_to(alignment);
+            let off = consts.cur_offset_from_start();
+            consts.put_data(data.iter().as_slice());
+            (off as i32) - (insn_off as i32)
+        }
+        &MemLabel::JumpTable(jt) => {
+            let jt_off = if jt.index() < jt_offsets.len() {
+                jt_offsets[jt.index()]
+            } else {
+                // Can happen when invoked from show_rru().
+                0
+            };
+            (jt_off as i32) - (insn_off as i32)
+        }
+        &MemLabel::CodeOffset(off) => (off as i32) - (insn_off as i32),
+        &MemLabel::ExtName(ref name, offset) => {
+            consts.align_to(8);
+            let off = consts.cur_offset_from_start();
+            consts.add_reloc(Reloc::Abs8, name, offset);
+            consts.put_data(&[0, 0, 0, 0, 0, 0, 0, 0]);
+            (off as i32) - (insn_off as i32)
+        }
+    }
+}
+
 /// Memory addressing mode finalization: convert "special" modes (e.g.,
 /// generic arbitrary stack offset) into real addressing modes, possibly by
 /// emitting some helper instructions that come immediately before the use
@@ -55,56 +99,9 @@ pub fn mem_finalize<O: MachSectionOutput>(
                 (vec![const_inst, add_inst], MemArg::reg(tmp.to_reg()))
             }
         }
-        &MemArg::Label(MemLabel::ConstantData(ref data)) => {
-            let len = data.len();
-            let alignment = if len <= 4 {
-                4
-            } else if len <= 8 {
-                8
-            } else {
-                16
-            };
-            consts.align_to(alignment);
-            let off = consts.cur_offset_from_start();
-            consts.put_data(data.iter().as_slice());
-            let rel_off = if off >= insn_off {
-                off - insn_off
-            } else {
-                // May occur when measuring instruction sizes: both const pool
-                // and code section are measured with fake section sinks at
-                // offset 0. The answer doesn't matter in this case, so just use
-                // a relative offset of 0.
-                0
-            };
-            (vec![], MemArg::Label(MemLabel::PCRel(rel_off)))
-        }
-        &MemArg::Label(MemLabel::JumpTable(jt)) => {
-            let jt_off = if jt.index() < jt_offsets.len() {
-                jt_offsets[jt.index()]
-            } else {
-                // Can happen when invoked from show_rru().
-                0
-            };
-            let rel_off = if jt_off > insn_off {
-                jt_off - insn_off
-            } else {
-                // Can happen when computing branch offsets, before jumptable location is known.
-                0
-            };
-            (vec![], MemArg::Label(MemLabel::PCRel(rel_off)))
-        }
-        &MemArg::Label(MemLabel::ExtName(ref name, offset)) => {
-            consts.align_to(8);
-            let off = consts.cur_offset_from_start();
-            consts.add_reloc(Reloc::Abs8, name, offset);
-            consts.put_data(&[0, 0, 0, 0, 0, 0, 0, 0]);
-            let rel_off = if off >= insn_off {
-                off - insn_off
-            } else {
-                // See note above.
-                0
-            };
-            (vec![], MemArg::Label(MemLabel::PCRel(rel_off)))
+        &MemArg::Label(ref label) => {
+            let off: i32 = memlabel_finalize(insn_off, label, consts, jt_offsets);
+            (vec![], MemArg::Label(MemLabel::PCRel(off)))
         }
         _ => (vec![], mem.clone()),
     }
@@ -524,21 +521,23 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                             (I32, &Inst::ULoad32 { .. }) => {}
                             (I32, &Inst::SLoad32 { .. }) => {}
                             (I64, &Inst::ULoad64 { .. }) => {}
-                            _ => unreachable!(),
+                            _ => panic!("Mismatching reg-scaling type in MemArg"),
                         }
                         sink.put4(enc_ldst_reg(op, r1, r2, scaled, rd));
                     }
                     &MemArg::Label(ref label) => {
                         let offset = match label {
-                            &MemLabel::PCRel(off) => off,
-                            // Should be converted by `mem_finalize()` into
-                            // `PCRel`.
-                            &MemLabel::ConstantData(..) => {
-                                panic!("Should not see ConstantData here!")
+                            &MemLabel::PCRel(off) => {
+                                if off < 0 {
+                                    // Happens only before computing final section
+                                    // offsets.
+                                    assert!(consts.start_offset() == 0);
+                                    0
+                                } else {
+                                    off as u32
+                                }
                             }
-                            // Should only be used with Addr* instructions.
-                            &MemLabel::ExtName(..) => panic!("Should not see ExtName here!"),
-                            &MemLabel::JumpTable(..) => panic!("Should not see JumpTable here!"),
+                            _ => panic!("Unlowered MemLabel at emission: {:?}", label),
                         } / 4;
                         assert!(offset < (1 << 19));
                         match self {
@@ -594,7 +593,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                         sink.put4(enc_ldst_reg(op, r1, r2, scaled, rd));
                     }
                     &MemArg::Label(..) => {
-                        panic!("Store to a constant-pool entry not allowed!");
+                        panic!("Store to a MemLabel not implemented!");
                     }
                     &MemArg::PreIndexed(reg, simm9) => {
                         sink.put4(enc_ldst_simm9(op, simm9, 0b11, reg.to_reg(), rd));
@@ -791,13 +790,11 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 sink.put4(0xd4200000);
             }
             &Inst::Adr { rd, ref label } => {
-                let off = match label {
-                    &MemLabel::PCRel(off) => off,
-                    // TODO: support ExtName with reloc too?
-                    _ => panic!("Adr instruction with non-PCRel label"),
-                };
+                let off =
+                    memlabel_finalize(sink.cur_offset_from_start(), label, consts, jt_offsets);
+                // TODO: support larger offsets with ADRP / ADR pair.
+                assert!(off > -(1 << 20));
                 assert!(off < (1 << 20));
-                let off = off as i32;
                 sink.put4(enc_adr(off, rd));
             }
         }

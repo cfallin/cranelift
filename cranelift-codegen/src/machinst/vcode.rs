@@ -105,7 +105,7 @@ pub struct VCode<I: VCodeInst> {
     /// Number of jump tables.
     jt_count: usize,
 
-    /// Offsets of each jump table in the jump-table section.
+    /// Offsets of each jump table relative to the start of code.
     jt_offsets: Vec<CodeOffset>,
 
     /// Jump-table entries.
@@ -249,6 +249,7 @@ impl<I: VCodeInst> VCodeBuilder<I> {
     /// Add a new jump table to the VCode, with the given IR-level block
     /// references as entries.
     pub fn add_jt(&mut self, jt: ir::JumpTable, entries: &[ir::Block]) {
+        debug!("jumptable {}: entries {:?}", jt, entries);
         let start_index = self.vcode.jt_entries.len();
         for entry in entries {
             let block = self.bb_to_bindex(*entry);
@@ -525,7 +526,7 @@ impl<I: VCodeInst> VCode<I> {
         // Update jumptable offsets vec passed to inst emission.
         let mut jt_off = 0;
         for (jt, &(start_index, end_index)) in self.jt_indices.iter() {
-            self.jt_offsets[jt.index()] = jt_off;
+            self.jt_offsets[jt.index()] = self.jt_start + jt_off;
             jt_off += I::jt_entry_size() * (end_index - start_index) as CodeOffset;
         }
 
@@ -575,7 +576,8 @@ impl<I: VCodeInst> VCode<I> {
             }
         }
 
-        // Emit the jumptable.
+        // Emit the jumptable. The jumptable is a stored as vector of offsets
+        // from the start of the code section.
         let jt_idx = sections.add_section(self.jt_start, self.jt_size);
         let jt_section = sections.get_section(jt_idx);
 

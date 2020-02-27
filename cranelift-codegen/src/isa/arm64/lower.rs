@@ -15,6 +15,7 @@ use crate::isa::arm64::Arm64Backend;
 
 use regalloc::{RealReg, Reg, RegClass, VirtualReg, Writable};
 
+use alloc::vec::Vec;
 use smallvec::SmallVec;
 
 //============================================================================
@@ -1840,23 +1841,100 @@ impl LowerBackend for Arm64Backend {
                     }
                 }
 
-                // TODO: Brff, jump tables
+                // TODO: Brff
                 _ => unimplemented!(),
             }
         } else {
-            assert!(branches.len() == 1);
-
-            // Must be an unconditional branch or trap.
+            // Must be an unconditional branch or an indirect branch.
             let op = ctx.data(branches[0]).opcode();
             match op {
-                Opcode::Jump => {
+                Opcode::Jump | Opcode::Fallthrough => {
+                    assert!(branches.len() == 1);
+                    // In the Fallthrough case, the machine-independent driver
+                    // fills in `targets[0]` with our fallthrough block, so this
+                    // is valid for both Jump and Fallthrough.
                     ctx.emit(Inst::Jump {
                         dest: BranchTarget::Block(targets[0]),
                     });
                 }
-                Opcode::Fallthrough => {
-                    ctx.emit(Inst::Jump {
-                        dest: BranchTarget::Block(targets[0]),
+                Opcode::BrTable => {
+                    // Expand `br_table index, default, JT` to:
+                    //
+                    //   subs idx, #jt_size
+                    //   b.hs default
+                    //   adr vTmp1, JT_addr@pcrel
+                    //   ldr vTmp1, [vTmp1, idx, lsl #2]
+                    //   adr vTmp2, start_of_code@pcrel
+                    //   add vTmp2, vTmp2, vTmp1
+                    //   br vTmp2
+                    let jt = match ctx.data(branches[0]) {
+                        &InstructionData::BranchTable { table, .. } => table,
+                        _ => panic!("Unexpected instruction format for BrTable op"),
+                    };
+
+                    let jt_size = targets.len() - 1;
+                    assert!(jt_size <= std::u32::MAX as usize);
+                    let ridx = input_to_reg(
+                        ctx,
+                        InsnInput {
+                            insn: branches[0],
+                            input: 0,
+                        },
+                        NarrowValueMode::ZeroExtend32,
+                    );
+
+                    let rtmp1 = ctx.tmp(RegClass::I64, I32);
+                    let rtmp2 = ctx.tmp(RegClass::I64, I32);
+
+                    // Bounds-check and branch to default.
+                    if let Some(imm12) = Imm12::maybe_from_u64(jt_size as u64) {
+                        ctx.emit(Inst::AluRRImm12 {
+                            alu_op: ALUOp::SubS32,
+                            rd: writable_zero_reg(),
+                            rn: ridx,
+                            imm12,
+                        });
+                    } else {
+                        lower_constant(ctx, rtmp1, jt_size as u64);
+                        ctx.emit(Inst::AluRRR {
+                            alu_op: ALUOp::SubS32,
+                            rd: writable_zero_reg(),
+                            rn: ridx,
+                            rm: rtmp1.to_reg(),
+                        });
+                    }
+                    ctx.emit(Inst::CondBrLowered {
+                        kind: CondBrKind::Cond(Cond::Hs), // unsigned >=
+                        target: BranchTarget::Block(targets[0]),
+                    });
+
+                    // Load address of jump table
+                    ctx.emit(Inst::Adr {
+                        rd: rtmp1,
+                        label: MemLabel::JumpTable(jt),
+                    });
+                    // Load value out of jump table
+                    ctx.emit(Inst::ULoad32 {
+                        rd: rtmp1,
+                        mem: MemArg::reg_reg_scaled(rtmp1.to_reg(), ridx, I32),
+                    });
+                    // Get base of code segment (using PC-rel reference)
+                    ctx.emit(Inst::Adr {
+                        rd: rtmp2,
+                        label: MemLabel::CodeOffset(0),
+                    });
+                    // Add base to jump-table-sourced block offset
+                    ctx.emit(Inst::AluRRR {
+                        alu_op: ALUOp::Add64,
+                        rd: rtmp2,
+                        rn: rtmp1.to_reg(),
+                        rm: rtmp2.to_reg(),
+                    });
+                    // Jump to it!
+                    let jt_targets: Vec<BlockIndex> = targets.iter().skip(1).cloned().collect();
+                    ctx.emit(Inst::IndirectBr {
+                        rn: rtmp2.to_reg(),
+                        targets: jt_targets,
                     });
                 }
 

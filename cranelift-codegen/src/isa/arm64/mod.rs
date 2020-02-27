@@ -61,7 +61,11 @@ impl MachBackend for Arm64Backend {
             None
         };
 
-        Ok(MachCompileResult { sections, frame_size, disasm })
+        Ok(MachCompileResult {
+            sections,
+            frame_size,
+            disasm,
+        })
     }
 
     fn name(&self) -> &'static str {

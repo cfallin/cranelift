@@ -96,6 +96,9 @@ pub trait MachSectionOutput {
     /// Get the current offset from the start of all sections.
     fn cur_offset_from_start(&self) -> CodeOffset;
 
+    /// Get the start offset of this section.
+    fn start_offset(&self) -> CodeOffset;
+
     /// Add 1 byte to the section.
     fn put1(&mut self, _: u8);
 
@@ -206,6 +209,10 @@ impl MachSectionOutput for MachSection {
         self.start_offset + self.data.len() as CodeOffset
     }
 
+    fn start_offset(&self) -> CodeOffset {
+        self.start_offset
+    }
+
     fn put1(&mut self, value: u8) {
         assert!(((self.data.len() + 1) as CodeOffset) <= self.length_limit);
         self.data.push(value);
@@ -263,6 +270,10 @@ impl MachSectionOutput for MachSectionSize {
         // All size-counting sections conceptually start at offset 0; this doesn't
         // matter when counting code size.
         self.offset
+    }
+
+    fn start_offset(&self) -> CodeOffset {
+        self.start_offset
     }
 
     fn put1(&mut self, _: u8) {

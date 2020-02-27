@@ -301,9 +301,10 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             let mut targets: SmallVec<[BlockIndex; 2]> = SmallVec::new();
 
             for inst in self.f.layout.block_insts(*bb).rev() {
+                debug!("lower: inst {}", inst);
                 if edge_blocks_by_inst[inst].len() > 0 {
                     branches.push(inst);
-                    for target in edge_blocks_by_inst[inst].iter().cloned() {
+                    for target in edge_blocks_by_inst[inst].iter().rev().cloned() {
                         targets.push(target);
                     }
                 } else {
@@ -313,6 +314,10 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                         let fallthrough = fallthrough.map(|bb| self.vcode.bb_to_bindex(bb));
                         branches.reverse();
                         targets.reverse();
+                        debug!(
+                            "lower_branch_group: targets = {:?} branches = {:?}",
+                            targets, branches
+                        );
                         backend.lower_branch_group(
                             &mut self,
                             &branches[..],
@@ -353,6 +358,10 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 let fallthrough = fallthrough.map(|bb| self.vcode.bb_to_bindex(bb));
                 branches.reverse();
                 targets.reverse();
+                debug!(
+                    "lower_branch_group: targets = {:?} branches = {:?}",
+                    targets, branches
+                );
                 backend.lower_branch_group(&mut self, &branches[..], &targets[..], fallthrough);
                 self.vcode.end_ir_inst();
                 branches.clear();

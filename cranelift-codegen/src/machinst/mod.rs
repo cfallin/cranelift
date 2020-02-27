@@ -213,10 +213,11 @@ pub trait MachInst: Clone + Debug {
         (offset + 7) & !7
     }
 
-    /// Size of an individual jumptable entry, in bytes. By default, 64 bits (8
-    /// bytes).
+    /// Size of an individual jumptable entry, in bytes. By default, 32 bits (4
+    /// bytes). Each jumptable entry is emitted by the machine-independent code
+    /// as an offset from the start of the code segment.
     fn jt_entry_size() -> CodeOffset {
-        8
+        4
     }
 }
 

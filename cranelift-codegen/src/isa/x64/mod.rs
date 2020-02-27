@@ -60,7 +60,11 @@ impl MachBackend for X64Backend {
             None
         };
 
-        Ok(MachCompileResult { sections, frame_size, disasm })
+        Ok(MachCompileResult {
+            sections,
+            frame_size,
+            disasm,
+        })
     }
 
     fn flags(&self) -> &settings::Flags {
