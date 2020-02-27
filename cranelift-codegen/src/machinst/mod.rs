@@ -45,9 +45,8 @@
 //! |        |                        - stack-frame size known.
 //! |        |                        - out-of-band instruction sequence
 //! |        |                          has preamble prepended to entry
-//! |        |                          block, and postamble appended to
-//! |        |                          end of function, with all return-blocks
-//! |        |                          branching to shared postamble.
+//! |        |                          block, and postamble injected before
+//! |        |                          every return instruction.
 //! |        |                        - all symbolic stack references to
 //! |        |                          stackslots and spillslots are resolved
 //! |        |                          to concrete FP-offset mem addresses.)
@@ -208,6 +207,17 @@ pub trait MachInst: Clone + Debug {
     fn align_constant_pool(offset: CodeOffset) -> CodeOffset {
         (offset + 15) & !15
     }
+
+    /// Align the jump-table section. By default, align to 16 bytes.
+    fn align_jumptable(offset: CodeOffset) -> CodeOffset {
+        (offset + 7) & !7
+    }
+
+    /// Size of an individual jumptable entry, in bytes. By default, 64 bits (8
+    /// bytes).
+    fn jt_entry_size() -> CodeOffset {
+        8
+    }
 }
 
 /// Describes a block terminator (not call) in the vcode, when its branches
@@ -227,7 +237,7 @@ pub enum MachTerminator {
 /// A trait describing the ability to encode a MachInst into binary machine code.
 pub trait MachInstEmit<O: MachSectionOutput> {
     /// Emit the instruction.
-    fn emit(&self, code: &mut O, consts: &mut O);
+    fn emit(&self, code: &mut O, consts: &mut O, jt_offsets: &[CodeOffset]);
 }
 
 /// The result of a `MachBackend::compile_function()` call. Contains machine

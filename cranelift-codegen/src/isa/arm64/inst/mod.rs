@@ -341,6 +341,10 @@ pub enum Inst {
     Brk {
         trap_info: Option<(SourceLoc, TrapCode)>,
     },
+
+    /// Load the address (using a PC-relative offset) of a MemLabel, using the
+    /// `ADR` instruction.
+    Adr { rd: Writable<Reg>, label: MemLabel },
 }
 
 impl Inst {
@@ -534,6 +538,9 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
         },
         &Inst::Nop | Inst::Nop4 => {}
         &Inst::Brk { .. } => {}
+        &Inst::Adr { rd, .. } => {
+            iru.defined.insert(rd);
+        }
     }
 
     // Enforce the invariant that if a register is in the 'modify' set, it
@@ -840,6 +847,10 @@ fn arm64_map_regs(
         &mut Inst::Nop => Inst::Nop,
         &mut Inst::Nop4 => Inst::Nop4,
         &mut Inst::Brk { trap_info } => Inst::Brk { trap_info },
+        &mut Inst::Adr { rd, ref label } => Inst::Adr {
+            rd: map_wr(d, rd),
+            label: label.clone(),
+        },
     };
     *inst = newval;
 }
@@ -1012,8 +1023,9 @@ fn mem_finalize_for_show<O: MachSectionOutput>(
     mem: &MemArg,
     mb_rru: Option<&RealRegUniverse>,
     consts: &mut O,
+    jt_offsets: &[CodeOffset],
 ) -> (String, MemArg) {
-    let (mem_insts, mem) = mem_finalize(0, mem, consts);
+    let (mem_insts, mem) = mem_finalize(0, mem, consts, jt_offsets);
     let mut mem_str = mem_insts
         .into_iter()
         .map(|inst| inst.show_rru(mb_rru))
@@ -1029,7 +1041,7 @@ fn mem_finalize_for_show<O: MachSectionOutput>(
 impl ShowWithRRU for Inst {
     fn show_rru(&self, mb_rru: Option<&RealRegUniverse>) -> String {
         let mut const_section = MachSectionSize::new(0);
-        self.show_rru_with_constsec(mb_rru, &mut const_section)
+        self.show_rru_with_constsec(mb_rru, &mut const_section, &[])
     }
 }
 
@@ -1039,6 +1051,7 @@ impl Inst {
         &self,
         mb_rru: Option<&RealRegUniverse>,
         consts: &mut O,
+        jt_offsets: &[CodeOffset],
     ) -> String {
         fn op_is32(alu_op: ALUOp) -> (&'static str, bool) {
             match alu_op {
@@ -1196,7 +1209,7 @@ impl Inst {
             | &Inst::ULoad32 { rd, ref mem }
             | &Inst::SLoad32 { rd, ref mem }
             | &Inst::ULoad64 { rd, ref mem } => {
-                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts);
+                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts, jt_offsets);
 
                 let is_unscaled = match &mem {
                     &MemArg::Unscaled(..) => true,
@@ -1227,7 +1240,7 @@ impl Inst {
             | &Inst::Store16 { rd, ref mem }
             | &Inst::Store32 { rd, ref mem }
             | &Inst::Store64 { rd, ref mem } => {
-                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts);
+                let (mem_str, mem) = mem_finalize_for_show(mem, mb_rru, consts, jt_offsets);
 
                 let is_unscaled = match &mem {
                     &MemArg::Unscaled(..) => true,
@@ -1415,6 +1428,11 @@ impl Inst {
                 first.show_rru(mb_rru) + " ; " + &second.show_rru(mb_rru)
             }
             &Inst::Brk { .. } => "brk #0".to_string(),
+            &Inst::Adr { rd, ref label } => {
+                let rd = rd.show_rru(mb_rru);
+                let label = label.show_rru(mb_rru);
+                format!("adr {}, {}", rd, label)
+            }
         }
     }
 }

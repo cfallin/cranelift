@@ -5,8 +5,7 @@
 
 use crate::binemit::{CodeOffset, CodeSink};
 use crate::ir::constant::{ConstantData, ConstantOffset};
-use crate::ir::ExternalName;
-use crate::ir::Type;
+use crate::ir::{ExternalName, JumpTable, Type};
 use crate::isa::arm64::inst::*;
 use crate::machinst::*;
 
@@ -119,12 +118,16 @@ impl ExtendOp {
 /// A reference to some memory address.
 #[derive(Clone, Debug)]
 pub enum MemLabel {
-    /// A value in a constant pool, already emitted, with relative offset from
-    /// this instruction. This form must be used just before emission.
-    ConstantPoolRel(ConstantOffset),
+    /// A value in a constant pool or jumptable, already emitted, with relative
+    /// offset from this instruction. This form must be used rather than
+    /// ConstantData or JumpTable at emission time.
+    PCRel(u32),
     /// A value in a constant pool, to be emitted during binemit. This form is
-    /// created during isel and is lowered during emission.
+    /// created during isel and is converted during emission to PCRel.
     ConstantData(ConstantData),
+    /// The base address of a jump table. This form is created during isel and
+    /// is converted during emission to PCRel.
+    JumpTable(JumpTable),
     /// An external address constant, placed in the constant pool, to be fixed
     /// up with a relocation. This form (i) is converted into a slot in the
     /// constant pool with a reloc pointing to it, and (ii) becomes a
@@ -375,7 +378,7 @@ impl ShowWithRRU for ExtendOp {
 impl ShowWithRRU for MemLabel {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         match self {
-            &MemLabel::ConstantPoolRel(off) => format!("{}", off),
+            &MemLabel::PCRel(off) => format!("{}", off),
             // Should be resolved into an offset before we pretty-print.
             &MemLabel::ConstantData(..) => "!!constant!!".to_string(),
             &MemLabel::ExtName(ref name, off) => {
@@ -385,6 +388,7 @@ impl ShowWithRRU for MemLabel {
                     format!("{}", name)
                 }
             }
+            &MemLabel::JumpTable(jt) => format!("jt{}", jt),
         }
     }
 }

@@ -27,6 +27,11 @@ impl MachSections {
         idx
     }
 
+    /// Mutably borrow the given section by index.
+    pub fn get_section<'a>(&'a mut self, idx: usize) -> &'a mut MachSection {
+        &mut self.sections[idx]
+    }
+
     /// Get mutable borrows of two sections simultaneously. Used during
     /// instruction emission to provide references to the .text and .rodata
     /// (constant pool) sections.
@@ -45,6 +50,17 @@ impl MachSections {
     /// Emit this set of sections to a set of sinks for the code,
     /// relocations, traps, and stackmap.
     pub fn emit<CS: CodeSink>(&self, sink: &mut CS) {
+        // N.B.: we emit every section into the .text section as far as
+        // the `CodeSink` is concerned; we do not bother to segregate
+        // the contents into the actual program text, the jumptable and the
+        // rodata (constant pool). This allows us to generate code assuming
+        // that these will not be relocated relative to each other, and avoids
+        // having to designate each section as belonging in one of the three
+        // fixed categories defined by `CodeSink`. If this becomes a problem
+        // later (e.g. because of memory permissions or similar), we can
+        // add this designation and segregate the output; take care, however,
+        // to add the appropriate relocations in this case.
+
         for section in &self.sections {
             if section.data.len() > 0 {
                 while sink.offset() < section.start_offset {

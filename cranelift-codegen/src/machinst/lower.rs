@@ -225,6 +225,11 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         // This records a Block-to-BlockIndex map so that branch targets can be resolved.
         let mut next_bindex = self.vcode.init_bb_map(&bbs[..]);
 
+        // Initialize all jump-table entries.
+        for (jt, jt_data) in &self.f.jump_tables {
+            self.vcode.add_jt(jt, jt_data.as_slice());
+        }
+
         // Allocate a separate BlockIndex for each control-flow instruction so that we can create
         // the edge blocks later. Each entry for a control-flow inst is the edge block; the list
         // has (cf-inst, edge block, orig block) tuples.

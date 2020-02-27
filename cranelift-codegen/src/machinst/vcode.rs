@@ -93,6 +93,24 @@ pub struct VCode<I: VCodeInst> {
     /// Size of constant pool.
     constants_size: CodeOffset,
 
+    /// Start of the jumptable.
+    jt_start: CodeOffset,
+
+    /// Size of the jumptable.
+    jt_size: CodeOffset,
+
+    /// Map from jump table to index range in the jump-table array.
+    jt_indices: SecondaryMap<ir::JumpTable, (usize, usize)>,
+
+    /// Number of jump tables.
+    jt_count: usize,
+
+    /// Offsets of each jump table in the jump-table section.
+    jt_offsets: Vec<CodeOffset>,
+
+    /// Jump-table entries.
+    jt_entries: Vec<BlockIndex>,
+
     /// ABI object.
     abi: Box<dyn ABIBody<I>>,
 }
@@ -223,6 +241,19 @@ impl<I: VCodeInst> VCodeBuilder<I> {
         self.ir_inst_insns.push(insn);
     }
 
+    /// Add a new jump table to the VCode, with the given IR-level block
+    /// references as entries.
+    pub fn add_jt(&mut self, jt: ir::JumpTable, entries: &[ir::Block]) {
+        let start_index = self.vcode.jt_entries.len();
+        for entry in entries {
+            let block = self.bb_to_bindex(*entry);
+            self.vcode.jt_entries.push(block);
+        }
+        let end_index = self.vcode.jt_entries.len();
+        self.vcode.jt_indices[jt] = (start_index, end_index);
+        self.vcode.jt_count += 1;
+    }
+
     /// Build the final VCode.
     pub fn build(self) -> VCode<I> {
         assert!(self.ir_inst_insns.is_empty());
@@ -300,6 +331,12 @@ impl<I: VCodeInst> VCode<I> {
             code_size: 0,
             constants_start: 0,
             constants_size: 0,
+            jt_start: 0,
+            jt_size: 0,
+            jt_indices: SecondaryMap::with_default((0, 0)),
+            jt_count: 0,
+            jt_offsets: vec![],
+            jt_entries: vec![],
             abi,
         }
     }
@@ -410,6 +447,10 @@ impl<I: VCodeInst> VCode<I> {
             }
         }
 
+        for jt_entry in &mut self.jt_entries {
+            *jt_entry = block_rewrites[*jt_entry as usize];
+        }
+
         let block_order = std::mem::replace(&mut self.final_block_order, vec![]);
         self.final_block_order = block_order
             .into_iter()
@@ -448,13 +489,33 @@ impl<I: VCodeInst> VCode<I> {
         let mut code_section = MachSectionSize::new(0);
         let mut const_section = MachSectionSize::new(0);
         let mut block_offsets = vec![0; self.num_blocks()];
+        self.jt_offsets = vec![0; self.jt_count];
         for block in &self.final_block_order {
             code_section.offset = I::align_basic_block(code_section.offset);
             block_offsets[*block as usize] = code_section.offset;
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                self.insts[iix as usize].emit(&mut code_section, &mut const_section);
+                self.insts[iix as usize].emit(
+                    &mut code_section,
+                    &mut const_section,
+                    &self.jt_offsets[..],
+                );
             }
+        }
+
+        // We now have the section layout.
+        self.final_block_offsets = block_offsets;
+        self.code_size = code_section.size();
+        self.constants_start = I::align_constant_pool(self.code_size);
+        self.constants_size = const_section.size();
+        self.jt_start = I::align_jumptable(self.constants_start + self.constants_size);
+        self.jt_size = self.jt_entries.len() as CodeOffset * I::jt_entry_size();
+
+        // Update jumptable offsets vec passed to inst emission.
+        let mut jt_off = 0;
+        for (jt, &(start_index, end_index)) in self.jt_indices.iter() {
+            self.jt_offsets[jt.index()] = jt_off;
+            jt_off += I::jt_entry_size() * (end_index - start_index) as CodeOffset;
         }
 
         // Update branches with known block offsets. This looks like the
@@ -468,15 +529,14 @@ impl<I: VCodeInst> VCode<I> {
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
                 self.insts[iix as usize]
-                    .with_block_offsets(code_section.offset, &block_offsets[..]);
-                self.insts[iix as usize].emit(&mut code_section, &mut const_section);
+                    .with_block_offsets(code_section.offset, &self.final_block_offsets[..]);
+                self.insts[iix as usize].emit(
+                    &mut code_section,
+                    &mut const_section,
+                    &self.jt_offsets[..],
+                );
             }
         }
-
-        self.final_block_offsets = block_offsets;
-        self.code_size = code_section.size();
-        self.constants_start = I::align_constant_pool(self.code_size);
-        self.constants_size = const_section.size();
     }
 
     /// Emit the instructions to a list of sections.
@@ -494,13 +554,26 @@ impl<I: VCodeInst> VCode<I> {
             while new_offset > code_section.cur_offset_from_start() {
                 // Pad with NOPs up to the aligned block offset.
                 let nop = I::gen_nop((new_offset - code_section.cur_offset_from_start()) as usize);
-                nop.emit(code_section, const_section);
+                nop.emit(code_section, const_section, &self.jt_offsets[..]);
             }
             assert_eq!(code_section.cur_offset_from_start(), new_offset);
 
             let (start, end) = self.block_ranges[*block as usize];
             for iix in start..end {
-                self.insts[iix as usize].emit(code_section, const_section);
+                self.insts[iix as usize].emit(code_section, const_section, &self.jt_offsets[..]);
+            }
+        }
+
+        // Emit the jumptable.
+        let jt_idx = sections.add_section(self.jt_start, self.jt_size);
+        let jt_section = sections.get_section(jt_idx);
+
+        for entry in &self.jt_entries {
+            let block_offset = self.final_block_offsets[*entry as usize];
+            match I::jt_entry_size() {
+                4 => jt_section.put4(block_offset),
+                8 => jt_section.put8(block_offset as u64),
+                _ => panic!("Unsupported jumptable entry size (not 32 or 64 bits)"),
             }
         }
 
