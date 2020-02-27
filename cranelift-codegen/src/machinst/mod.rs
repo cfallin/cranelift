@@ -155,7 +155,7 @@ pub trait MachInst: Clone + Debug {
 
     /// Is this a terminator (branch or ret)? If so, return its type
     /// (ret/uncond/cond) and target if applicable.
-    fn is_term(&self) -> MachTerminator;
+    fn is_term<'a>(&'a self) -> MachTerminator<'a>;
 
     /// Generate a move.
     fn gen_move(to_reg: Writable<Reg>, from_reg: Reg) -> Self;
@@ -223,7 +223,7 @@ pub trait MachInst: Clone + Debug {
 /// Describes a block terminator (not call) in the vcode, when its branches
 /// have not yet been finalized (so a branch may have two targets).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MachTerminator {
+pub enum MachTerminator<'a> {
     /// Not a terminator.
     None,
     /// A return instruction.
@@ -232,6 +232,8 @@ pub enum MachTerminator {
     Uncond(BlockIndex),
     /// A conditional branch to one of two other blocks.
     Cond(BlockIndex, BlockIndex),
+    /// An indirect branch with known possible targets.
+    Indirect(&'a [BlockIndex]),
 }
 
 /// A trait describing the ability to encode a MachInst into binary machine code.

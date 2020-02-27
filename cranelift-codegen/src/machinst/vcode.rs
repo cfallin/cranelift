@@ -237,6 +237,11 @@ impl<I: VCodeInst> VCodeBuilder<I> {
                 self.vcode.block_succs.push(true_branch);
                 self.vcode.block_succs.push(false_branch);
             }
+            MachTerminator::Indirect(targets) => {
+                for target in targets {
+                    self.vcode.block_succs.push(*target);
+                }
+            }
         }
         self.ir_inst_insns.push(insn);
     }

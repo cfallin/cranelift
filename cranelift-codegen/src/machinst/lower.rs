@@ -217,12 +217,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             self.vcode.push(insn);
         }
         let inst = match gen_ret_inst {
-            GenerateReturn::Yes => {
-                self.vcode.abi().gen_ret()
-            }
-            GenerateReturn::No => {
-                self.vcode.abi().gen_epilogue_placeholder()
-            }
+            GenerateReturn::Yes => self.vcode.abi().gen_ret(),
+            GenerateReturn::No => self.vcode.abi().gen_epilogue_placeholder(),
         };
         self.vcode.push(inst);
     }
@@ -245,8 +241,8 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
         // Allocate a separate BlockIndex for each control-flow instruction so that we can create
         // the edge blocks later. Each entry for a control-flow inst is the edge block; the list
         // has (cf-inst, edge block, orig block) tuples.
-        let mut edge_blocks_by_inst: SecondaryMap<Inst, Option<BlockIndex>> =
-            SecondaryMap::with_default(None);
+        let mut edge_blocks_by_inst: SecondaryMap<Inst, Vec<BlockIndex>> =
+            SecondaryMap::with_default(vec![]);
         let mut edge_blocks: Vec<(Inst, BlockIndex, Block)> = vec![];
 
         debug!("about to lower function: {:?}", self.f);
@@ -258,22 +254,27 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
                 if op.is_branch() {
                     // Find the original target.
                     let instdata = &self.f.dfg[inst];
-                    let next_bb = match op {
-                        Opcode::Fallthrough | Opcode::FallthroughReturn => {
-                            self.f.layout.next_block(*bb).unwrap()
-                        }
-                        Opcode::IndirectJumpTableBr => {
-                            panic!("Unimplemented branch type: {:?}", instdata);
-                        }
-                        _ => branch_target(instdata).unwrap(),
+                    let mut add_succ = |next_bb| {
+                        let edge_block = next_bindex;
+                        next_bindex += 1;
+                        edge_blocks_by_inst[inst].push(edge_block);
+                        edge_blocks.push((inst, edge_block, next_bb));
                     };
-
-                    // Allocate a new block number for the new target.
-                    let edge_block = next_bindex;
-                    next_bindex += 1;
-
-                    edge_blocks_by_inst[inst] = Some(edge_block);
-                    edge_blocks.push((inst, edge_block, next_bb));
+                    match op {
+                        Opcode::Fallthrough | Opcode::FallthroughReturn => {
+                            add_succ(self.f.layout.next_block(*bb).unwrap());
+                        }
+                        Opcode::BrTable => {
+                            if let Some(targets) = branch_targets_indirect(&self.f, instdata) {
+                                for bb in targets {
+                                    add_succ(bb);
+                                }
+                            }
+                        }
+                        _ => {
+                            add_succ(branch_target(instdata).unwrap());
+                        }
+                    };
                 }
             }
         }
@@ -300,10 +301,11 @@ impl<'a, I: VCodeInst> Lower<'a, I> {
             let mut targets: SmallVec<[BlockIndex; 2]> = SmallVec::new();
 
             for inst in self.f.layout.block_insts(*bb).rev() {
-                if edge_blocks_by_inst[inst].is_some() {
-                    let target = edge_blocks_by_inst[inst].clone().unwrap();
+                if edge_blocks_by_inst[inst].len() > 0 {
                     branches.push(inst);
-                    targets.push(target);
+                    for target in edge_blocks_by_inst[inst].iter().cloned() {
+                        targets.push(target);
+                    }
                 } else {
                     // We've reached the end of the branches -- process all as a group, first.
                     if branches.len() > 0 {
@@ -629,7 +631,24 @@ fn branch_target(inst: &InstructionData) -> Option<Block> {
         | &InstructionData::BranchInt { destination, .. }
         | &InstructionData::BranchIcmp { destination, .. }
         | &InstructionData::BranchFloat { destination, .. } => Some(destination),
-        &InstructionData::BranchTable { destination: _, .. } => unimplemented!(),
+        &InstructionData::BranchTable { .. } => panic!("branch_target() on branch table"),
+        _ => None,
+    }
+}
+
+fn branch_targets_indirect<'a>(
+    f: &'a Function,
+    inst: &'a InstructionData,
+) -> Option<impl Iterator<Item = Block> + 'a> {
+    match inst {
+        &InstructionData::BranchTable {
+            destination, table, ..
+        } => {
+            Some(
+                std::iter::once(destination) // default block
+                    .chain(f.jump_tables[table].as_slice().iter().cloned()),
+            )
+        }
         _ => None,
     }
 }

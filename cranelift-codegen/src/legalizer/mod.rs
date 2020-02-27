@@ -207,7 +207,6 @@ pub fn simple_legalize(func: &mut ir::Function, cfg: &mut ControlFlowGraph, isa:
         while let Some(inst) = pos.next_inst() {
             let expanded = match pos.func.dfg[inst].opcode() {
                 ir::Opcode::BrIcmp
-                | ir::Opcode::BrTable
                 | ir::Opcode::GlobalValue
                 | ir::Opcode::HeapAddr
                 | ir::Opcode::StackLoad

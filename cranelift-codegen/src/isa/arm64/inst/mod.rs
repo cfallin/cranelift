@@ -10,7 +10,7 @@ use crate::ir::constant::{ConstantData, ConstantOffset};
 use crate::ir::types::{
     B1, B128, B16, B32, B64, B8, F32, F64, FFLAGS, I128, I16, I32, I64, I8, IFLAGS,
 };
-use crate::ir::{ExternalName, GlobalValue, Opcode, SourceLoc, TrapCode, Type};
+use crate::ir::{ExternalName, GlobalValue, JumpTable, Opcode, SourceLoc, TrapCode, Type};
 use crate::machinst::*;
 
 use regalloc::Map as RegallocMap;
@@ -342,6 +342,10 @@ pub enum Inst {
         kind: CondBrKind,
     },
 
+    /// An indirect branch through a register, augmented with set of all
+    /// possible successors.
+    IndirectBr { rn: Reg, targets: Vec<BlockIndex> },
+
     /// A "break" instruction, used for e.g. traps and debug breakpoints.
     Brk {
         trap_info: Option<(SourceLoc, TrapCode)>,
@@ -541,6 +545,9 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             }
             CondBrKind::Cond(_) => {}
         },
+        &Inst::IndirectBr { rn, .. } => {
+            iru.used.insert(rn);
+        }
         &Inst::Nop | Inst::Nop4 => {}
         &Inst::Brk { .. } => {}
         &Inst::Adr { rd, .. } => {
@@ -850,6 +857,10 @@ fn arm64_map_regs(
             not_taken,
             kind: map_br(u, &kind),
         },
+        &mut Inst::IndirectBr { rn, ref targets } => Inst::IndirectBr {
+            rn: map(u, rn),
+            targets: targets.clone(),
+        },
         &mut Inst::Nop => Inst::Nop,
         &mut Inst::Nop4 => Inst::Nop4,
         &mut Inst::Brk { trap_info } => Inst::Brk { trap_info },
@@ -884,7 +895,7 @@ impl MachInst for Inst {
         }
     }
 
-    fn is_term(&self) -> MachTerminator {
+    fn is_term<'a>(&'a self) -> MachTerminator<'a> {
         match self {
             &Inst::Ret {} => MachTerminator::Ret,
             &Inst::Jump { dest } => MachTerminator::Uncond(dest.as_block_index().unwrap()),
@@ -904,6 +915,7 @@ impl MachInst for Inst {
             &Inst::CondBrLoweredCompound { .. } => {
                 panic!("is_term() called after lowering branches");
             }
+            &Inst::IndirectBr { ref targets, .. } => MachTerminator::Indirect(&targets[..]),
             _ => MachTerminator::None,
         }
     }
@@ -1433,6 +1445,10 @@ impl Inst {
                     dest: not_taken.clone(),
                 };
                 first.show_rru(mb_rru) + " ; " + &second.show_rru(mb_rru)
+            }
+            &Inst::IndirectBr { rn, .. } => {
+                let rn = rn.show_rru(mb_rru);
+                format!("br {}", rn)
             }
             &Inst::Brk { .. } => "brk #0".to_string(),
             &Inst::Adr { rd, ref label } => {

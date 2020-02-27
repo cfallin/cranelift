@@ -266,6 +266,10 @@ fn enc_bit_rr(size: u32, opcode2: u32, opcode1: u32, rn: Reg, rd: Writable<Reg>)
         | machreg_to_gpr(rd.to_reg())
 }
 
+fn enc_br(rn: Reg) -> u32 {
+    0b1101011_0000_11111_000000_00000_00000 | (machreg_to_gpr(rn) << 5)
+}
+
 fn enc_adr(off: i32, rd: Writable<Reg>) -> u32 {
     let off = off as u32;
     let immlo = off & 3;
@@ -772,6 +776,9 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 }
                 // Unconditional part.
                 sink.put4(enc_jump26(0b000101, not_taken.as_off26().unwrap_or(0)));
+            }
+            &Inst::IndirectBr { rn, .. } => {
+                sink.put4(enc_br(rn));
             }
             &Inst::Nop => {}
             &Inst::Nop4 => {
@@ -2454,6 +2461,15 @@ mod test {
             "blr x10",
         ));
 
+        insns.push((
+            Inst::IndirectBr {
+                rn: xreg(3),
+                targets: vec![1, 2, 3],
+            },
+            "60001FD6",
+            "br x3",
+        ));
+
         insns.push((Inst::Brk { trap_info: None }, "000020D4", "brk #0"));
 
         insns.push((
@@ -2523,11 +2539,3 @@ mod test {
         }
     }
 }
-
-// TODO (test): lowering
-// - simple and complex addressing modes
-// - immediate in second arg
-// - extend op in second arg
-// - shift op in second arg
-// - constants of various sizes
-// - values of different widths

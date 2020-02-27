@@ -2437,7 +2437,7 @@ impl MachInst for Inst {
         }
     }
 
-    fn is_term(&self) -> MachTerminator {
+    fn is_term<'a>(&'a self) -> MachTerminator<'a> {
         match self {
             // Interesting cases.
             &Inst::Ret {} | &Inst::EpiloguePlaceholder {} => MachTerminator::Ret,
