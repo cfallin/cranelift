@@ -38,6 +38,11 @@ TODO:
 - misc fixups
   - Ensure that clobbered reg saves in ARM64 ABI consider register class
 
+- Better SSA phi-node (block-param) lowering
+  - See Sebastian Hack, PhD thesis, 2006. Key idea: handle moves to outputs
+    that are not also inputs first, then handle cycles specially (preserving
+    read-all-then-write-all semantics).
+
 - Post-MVP:
 
   - Partition code by side-effects and permit some reordering: e.g., loads
