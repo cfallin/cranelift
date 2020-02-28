@@ -1439,7 +1439,7 @@ impl Inst {
                 rn,
                 signed,
                 from_bits,
-                to_bits,
+                ..
             } if from_bits == 1 && !signed => {
                 let rd = show_ireg_sized(rd.to_reg(), mb_rru, /* is32 = */ true);
                 let rn = show_ireg_sized(rn, mb_rru, /* is32 = */ true);
