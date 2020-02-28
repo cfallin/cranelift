@@ -274,6 +274,20 @@ fn enc_adr(off: i32, rd: Writable<Reg>) -> u32 {
     (0b00010000 << 24) | (immlo << 29) | (immhi << 5) | machreg_to_gpr(rd.to_reg())
 }
 
+fn enc_csel(rd: Writable<Reg>, rn: Reg, rm: Reg, cond: Cond) -> u32 {
+    0b100_11010100_00000_0000_00_00000_00000
+        | (machreg_to_gpr(rm) << 16)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd.to_reg())
+        | (cond.bits() << 12)
+}
+
+fn enc_cset(rd: Writable<Reg>, cond: Cond) -> u32 {
+    0b100_11010100_11111_0000_01_11111_00000
+        | machreg_to_gpr(rd.to_reg())
+        | (cond.invert().bits() << 12)
+}
+
 impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
     fn emit(&self, sink: &mut O, consts: &mut O, jt_offsets: &[CodeOffset]) {
         match self {
@@ -647,6 +661,12 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
             }
             &Inst::MovZ { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVZ, rd, imm)),
             &Inst::MovN { rd, imm } => sink.put4(enc_move_wide(MoveWideOpcode::MOVN, rd, imm)),
+            &Inst::CSel { rd, rn, rm, cond } => {
+                sink.put4(enc_csel(rd, rn, rm, cond));
+            }
+            &Inst::CSet { rd, cond } => {
+                sink.put4(enc_cset(rd, cond));
+            }
             &Inst::MovToVec64 { rd, rn } => {
                 sink.put4(
                     0b010_01110000_01000_0_0011_1_00000_00000
@@ -2125,6 +2145,24 @@ mod test {
             },
             "E8FFFF92",
             "movn x8, #18446462598732840960",
+        ));
+        insns.push((
+            Inst::CSel {
+                rd: writable_xreg(10),
+                rn: xreg(12),
+                rm: xreg(14),
+                cond: Cond::Hs,
+            },
+            "8A218E9A",
+            "csel x10, x12, x14, hs",
+        ));
+        insns.push((
+            Inst::CSet {
+                rd: writable_xreg(15),
+                cond: Cond::Ge,
+            },
+            "EFB79F9A",
+            "cset x15, ge",
         ));
         insns.push((
             Inst::MovToVec64 {

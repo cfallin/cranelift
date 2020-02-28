@@ -271,6 +271,17 @@ pub enum Inst {
         to_bits: u8,
     },
 
+    /// A conditional-select operation.
+    CSel {
+        rd: Writable<Reg>,
+        cond: Cond,
+        rn: Reg,
+        rm: Reg,
+    },
+
+    /// A conditional-set operation.
+    CSet { rd: Writable<Reg>, cond: Cond },
+
     /// Move to a vector register from a GPR.
     MovToVec64 { rd: Writable<Reg>, rn: Reg },
 
@@ -492,6 +503,14 @@ fn arm64_get_regs(inst: &Inst) -> InstRegUses {
             iru.used.insert(rm);
         }
         &Inst::MovZ { rd, .. } | &Inst::MovN { rd, .. } => {
+            iru.defined.insert(rd);
+        }
+        &Inst::CSel { rd, rn, rm, .. } => {
+            iru.defined.insert(rd);
+            iru.used.insert(rn);
+            iru.used.insert(rm);
+        }
+        &Inst::CSet { rd, .. } => {
             iru.defined.insert(rd);
         }
         &Inst::MovToVec64 { rd, rn } => {
@@ -775,6 +794,16 @@ fn arm64_map_regs(
         &mut Inst::MovN { rd, ref imm } => Inst::MovN {
             rd: map_wr(d, rd),
             imm: imm.clone(),
+        },
+        &mut Inst::CSel { rd, rn, rm, cond } => Inst::CSel {
+            cond,
+            rd: map_wr(d, rd),
+            rn: map(u, rn),
+            rm: map(u, rm),
+        },
+        &mut Inst::CSet { rd, cond } => Inst::CSet {
+            cond,
+            rd: map_wr(d, rd),
         },
         &mut Inst::MovToVec64 { rd, rn } => Inst::MovToVec64 {
             rd: map_wr(d, rd),
@@ -1311,6 +1340,18 @@ impl Inst {
                 let imm = imm.show_rru(mb_rru);
                 format!("movn {}, {}", rd, imm)
             }
+            &Inst::CSel { rd, rn, rm, cond } => {
+                let rd = rd.to_reg().show_rru(mb_rru);
+                let rn = rn.show_rru(mb_rru);
+                let rm = rm.show_rru(mb_rru);
+                let cond = cond.show_rru(mb_rru);
+                format!("csel {}, {}, {}, {}", rd, rn, rm, cond)
+            }
+            &Inst::CSet { rd, cond } => {
+                let rd = rd.to_reg().show_rru(mb_rru);
+                let cond = cond.show_rru(mb_rru);
+                format!("cset {}, {}", rd, cond)
+            }
             &Inst::MovToVec64 { rd, rn } => {
                 let rd = rd.to_reg().show_rru(mb_rru);
                 let rn = rn.show_rru(mb_rru);
@@ -1352,7 +1393,7 @@ impl Inst {
                 signed,
                 from_bits,
                 to_bits,
-            } => {
+            } if from_bits >= 8 => {
                 // Is the destination a 32-bit register? Corresponds to whether
                 // extend-to width is <= 32 bits, *unless* we have an unsigned
                 // 32-to-64-bit extension, which is implemented with a "mov" to a
@@ -1378,6 +1419,34 @@ impl Inst {
                     _ => panic!("Unsupported Extend case: {:?}", self),
                 };
                 format!("{} {}, {}", op, rd, rn)
+            }
+            &Inst::Extend {
+                rd,
+                rn,
+                signed,
+                from_bits,
+                to_bits,
+            } if from_bits == 1 && signed => {
+                let dest_is32 = to_bits <= 32;
+                let zr = if dest_is32 { "wzr" } else { "xzr" };
+                let rd32 = show_ireg_sized(rd.to_reg(), mb_rru, /* is32 = */ true);
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, dest_is32);
+                let rn = show_ireg_sized(rn, mb_rru, /* is32 = */ true);
+                format!("and {}, {}, #1 ; sub {}, {}, {}", rd32, rn, rd, zr, rd)
+            }
+            &Inst::Extend {
+                rd,
+                rn,
+                signed,
+                from_bits,
+                to_bits,
+            } if from_bits == 1 && !signed => {
+                let rd = show_ireg_sized(rd.to_reg(), mb_rru, /* is32 = */ true);
+                let rn = show_ireg_sized(rn, mb_rru, /* is32 = */ true);
+                format!("and {}, {}, #1", rd, rn)
+            }
+            &Inst::Extend { .. } => {
+                panic!("Unsupported Extend case");
             }
             &Inst::Call { dest: _, .. } => format!("bl 0"),
             &Inst::CallInd { rn, .. } => {

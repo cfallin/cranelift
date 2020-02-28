@@ -1285,19 +1285,89 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             // Nothing.
         }
 
-        Opcode::Select | Opcode::Selectif => {
-            // TODO.
-            unimplemented!()
+        Opcode::Select => {
+            let (cmp_op, narrow_mode) = if ty_bits(ctx.input_ty(insn, 0)) > 32 {
+                (ALUOp::SubS64, NarrowValueMode::ZeroExtend64)
+            } else {
+                (ALUOp::SubS32, NarrowValueMode::ZeroExtend32)
+            };
+
+            let rcond = input_to_reg(ctx, inputs[0], narrow_mode);
+            // cmp rcond, #0
+            ctx.emit(Inst::AluRRR {
+                alu_op: cmp_op,
+                rd: writable_zero_reg(),
+                rn: rcond,
+                rm: zero_reg(),
+            });
+            // csel.COND rd, rn, rm
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rn = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
+            let rm = input_to_reg(ctx, inputs[2], NarrowValueMode::None);
+            ctx.emit(Inst::CSel {
+                cond: Cond::Ne,
+                rd,
+                rn,
+                rm,
+            });
+        }
+        Opcode::Selectif => {
+            let condcode = inst_condcode(ctx.data(insn)).unwrap();
+            let cond = lower_condcode(condcode);
+            let is_signed = condcode_is_signed(condcode);
+            // Verification ensures that the input is always a
+            // single-def ifcmp.
+            let ifcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ifcmp).unwrap();
+            lower_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rn = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
+            let rm = input_to_reg(ctx, inputs[2], NarrowValueMode::None);
+            ctx.emit(Inst::CSel { cond, rd, rn, rm });
         }
 
         Opcode::Bitselect => {
-            // TODO.
-            unimplemented!()
+            let tmp = ctx.tmp(RegClass::I64, I64);
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rcond = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
+            let rn = input_to_reg(ctx, inputs[1], NarrowValueMode::None);
+            let rm = input_to_reg(ctx, inputs[2], NarrowValueMode::None);
+            // AND rTmp, rn, rcond
+            ctx.emit(Inst::AluRRR {
+                alu_op: ALUOp::And64,
+                rd: tmp,
+                rn,
+                rm: rcond,
+            });
+            // BIC rd, rm, rcond
+            ctx.emit(Inst::AluRRR {
+                alu_op: ALUOp::AndNot64,
+                rd,
+                rn: rm,
+                rm: rcond,
+            });
+            // ORR rd, rd, rTmp
+            ctx.emit(Inst::AluRRR {
+                alu_op: ALUOp::Orr64,
+                rd,
+                rn: rd.to_reg(),
+                rm: tmp.to_reg(),
+            });
         }
 
-        Opcode::IsNull | Opcode::IsInvalid | Opcode::Trueif | Opcode::Trueff => {
-            // TODO.
-            unimplemented!()
+        Opcode::Trueif => {
+            let condcode = inst_condcode(ctx.data(insn)).unwrap();
+            let cond = lower_condcode(condcode);
+            let is_signed = condcode_is_signed(condcode);
+            // Verification ensures that the input is always a
+            // single-def ifcmp.
+            let ifcmp_insn = maybe_input_insn(ctx, inputs[0], Opcode::Ifcmp).unwrap();
+            lower_ifcmp_to_flags(ctx, ifcmp_insn, is_signed);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::CSet { rd, cond });
+        }
+
+        Opcode::IsNull | Opcode::IsInvalid => {
+            unimplemented!("Reference types not supported");
         }
 
         Opcode::Copy => {
@@ -1391,14 +1461,8 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             ctx.emit(Inst::CondSet { cond, rd });
         }
 
-        Opcode::JumpTableEntry => {
-            // TODO
-            unimplemented!()
-        }
-
-        Opcode::JumpTableBase => {
-            // TODO
-            unimplemented!()
+        Opcode::JumpTableEntry | Opcode::JumpTableBase => {
+            panic!("Should not appear: we handle BrTable directly");
         }
 
         Opcode::Debugtrap | Opcode::Trap | Opcode::Trapif => {
@@ -1429,7 +1493,7 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         }
 
         Opcode::Safepoint => {
-            panic!("trap support not implemented!");
+            unimplemented!("safepoint support not implemented!");
         }
 
         Opcode::Trapz | Opcode::Trapnz => {
@@ -1437,11 +1501,11 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
         }
 
         Opcode::Trapff => {
-            panic!("trapff requires floating point support");
+            unimplemented!("trapff requires floating point support");
         }
 
         Opcode::ResumableTrap => {
-            panic!("Resumable traps not supported");
+            unimplemented!("Resumable traps not supported");
         }
 
         Opcode::FuncAddr => {
@@ -1543,7 +1607,8 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             panic!("Vector ops not implemented.");
         }
 
-        Opcode::Fcmp
+        Opcode::Trueff
+        | Opcode::Fcmp
         | Opcode::Ffcmp
         | Opcode::Fadd
         | Opcode::Fsub
