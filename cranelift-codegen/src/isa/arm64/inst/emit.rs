@@ -689,7 +689,7 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 signed,
                 from_bits,
                 to_bits,
-            } => {
+            } if from_bits >= 8 => {
                 let top22 = match (signed, from_bits, to_bits) {
                     (false, 8, 32) => 0b010_100110_0_000000_000111, // UXTB (32)
                     (false, 16, 32) => 0b010_100110_0_000000_001111, // UXTH (32)
@@ -714,6 +714,45 @@ impl<O: MachSectionOutput> MachInstEmit<O> for Inst {
                 } else {
                     Inst::mov32(rd, rn).emit(sink, consts, jt_offsets);
                 }
+            }
+            &Inst::Extend {
+                rd,
+                rn,
+                signed,
+                from_bits,
+                to_bits,
+            } if from_bits == 1 && signed => {
+                assert!(to_bits <= 64);
+                // Reduce sign-extend-from-1-bit to:
+                // - and rd, rn, #1
+                // - sub rd, zr, rd
+
+                // We don't have ImmLogic yet, so we just hardcode this. FIXME.
+                sink.put4(0x92400000 | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd.to_reg()));
+                let sub_inst = Inst::AluRRR {
+                    alu_op: ALUOp::Sub64,
+                    rd,
+                    rn: zero_reg(),
+                    rm: rd.to_reg(),
+                };
+                sub_inst.emit(sink, consts, jt_offsets);
+            }
+            &Inst::Extend {
+                rd,
+                rn,
+                signed,
+                from_bits,
+                to_bits,
+            } if from_bits == 1 && !signed => {
+                assert!(to_bits <= 64);
+                // Reduce zero-extend-from-1-bit to:
+                // - and rd, rn, #1
+
+                // We don't have ImmLogic yet, so we just hardcode this. FIXME.
+                sink.put4(0x92400000 | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd.to_reg()));
+            }
+            &Inst::Extend { .. } => {
+                panic!("Unsupported extend variant");
             }
             &Inst::Jump { ref dest } => {
                 // TODO: differentiate between as_off26() returning `None` for

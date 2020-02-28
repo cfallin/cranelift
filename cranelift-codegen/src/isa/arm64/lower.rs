@@ -249,50 +249,63 @@ fn input_to_reg<C: LowerCtx<Inst>>(
 ) -> Reg {
     let ty = ctx.input_ty(input.insn, input.input);
     let from_bits = ty_bits(ty) as u8;
-    let raw_reg = ctx.input(input.insn, input.input);
+    let in_reg = ctx.input(input.insn, input.input);
     match (narrow_mode, from_bits) {
-        (NarrowValueMode::None, _) => raw_reg,
+        (NarrowValueMode::None, _) => in_reg,
         (NarrowValueMode::ZeroExtend32, n) if n < 32 => {
+            let tmp = ctx.tmp(RegClass::I64, I32);
             ctx.emit(Inst::Extend {
-                rd: Writable::from_reg(raw_reg),
-                rn: raw_reg,
+                rd: tmp,
+                rn: in_reg,
                 signed: false,
                 from_bits,
                 to_bits: 32,
             });
-            raw_reg
+            tmp.to_reg()
         }
         (NarrowValueMode::SignExtend32, n) if n < 32 => {
+            let tmp = ctx.tmp(RegClass::I64, I32);
             ctx.emit(Inst::Extend {
-                rd: Writable::from_reg(raw_reg),
-                rn: raw_reg,
+                rd: tmp,
+                rn: in_reg,
                 signed: true,
                 from_bits,
                 to_bits: 32,
             });
-            raw_reg
+            tmp.to_reg()
         }
+        (NarrowValueMode::ZeroExtend32, n) | (NarrowValueMode::SignExtend32, n) if n == 32 => {
+            in_reg
+        }
+
         (NarrowValueMode::ZeroExtend64, n) if n < 64 => {
+            let tmp = ctx.tmp(RegClass::I64, I32);
             ctx.emit(Inst::Extend {
-                rd: Writable::from_reg(raw_reg),
-                rn: raw_reg,
+                rd: tmp,
+                rn: in_reg,
                 signed: false,
                 from_bits,
                 to_bits: 64,
             });
-            raw_reg
+            tmp.to_reg()
         }
         (NarrowValueMode::SignExtend64, n) if n < 64 => {
+            let tmp = ctx.tmp(RegClass::I64, I32);
             ctx.emit(Inst::Extend {
-                rd: Writable::from_reg(raw_reg),
-                rn: raw_reg,
+                rd: tmp,
+                rn: in_reg,
                 signed: true,
                 from_bits,
                 to_bits: 64,
             });
-            raw_reg
+            tmp.to_reg()
         }
-        _ => raw_reg,
+        (_, n) if n == 64 => in_reg,
+
+        _ => panic!(
+            "Unsupported input width: input ty {} bits {} mode {:?}",
+            ty, from_bits, narrow_mode
+        ),
     }
 }
 
@@ -1293,12 +1306,37 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
             ctx.emit(Inst::gen_move(rd, rn));
         }
 
-        Opcode::Breduce | Opcode::Bextend | Opcode::Bint | Opcode::Bmask => {
-            // TODO
-            unimplemented!()
+        Opcode::Bint | Opcode::Breduce | Opcode::Bextend | Opcode::Ireduce => {
+            // All of these ops are simply a move from a zero-extended source.
+            // Here is why this works, in each case:
+            //
+            // - Bint: Bool-to-int. We always represent a bool as a 0 or 1, so we
+            //   merely need to zero-extend here.
+            //
+            // - Breduce, Bextend: changing width of a boolean. We represent a
+            //   bool as a 0 or 1, so again, this is a zero-extend / no-op.
+            //
+            // - Ireduce: changing width of an integer. Smaller ints are stored
+            //   with undefined high-order bits, so we can simply do a copy.
+
+            let rn = input_to_reg(ctx, inputs[0], NarrowValueMode::ZeroExtend64);
+            let rd = output_to_reg(ctx, outputs[0]);
+            ctx.emit(Inst::gen_move(rd, rn));
         }
 
-        Opcode::Ireduce | Opcode::Isplit | Opcode::Iconcat => {
+        Opcode::Bmask => {
+            // Bool is {0, 1}, so we can subtract from 0 to get all-1s.
+            let rd = output_to_reg(ctx, outputs[0]);
+            let rm = input_to_reg(ctx, inputs[0], NarrowValueMode::ZeroExtend64);
+            ctx.emit(Inst::AluRRR {
+                alu_op: ALUOp::Sub64,
+                rd,
+                rn: zero_reg(),
+                rm,
+            });
+        }
+
+        Opcode::Isplit | Opcode::Iconcat => {
             // TODO
             unimplemented!()
         }
