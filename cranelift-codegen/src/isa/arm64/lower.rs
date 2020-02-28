@@ -1210,22 +1210,32 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 | Opcode::Uload32
                 | Opcode::Sload32Complex
                 | Opcode::Uload32Complex => I32,
-                Opcode::Load | Opcode::LoadComplex => I64,
+                Opcode::Load | Opcode::LoadComplex => ctx.output_ty(insn, 0),
                 _ => unreachable!(),
+            };
+            let sign_extend = match op {
+                Opcode::Sload8
+                | Opcode::Sload8Complex
+                | Opcode::Sload16
+                | Opcode::Sload16Complex
+                | Opcode::Sload32
+                | Opcode::Sload32Complex => true,
+                _ => false,
             };
 
             let mem = lower_address(ctx, elem_ty, &inputs[..], off);
             let rd = output_to_reg(ctx, outputs[0]);
 
-            ctx.emit(match op {
-                Opcode::Uload8 | Opcode::Uload8Complex => Inst::ULoad8 { rd, mem },
-                Opcode::Sload8 | Opcode::Sload8Complex => Inst::SLoad8 { rd, mem },
-                Opcode::Uload16 | Opcode::Uload16Complex => Inst::ULoad16 { rd, mem },
-                Opcode::Sload16 | Opcode::Sload16Complex => Inst::SLoad16 { rd, mem },
-                Opcode::Uload32 | Opcode::Uload32Complex => Inst::ULoad32 { rd, mem },
-                Opcode::Sload32 | Opcode::Sload32Complex => Inst::SLoad32 { rd, mem },
-                Opcode::Load | Opcode::LoadComplex => Inst::ULoad64 { rd, mem },
-                _ => unreachable!(),
+            ctx.emit(match (ty_bits(elem_ty), sign_extend) {
+                (1, _) => Inst::ULoad8 { rd, mem },
+                (8, false) => Inst::ULoad8 { rd, mem },
+                (8, true) => Inst::SLoad8 { rd, mem },
+                (16, false) => Inst::ULoad16 { rd, mem },
+                (16, true) => Inst::SLoad16 { rd, mem },
+                (32, false) => Inst::ULoad32 { rd, mem },
+                (32, true) => Inst::SLoad32 { rd, mem },
+                (64, _) => Inst::ULoad64 { rd, mem },
+                _ => panic!("Unsupported size in load"),
             });
         }
 
@@ -1242,19 +1252,19 @@ fn lower_insn_to_regs<C: LowerCtx<Inst>>(ctx: &mut C, insn: IRInst) {
                 Opcode::Istore8 | Opcode::Istore8Complex => I8,
                 Opcode::Istore16 | Opcode::Istore16Complex => I16,
                 Opcode::Istore32 | Opcode::Istore32Complex => I32,
-                Opcode::Store | Opcode::StoreComplex => I64,
+                Opcode::Store | Opcode::StoreComplex => ctx.input_ty(insn, 0),
                 _ => unreachable!(),
             };
 
             let mem = lower_address(ctx, elem_ty, &inputs[1..], off);
             let rd = input_to_reg(ctx, inputs[0], NarrowValueMode::None);
 
-            ctx.emit(match op {
-                Opcode::Istore8 | Opcode::Istore8Complex => Inst::Store8 { rd, mem },
-                Opcode::Istore16 | Opcode::Istore16Complex => Inst::Store16 { rd, mem },
-                Opcode::Istore32 | Opcode::Istore32Complex => Inst::Store32 { rd, mem },
-                Opcode::Store | Opcode::StoreComplex => Inst::Store64 { rd, mem },
-                _ => unreachable!(),
+            ctx.emit(match ty_bits(elem_ty) {
+                1 | 8 => Inst::Store8 { rd, mem },
+                16 => Inst::Store16 { rd, mem },
+                32 => Inst::Store32 { rd, mem },
+                64 => Inst::Store64 { rd, mem },
+                _ => panic!("Unsupported size in store"),
             });
         }
 
