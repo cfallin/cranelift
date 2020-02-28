@@ -23,7 +23,7 @@ use crate::machinst::*;
 
 use regalloc::Function as RegallocFunction;
 use regalloc::Set as RegallocSet;
-use regalloc::{BlockIx, InstIx, InstRegUses, MyRange, RegAllocResult, RegClass};
+use regalloc::{BlockIx, InstIx, InstRegUses, Range, RegAllocResult, RegClass};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -613,17 +613,17 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
         &mut self.insts[insn.get() as usize]
     }
 
-    fn blocks(&self) -> MyRange<BlockIx> {
-        MyRange::new(BlockIx::new(0), self.block_ranges.len())
+    fn blocks(&self) -> Range<BlockIx> {
+        Range::new(BlockIx::new(0), self.block_ranges.len())
     }
 
     fn entry_block(&self) -> BlockIx {
         BlockIx::new(self.entry)
     }
 
-    fn block_insns(&self, block: BlockIx) -> MyRange<InstIx> {
+    fn block_insns(&self, block: BlockIx) -> Range<InstIx> {
         let (start, end) = self.block_ranges[block.get() as usize];
-        MyRange::new(InstIx::new(start), (end - start) as usize)
+        Range::new(InstIx::new(start), (end - start) as usize)
     }
 
     fn block_succs(&self, block: BlockIx) -> Vec<BlockIx> {
